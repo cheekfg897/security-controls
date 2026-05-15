@@ -93,4 +93,3 @@ else {
 }
 
 Write-Host "`n[*] Check SentinelOne console for detection events" -ForegroundColor Cyan
-Write-Host "`n"
