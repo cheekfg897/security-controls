@@ -263,10 +263,11 @@ function Invoke-MalwareBatchVector {
                 $chosenZip = $zips[$zipIdx - 1]
                 $baseName  = [System.IO.Path]::GetFileNameWithoutExtension($chosenZip.Name)
                 $destDir   = Join-Path $stagingRoot $baseName
+                $zipPassword = (Read-Host "  ZIP password (press Enter if not password-protected)").Trim()
                 Write-Host ""
                 Write-Host "  [*] Extracting $($chosenZip.Name)..." -ForegroundColor Yellow
                 try {
-                    Invoke-ZipExtraction -ZipPath $chosenZip.FullName -DestPath $destDir
+                    Invoke-ZipExtraction -ZipPath $chosenZip.FullName -DestPath $destDir -Password $zipPassword
                 } catch {
                     Write-Host "  [!] Extraction failed: $($_.Exception.Message)" -ForegroundColor Red
                     Read-Host "`n  Press Enter to return"
@@ -671,14 +672,30 @@ function Invoke-FilelessVector {
 
 # =============================================================================
 # ZIP EXTRACTION
-# Uses .NET System.IO.Compression - no 7-Zip or external tools needed.
+# No-password ZIPs use .NET System.IO.Compression (no dependencies).
+# Password-protected ZIPs require 7-Zip - auto-detected from common install
+# paths or PATH. Falls back gracefully with a clear error if not found.
 # =============================================================================
+
+function Find-7Zip {
+    $candidates = @(
+        'C:\Program Files\7-Zip\7z.exe',
+        'C:\Program Files (x86)\7-Zip\7z.exe'
+    )
+    foreach ($c in $candidates) {
+        if (Test-Path $c) { return $c }
+    }
+    $onPath = Get-Command '7z.exe' -ErrorAction SilentlyContinue
+    if ($onPath) { return $onPath.Source }
+    return $null
+}
 
 function Invoke-ZipExtraction {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$ZipPath,
-        [Parameter(Mandatory)][string]$DestPath
+        [Parameter(Mandatory)][string]$DestPath,
+        [string]$Password = ''
     )
 
     if (Test-Path $DestPath) {
@@ -692,8 +709,22 @@ function Invoke-ZipExtraction {
 
     New-Item -ItemType Directory -Path $DestPath -Force | Out-Null
 
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    [System.IO.Compression.ZipFile]::ExtractToDirectory($ZipPath, $DestPath)
+    if ($Password) {
+        $7zPath = Find-7Zip
+        if (-not $7zPath) {
+            Write-Host "  [!] 7-Zip is required for password-protected ZIPs but was not found." -ForegroundColor Red
+            Write-Host "  [!] Install 7-Zip (7-zip.org), or extract the ZIP manually and use [M]." -ForegroundColor DarkGray
+            throw "7-Zip not found. Cannot extract password-protected ZIP without it."
+        }
+        Write-Host "  [*] Using 7-Zip: $7zPath" -ForegroundColor DarkGray
+        & $7zPath x "-p$Password" "-o$DestPath" $ZipPath '-y' | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw "7-Zip extraction failed (exit $LASTEXITCODE). Verify the password and ZIP file integrity."
+        }
+    } else {
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        [System.IO.Compression.ZipFile]::ExtractToDirectory($ZipPath, $DestPath)
+    }
 
     Write-Host "  [+] Extracted to: $DestPath" -ForegroundColor Green
 }

@@ -125,7 +125,7 @@ function Test-JSEStartup {
 
     $jsePath = "$userStartup\sct-jse-test.jse"
     $marker  = "$tempDir\art-v4.3-JSEStartup.txt"
-    $markerEscaped = $marker -replace '\\', '\\\\'
+    $markerEscaped = $marker -replace '\\', '\\'
 
     $jseContent = @"
 var fso = new ActiveXObject("Scripting.FileSystemObject");
@@ -177,7 +177,7 @@ function Test-LNKShortcut {
 
     $lnkPath = "$userStartup\sct-lnk-test.lnk"
     $marker  = "$tempDir\art-v4.3-LNKShortcut.txt"
-    $command = "Set-Content -Path '$marker' -Value '[' + (Get-Date) + '] LNKShortcut executed'"
+    $command = "Set-Content -Path '$marker' -Value ('[' + (Get-Date) + '] LNKShortcut executed')"
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
 
     Write-Host "`n[*] Creating .lnk shortcut via WScript.Shell COM: $lnkPath" -ForegroundColor Yellow
@@ -281,7 +281,7 @@ function Test-ShellFolderRedirect {
     Write-Host "  Hunt query - Compare Startup value to expected path; alert on deviation"
 
     $marker      = "$tempDir\art-v4.3-ShellFolderRedirect.txt"
-    $command     = "Set-Content -Path '$marker' -Value '[' + (Get-Date) + '] ShellFolderRedirect executed'"
+    $command     = "Set-Content -Path '$marker' -Value ('[' + (Get-Date) + '] ShellFolderRedirect executed')"
     $encoded     = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
     $batPayload  = "$redirectDir\sct-redirect-payload.bat"
     $batContent  = "@echo off`r`npowershell.exe -NoProfile -WindowStyle Hidden -EncodedCommand $encoded"
@@ -358,7 +358,7 @@ function Test-WinlogonUserinit {
     Write-Host "  Event 4657 - Registry value modified: Winlogon key"
 
     $marker  = "$tempDir\art-v4.3-WinlogonUserinit.txt"
-    $command = "Set-Content -Path '$marker' -Value '[' + (Get-Date) + '] WinlogonUserinit executed'"
+    $command = "Set-Content -Path '$marker' -Value ('[' + (Get-Date) + '] WinlogonUserinit executed')"
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
     $payload = "powershell.exe -NoProfile -WindowStyle Hidden -EncodedCommand $encoded"
 
