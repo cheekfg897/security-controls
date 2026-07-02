@@ -1,0 +1,35 @@
+{
+  "id": "03",
+  "display_name": "Privilege Escalation",
+  "description": "Tests detection of techniques used to elevate from standard user to SYSTEM or administrator",
+  "mitre_tactics": ["Privilege Escalation", "Defense Evasion"],
+  "vectors": [
+    {
+      "id": "3.1",
+      "name": "Process Hollowing",
+      "description": "Spawns a legitimate suspended process and replaces its image with a malicious payload, then resumes execution. Tests whether AV/EDR detects memory-resident code injection.",
+      "mitre": "T1055.012",
+      "script": "v3.1-process-hollowing.ps1",
+      "type": "not-implemented",
+      "supports": []
+    },
+    {
+      "id": "3.2",
+      "name": "UAC Bypass (fodhelper.exe)",
+      "description": "Leverages the fodhelper.exe auto-elevation path to execute a payload with elevated privileges without triggering a UAC prompt. No admin rights required to attempt.",
+      "mitre": "T1548.002",
+      "script": "v3.2-uac-bypass.ps1",
+      "type": "not-implemented",
+      "supports": []
+    },
+    {
+      "id": "3.3",
+      "name": "Living-off-the-Land (LOLBin) Signed Binary",
+      "description": "Abuses a Microsoft-signed binary (LOLBin) to proxy execution of an unsigned payload, evading application whitelisting and binary-trust policies.",
+      "mitre": "T1218",
+      "script": "v3.3-lotl-signed-binary.ps1",
+      "type": "not-implemented",
+      "supports": []
+    }
+  ]
+}

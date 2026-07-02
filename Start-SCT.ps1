@@ -1,0 +1,146 @@
+#Requires -Version 5.1
+<#
+.SYNOPSIS
+    Security Controls Testing (SCT) Framework - Interactive Launcher
+
+.DESCRIPTION
+    Menu-driven launcher for structured endpoint security control evaluation.
+    Discovers test modules automatically by scanning scenarios/ for module.json
+    files - no code changes required to add new scenarios or vectors.
+
+    Supports Windows 10 and Windows 11. Requires PowerShell 5.1 or later.
+    No external modules or tools required beyond what ships with Windows.
+
+    See README.md for full usage, and for how to extend the framework with
+    new malware samples, new vectors, or entirely new test modules.
+
+.PARAMETER Control
+    Name of the security product under test (e.g. SentinelOne, CarbonBlack,
+    Morphisec, Baseline-NoAV). Passed automatically to every test script so
+    results.csv rows are tagged consistently. If omitted, the launcher prompts
+    at startup.
+
+.PARAMETER SamplesPath
+    Override the default samples/ folder used for malware ZIP archives.
+    Defaults to <repo-root>\samples\.
+
+.EXAMPLE
+    .\Start-SCT.ps1
+
+.EXAMPLE
+    .\Start-SCT.ps1 -Control SentinelOne
+
+.EXAMPLE
+    .\Start-SCT.ps1 -Control CarbonBlack -SamplesPath D:\MalwareSamples
+
+.NOTES
+    Lab use only. Run inside an isolated VM - NEVER on production systems.
+    PowerShell 5.1+. No external modules required.
+#>
+
+[CmdletBinding()]
+param(
+    [string]$Control,
+    [string]$SamplesPath
+)
+
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+
+# ---------------------------------------------------------------------------
+# Load the core library (all menu/dispatch functions live there)
+# ---------------------------------------------------------------------------
+$corePath = Join-Path $PSScriptRoot 'core\SCT-Core.ps1'
+if (-not (Test-Path $corePath)) {
+    Write-Host ""
+    Write-Host "  [!] Core library missing: $corePath" -ForegroundColor Red
+    Write-Host "  [!] Ensure the full repository is present and intact." -ForegroundColor Red
+    Write-Host ""
+    exit 1
+}
+. $corePath
+
+# ---------------------------------------------------------------------------
+# Resolve working paths
+# ---------------------------------------------------------------------------
+$scenariosPath    = Join-Path $PSScriptRoot 'scenarios'
+$resultsPath      = Join-Path $PSScriptRoot 'results\raw\results.csv'
+$techResultsPath  = Join-Path $PSScriptRoot 'results\raw\technique-results.csv'
+if (-not $SamplesPath) {
+    $SamplesPath = Join-Path $PSScriptRoot 'samples'
+}
+
+# ---------------------------------------------------------------------------
+# Welcome banner
+# ---------------------------------------------------------------------------
+Show-SCTBanner
+
+# ---------------------------------------------------------------------------
+# Prompt for security product name (once, reused for all tests)
+# ---------------------------------------------------------------------------
+if (-not $Control) {
+    Write-Host "  Before we start, identify the security product under test." -ForegroundColor White
+    Write-Host "  This label tags every result row in results.csv." -ForegroundColor DarkGray
+    Write-Host "  Examples: SentinelOne, CarbonBlack, Morphisec, Baseline-NoAV" -ForegroundColor DarkGray
+    $Control = (Read-Host "`n  Security product name").Trim()
+    if (-not $Control) { $Control = 'Unnamed-Control' }
+}
+
+Write-Host ""
+Write-Host "  Control  : $Control" -ForegroundColor Green
+Write-Host "  Results  : $resultsPath" -ForegroundColor DarkGray
+Write-Host "  Samples  : $SamplesPath" -ForegroundColor DarkGray
+
+# ---------------------------------------------------------------------------
+# Discover modules from scenarios/*/module.json
+# ---------------------------------------------------------------------------
+$modules = Get-SCTModules -ScenariosPath $scenariosPath
+
+if ($modules.Count -eq 0) {
+    Write-Host ""
+    Write-Host "  [!] No modules found in: $scenariosPath" -ForegroundColor Red
+    Write-Host "  [!] Each module folder needs a module.json file." -ForegroundColor Red
+    Write-Host "  [!] See README.md -> 'Adding a New Module' for the schema." -ForegroundColor Red
+    Write-Host ""
+    exit 1
+}
+
+Write-Host "  Modules  : $($modules.Count) loaded" -ForegroundColor DarkGray
+
+# ---------------------------------------------------------------------------
+# Main menu loop
+# ---------------------------------------------------------------------------
+while ($true) {
+    Show-SCTMainMenu -Modules $modules -Control $Control
+
+    $choice = (Read-Host "  Selection").Trim()
+
+    if (-not $choice) { continue }
+
+    switch ($choice.ToUpper()) {
+        'Q' {
+            Write-Host ""
+            Write-Host "  Exiting. Review your results at:" -ForegroundColor Gray
+            Write-Host "  $resultsPath" -ForegroundColor DarkGray
+            Write-Host ""
+            exit 0
+        }
+        'V' {
+            Show-SCTSummary -ResultsPath $resultsPath -TechResultsPath $techResultsPath
+        }
+        default {
+            $idx = $choice -as [int]
+            if ($idx -ge 1 -and $idx -le $modules.Count) {
+                Invoke-SCTModuleMenu -Module $modules[$idx - 1] `
+                    -Control $Control `
+                    -SamplesPath $SamplesPath `
+                    -ScenarioRoot $scenariosPath `
+                    -ResultsPath $resultsPath `
+                    -TechResultsPath $techResultsPath
+            } else {
+                Write-Host "  Invalid selection. Enter 1-$($modules.Count), [V], or [Q]." -ForegroundColor Yellow
+                Start-Sleep -Milliseconds 600
+            }
+        }
+    }
+}

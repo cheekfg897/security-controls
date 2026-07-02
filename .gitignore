@@ -22,6 +22,11 @@ __pycache__/
 Thumbs.db
 desktop.ini
 
+# Malware sample archives (never commit real malware)
+samples/*.zip
+samples/*.7z
+samples/*.tar.gz
+
 # VM / lab artifacts
 *.vmdk
 *.vmx
