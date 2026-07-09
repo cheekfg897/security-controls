@@ -15,12 +15,16 @@
     },
     {
       "id": "3.2",
-      "name": "UAC Bypass (fodhelper.exe)",
-      "description": "Leverages the fodhelper.exe auto-elevation path to execute a payload with elevated privileges without triggering a UAC prompt. No admin rights required to attempt.",
+      "name": "UAC Bypass",
+      "description": "Four sub-tests covering different auto-elevation hijacks (Fodhelper, Eventvwr, ComputerDefaults, SilentCleanup) that execute a payload with elevated privileges without triggering a UAC prompt. No admin rights required to attempt.",
       "mitre": "T1548.002",
       "script": "v3.2-uac-bypass.ps1",
-      "type": "not-implemented",
-      "supports": []
+      "type": "technique",
+      "techniques": ["Fodhelper", "Eventvwr", "ComputerDefaults", "SilentCleanup", "All"],
+      "individual_techniques": ["Fodhelper", "Eventvwr", "ComputerDefaults", "SilentCleanup"],
+      "marker_file": "C:\\Windows\\Temp\\art-v3.2-{technique}.txt",
+      "default_technique": "Fodhelper",
+      "supports": ["technique"]
     },
     {
       "id": "3.3",

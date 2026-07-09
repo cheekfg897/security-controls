@@ -12,6 +12,7 @@ Run `Start-SCT.ps1` on a Windows lab VM to test how well an EDR or AV product de
 - **PowerShell 5.1+** — built-in on Windows 10/11, no extra modules needed
 - **Sysmon installed** — required for fileless vector result detection; useful for everything else. Use the [SwiftOnSecurity config](https://github.com/SwiftOnSecurity/sysmon-config) if you don't have one already
 - Clone this repo onto the VM
+- **Confirm your EDR/AV is actually active first** — run a quick check from [sanity_checks/](sanity_checks/README.md) (e.g. drop an EICAR file) before spending time on real technique tests. A "BLOCKED" result only means something if you know detection was on to begin with.
 
 ---
 
