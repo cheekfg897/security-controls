@@ -60,15 +60,32 @@ All results are saved to `results/raw/technique-results.csv` (technique tests) a
 
 ## Malware tests (module 1)
 
-Module 1 works differently: it delivers sample files and measures whether the product blocks delivery or execution. Samples live as ZIPs in `samples/`.
+Module 1 has 6 vectors, and **they don't all take samples the same way** — where you put your files depends on which one you pick:
 
-```
-Start-SCT.ps1 → [1] Malware Introduction → [1] Known Malware → select a ZIP
-```
+| Vector | Where samples go |
+|---|---|
+| **1.1 Disk Drop** | Drop ZIP(s) into `samples/` in this repo, pick by number in the launcher. See below. |
+| **1.2 Removable Media** | Samples must already be on a USB drive, prepared on a separate machine — the launcher just asks for the drive letter, it doesn't read `samples/`. No manifest needed. |
+| **1.3 Internet Download** | Samples go in the serve directory on a *second* VM running `v1.3-server.ps1` — not in this repo at all. See [v1.3's README](scenarios/01-malware-introduction/v1.3-download-internet/README.md) for the two-VM setup. |
+| 1.4 Trojanised COTS / 1.6 DLL Sideload | Self-contained — the script builds its own payload. No external samples needed. |
+| 1.5 Fileless PowerShell | Runs named in-memory techniques. No sample files involved. |
+
+**If you just want to test "does the product block my malware sample" — use 1.1.** It's the simplest path: drop your ZIP into `samples/`, run `Start-SCT.ps1`, choose Module 1 → Vector 1.1, and pick your ZIP by number.
+
+### Vector 1.1 — ZIP layouts
+
+Samples live as ZIPs in `samples/` — no manifest or per-sample metadata file needed in any layout. Every recognised file in the ZIP gets tested.
+
+| Layout | When to use | How to run |
+|--------|-------------|------------|
+| One ZIP with all EXEs | Single pack | Pick the ZIP by number |
+| One ZIP per EXE | Samples arrived individually or from a threat feed | Pick **`[A] Combine and run ALL ZIPs`** |
+
+Whether you pick a single ZIP by number or use `[A]` to combine every ZIP in `samples/` into one staging folder, the launcher asks **"Execute samples after delivery?"** before running — by default files are only copied to `C:\Temp\`, not run, and that choice applies to every file in the batch.
 
 **Password-protected ZIPs** (conventional AV-sharing password: `infected`) require [7-Zip](https://www.7-zip.org). If 7-Zip isn't installed, the launcher will tell you to extract it manually and use `[M]` to point at the folder. Unprotected ZIPs use built-in .NET — no tools needed.
 
-To add a new sample pack, see [samples/README.md](samples/README.md).
+To add samples, see [samples/README.md](samples/README.md).
 
 ---
 

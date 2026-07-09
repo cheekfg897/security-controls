@@ -224,9 +224,8 @@ function Invoke-MalwareBatchVector {
     param($Vector, [string]$ScriptPath, [string]$Control, [string]$SamplesPath, [string]$ResultsPath)
 
     Write-Host ""
-    Write-Host "  This vector runs a manifest-driven batch of malware/tool samples." -ForegroundColor White
-    Write-Host "  Samples must be stored as ZIP archives in the samples/ folder." -ForegroundColor DarkGray
-    Write-Host "  Each ZIP is extracted to C:\Temp\SCT-Staging\ before the test runs." -ForegroundColor DarkGray
+    Write-Host "  Delivers and optionally executes malware/tool samples from the samples/ folder." -ForegroundColor White
+    Write-Host "  Drop any ZIP of executables into samples/ - no manifest required." -ForegroundColor DarkGray
     Write-Host ""
 
     $stagingRoot = 'C:\Temp\SCT-Staging'
@@ -239,23 +238,32 @@ function Invoke-MalwareBatchVector {
     }
 
     if ($zips.Count -gt 0) {
-        Write-Host "  ZIP archives available in samples/:" -ForegroundColor White
+        Write-Host "  ZIP archives in samples/:" -ForegroundColor White
         Write-Host ""
         for ($i = 0; $i -lt $zips.Count; $i++) {
             $sz = [math]::Round($zips[$i].Length / 1KB, 0)
             Write-Host ("  [{0}]  {1}  ({2:N0} KB)" -f ($i + 1), $zips[$i].Name, $sz) -ForegroundColor White
         }
         Write-Host ""
-        Write-Host "  [M]   Use manual path (already-extracted staging folder)" -ForegroundColor Yellow
+        if ($zips.Count -gt 1) {
+            Write-Host "  [A]   Run ALL ZIPs together as one batch" -ForegroundColor Yellow
+        }
+        Write-Host "  [M]   Use an already-extracted folder" -ForegroundColor Yellow
         Write-Host "  [0]   Cancel" -ForegroundColor Yellow
         Write-Host ""
 
-        $zipChoice = (Read-Host "  Select ZIP to extract (number), [M] manual, or [0] cancel").Trim()
+        $hint = if ($zips.Count -gt 1) { "(number), [A] all, [M] folder, [0] cancel" } `
+                else                    { "(number), [M] folder, [0] cancel" }
+        $zipChoice = (Read-Host "  Select $hint").Trim()
 
         if ($zipChoice -eq '0' -or $zipChoice -eq '') { return }
 
-        if ($zipChoice -ieq 'M') {
-            $sourcePath = (Read-Host "  Full path to staging folder (e.g. C:\Staging)").Trim()
+        if ($zipChoice -ieq 'A') {
+            $zipPassword = (Read-Host "  ZIP password for all archives (press Enter if none)").Trim()
+            Write-Host ""
+            $sourcePath = Merge-StagingFromZips -Zips $zips -StagingRoot $stagingRoot -Password $zipPassword
+        } elseif ($zipChoice -ieq 'M') {
+            $sourcePath = (Read-Host "  Full path to already-extracted folder").Trim()
             if (-not $sourcePath) { return }
         } else {
             $zipIdx = $zipChoice -as [int]
@@ -263,7 +271,7 @@ function Invoke-MalwareBatchVector {
                 $chosenZip = $zips[$zipIdx - 1]
                 $baseName  = [System.IO.Path]::GetFileNameWithoutExtension($chosenZip.Name)
                 $destDir   = Join-Path $stagingRoot $baseName
-                $zipPassword = (Read-Host "  ZIP password (press Enter if not password-protected)").Trim()
+                $zipPassword = (Read-Host "  ZIP password (press Enter if none)").Trim()
                 Write-Host ""
                 Write-Host "  [*] Extracting $($chosenZip.Name)..." -ForegroundColor Yellow
                 try {
@@ -282,9 +290,9 @@ function Invoke-MalwareBatchVector {
         }
     } else {
         Write-Host "  No ZIP files found in: $SamplesPath" -ForegroundColor Yellow
-        Write-Host "  See samples/README.md for how to add malware samples." -ForegroundColor DarkGray
+        Write-Host "  Drop ZIP files into samples/ and re-run, or enter a folder path below." -ForegroundColor DarkGray
         Write-Host ""
-        $manual = (Read-Host "  Enter path to an existing staging folder, or press Enter to cancel").Trim()
+        $manual = (Read-Host "  Path to staging folder (or press Enter to cancel)").Trim()
         if (-not $manual) { return }
         $sourcePath = $manual
     }
@@ -296,12 +304,12 @@ function Invoke-MalwareBatchVector {
     }
 
     Write-Host ""
-    $dryRunInput = (Read-Host "  Run as DRY RUN? (validates manifest, no real delivery) [Y/N]").Trim()
-    $isDryRun    = $dryRunInput -ieq 'Y'
+    $executeInput = (Read-Host "  Execute samples after delivery, not just copy them? [Y/N]").Trim()
+    $doExecute    = $executeInput -ieq 'Y'
 
     Write-Host ""
     Write-Host "  [*] Open your EDR/AV console and start monitoring before proceeding." -ForegroundColor Yellow
-    Read-Host "  Press Enter to launch Vector $($Vector.id)"
+    Read-Host "  Press Enter to start"
 
     $scriptArgs = @(
         '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$ScriptPath`"",
@@ -309,7 +317,7 @@ function Invoke-MalwareBatchVector {
         '-Control', "`"$Control`"",
         '-ResultsPath', "`"$ResultsPath`""
     )
-    if ($isDryRun) { $scriptArgs += '-DryRun' }
+    if ($doExecute) { $scriptArgs += '-Execute' }
 
     Write-Host ""
     Write-Host "  [>] Launching: $ScriptPath" -ForegroundColor Cyan
@@ -318,11 +326,10 @@ function Invoke-MalwareBatchVector {
     Start-Process -FilePath 'powershell.exe' -ArgumentList $scriptArgs -Wait -NoNewWindow
 
     Write-Host ""
-    Write-Host "  [*] Vector $($Vector.id) complete." -ForegroundColor Cyan
+    Write-Host "  [*] Done. Results appended to: $ResultsPath" -ForegroundColor Cyan
     if ($sourcePath -like "$stagingRoot*") {
-        Write-Host ""
-        Write-Host "  [!] Extracted samples remain at: $sourcePath" -ForegroundColor Yellow
-        Write-Host "      Review any artifacts, then delete manually:" -ForegroundColor DarkGray
+        Write-Host "  [!] Extracted files remain at: $sourcePath" -ForegroundColor Yellow
+        Write-Host "      Delete when review is complete:" -ForegroundColor DarkGray
         Write-Host "      Remove-Item -Recurse -Force '$sourcePath'" -ForegroundColor DarkGray
     }
     Read-Host "`n  Press Enter to return"
@@ -340,14 +347,17 @@ function Invoke-RemovableMediaVector {
     Write-Host ""
     Write-Host "  Prerequisites:" -ForegroundColor White
     Write-Host "    1. Attach a USB drive to this VM" -ForegroundColor DarkGray
-    Write-Host "    2. The drive must already contain sample files and a manifest.csv" -ForegroundColor DarkGray
+    Write-Host "    2. The drive must already contain the sample files - no manifest needed" -ForegroundColor DarkGray
     Write-Host "    3. Load the drive on a separate unprotected machine - NOT this VM" -ForegroundColor DarkGray
     Write-Host "       (Loading from this VM means the control has already scanned them)" -ForegroundColor DarkGray
     Write-Host ""
 
     $driveLetter = (Read-Host "  Drive letter of removable media (e.g. E:), or press Enter to auto-detect").Trim()
 
-    $dryRunInput = (Read-Host "  Run as DRY RUN? (validates manifest, no real delivery) [Y/N]").Trim()
+    $executeInput = (Read-Host "  Execute samples after delivery, not just copy them? [Y/N]").Trim()
+    $doExecute    = $executeInput -ieq 'Y'
+
+    $dryRunInput = (Read-Host "  Run as DRY RUN? (detects drive + lists files, no real delivery) [Y/N]").Trim()
     $isDryRun    = $dryRunInput -ieq 'Y'
 
     Write-Host ""
@@ -360,6 +370,7 @@ function Invoke-RemovableMediaVector {
         '-ResultsPath', "`"$ResultsPath`""
     )
     if ($driveLetter) { $scriptArgs += @('-DriveLetter', $driveLetter) }
+    if ($doExecute)   { $scriptArgs += '-Execute' }
     if ($isDryRun)    { $scriptArgs += '-DryRun' }
 
     Write-Host ""
@@ -397,7 +408,10 @@ function Invoke-ClientServerVector {
     $portInput = (Read-Host "  Port number [default: 8080]").Trim()
     $port      = if ($portInput) { $portInput } else { '8080' }
 
-    $dryRunInput = (Read-Host "  Run as DRY RUN? (validates manifest, no real downloads) [Y/N]").Trim()
+    $executeInput = (Read-Host "  Execute samples after download, not just download them? [Y/N]").Trim()
+    $doExecute    = $executeInput -ieq 'Y'
+
+    $dryRunInput = (Read-Host "  Run as DRY RUN? (fetches file listing, no real downloads) [Y/N]").Trim()
     $isDryRun    = $dryRunInput -ieq 'Y'
 
     Write-Host ""
@@ -411,7 +425,8 @@ function Invoke-ClientServerVector {
         '-Control', "`"$Control`"",
         '-ResultsPath', "`"$ResultsPath`""
     )
-    if ($isDryRun) { $scriptArgs += '-DryRun' }
+    if ($doExecute) { $scriptArgs += '-Execute' }
+    if ($isDryRun)  { $scriptArgs += '-DryRun' }
 
     Write-Host ""
     Write-Host "  [>] Launching: $ScriptPath" -ForegroundColor Cyan
@@ -727,6 +742,74 @@ function Invoke-ZipExtraction {
     }
 
     Write-Host "  [+] Extracted to: $DestPath" -ForegroundColor Green
+}
+
+# =============================================================================
+# MULTI-ZIP STAGING
+# Extracts every ZIP in $Zips to its own subfolder under $StagingRoot, then
+# copies every file into a single combined-TIMESTAMP folder so v1.1 can test
+# them all in one batch. Filenames that collide across ZIPs are prefixed
+# with their ZIP's base name to keep them distinct.
+# =============================================================================
+
+function Merge-StagingFromZips {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][array]$Zips,
+        [Parameter(Mandatory)][string]$StagingRoot,
+        [string]$Password = ''
+    )
+
+    $timestamp   = Get-Date -Format 'yyyyMMdd-HHmmss'
+    $combinedDir = Join-Path $StagingRoot "combined-$timestamp"
+    New-Item -ItemType Directory -Path $combinedDir -Force | Out-Null
+
+    $seenNames  = @{}
+    $totalFiles = 0
+    $warnings   = @()
+
+    foreach ($zip in $Zips) {
+        $baseName = [System.IO.Path]::GetFileNameWithoutExtension($zip.Name)
+        $destDir  = Join-Path $StagingRoot $baseName
+
+        Write-Host "  [*] Extracting $($zip.Name)..." -ForegroundColor Yellow
+        try {
+            Invoke-ZipExtraction -ZipPath $zip.FullName -DestPath $destDir -Password $Password
+        } catch {
+            $msg = "Skipped $($zip.Name): $($_.Exception.Message)"
+            $warnings += $msg
+            Write-Host "  [!] $msg" -ForegroundColor Red
+            continue
+        }
+
+        $sampleFiles = @(Get-ChildItem -Path $destDir -File)
+        Write-Host "    $($sampleFiles.Count) file(s) extracted" -ForegroundColor DarkGray
+
+        foreach ($f in $sampleFiles) {
+            # Keep filenames unique across the combined set
+            $name = $f.Name
+            if ($seenNames.ContainsKey($name)) {
+                $newName = "$baseName-$name"
+                $warnings += "Duplicate filename '$name' (from $($zip.Name)) renamed to '$newName'"
+                $name = $newName
+            }
+            $seenNames[$name] = $true
+
+            Copy-Item -Path $f.FullName -Destination (Join-Path $combinedDir $name) -Force
+            $totalFiles++
+        }
+    }
+
+    Write-Host ""
+    Write-Host "  [+] Combined staging : $combinedDir" -ForegroundColor Green
+    Write-Host "  [+] Total samples    : $totalFiles from $($Zips.Count) ZIP(s)" -ForegroundColor Green
+
+    if ($warnings) {
+        Write-Host ""
+        foreach ($w in $warnings) { Write-Host "  [!] $w" -ForegroundColor Yellow }
+    }
+
+    return $combinedDir
 }
 
 # =============================================================================
