@@ -54,7 +54,7 @@ All results are saved to `results/raw/technique-results.csv` (technique tests) a
 |---|--------|--------|---------------|
 | 1 | Malware Introduction | Active (6 vectors) | File delivery, removable media, internet download, fileless PS, DLL sideload |
 | 2 | Exploitation | Stubs | Placeholder — not yet implemented |
-| 3 | Privilege Escalation | Partial | v3.2 UAC Bypass implemented; v3.1 and v3.3 are stubs |
+| 3 | Privilege Escalation | Partial | v3.2 UAC Bypass and v3.3 LOLBin signed-binary proxy execution implemented; v3.1 is a stub |
 | 4 | Persistence | Active (3 vectors) | Registry run keys, scheduled tasks, startup folder |
 
 ---

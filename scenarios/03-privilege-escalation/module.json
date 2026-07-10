@@ -31,9 +31,13 @@
       "name": "Living-off-the-Land (LOLBin) Signed Binary",
       "description": "Abuses a Microsoft-signed binary (LOLBin) to proxy execution of an unsigned payload, evading application whitelisting and binary-trust policies.",
       "mitre": "T1218",
-      "script": "v3.3-lotl-signed-binary.ps1",
-      "type": "not-implemented",
-      "supports": []
+      "script": "v3.3-lotl-signed-binary/v3.3-lotl-signed-binary.ps1",
+      "type": "technique",
+      "techniques": ["MshtaHTA", "Regsvr32SCT", "Rundll32Advpack", "InfDefaultInstall", "All"],
+      "individual_techniques": ["MshtaHTA", "Regsvr32SCT", "Rundll32Advpack", "InfDefaultInstall"],
+      "marker_file": "C:\\Windows\\Temp\\art-v3.3-{technique}.txt",
+      "default_technique": "MshtaHTA",
+      "supports": ["technique"]
     }
   ]
 }
