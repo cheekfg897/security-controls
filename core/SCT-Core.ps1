@@ -480,6 +480,25 @@ function Invoke-TechniqueVector {
 
     $technique = $techniques[$idx - 1]
 
+    $markerPattern = $Vector.marker_file
+    $individualTechniques = @($Vector.individual_techniques)
+    if ($individualTechniques.Count -eq 0) {
+        $individualTechniques = @($techniques | Where-Object { $_ -ne 'All' })
+    }
+
+    $toCheck = if ($technique -eq 'All') {
+        $individualTechniques
+    } else {
+        @($technique)
+    }
+
+    if ($markerPattern) {
+        foreach ($t in $toCheck) {
+            $markerPath = $markerPattern -replace '\{technique\}', $t
+            Remove-Item -LiteralPath $markerPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     Write-Host ""
     Write-Host "  [*] Open your EDR/AV console and start monitoring before proceeding." -ForegroundColor Yellow
     Read-Host "  Press Enter to run: $technique"
@@ -488,6 +507,9 @@ function Invoke-TechniqueVector {
         '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$ScriptPath`"",
         '-Technique', $technique
     )
+    if (Test-SCTScriptSupportsParameter -ScriptPath $ScriptPath -ParameterName 'NoCleanupPrompt') {
+        $scriptArgs += '-NoCleanupPrompt'
+    }
 
     Write-Host ""
     Write-Host "  [>] Launching: $ScriptPath -Technique $technique" -ForegroundColor Cyan
@@ -497,30 +519,21 @@ function Invoke-TechniqueVector {
     Start-Process -FilePath 'powershell.exe' -ArgumentList $scriptArgs -Wait -NoNewWindow
 
     # Post-run: check marker files and write a result row per technique
-    $markerPattern = $Vector.marker_file
     if ($markerPattern -and $TechResultsPath) {
-        $individualTechniques = @($Vector.individual_techniques)
-
-        # "All" runs every sub-technique - check each individual marker separately
-        # Single technique selection - check just that one marker
-        $toCheck = if ($technique -eq 'All' -and $individualTechniques.Count -gt 0) {
-            $individualTechniques
-        } else {
-            @($technique)
-        }
-
         Write-Host ""
         Write-Host "  [*] Checking results..." -ForegroundColor Cyan
         Write-Host ""
 
+        $executedCount = 0
         foreach ($t in $toCheck) {
             $markerPath = $markerPattern -replace '\{technique\}', $t
-            $executed   = Test-SCTMarkerFile -Path $markerPath -After $startTime
+            $executed   = Test-SCTMarkerFile -Path $markerPath
             $outcome    = if ($executed) { 'EXECUTED' } else { 'BLOCKED' }
             $notes      = if ($executed) { "marker found: $markerPath" } else { "marker absent after test: $markerPath" }
             $icon       = if ($executed) { '[!]' } else { '[+]' }
             $color      = if ($executed) { 'Red' } else { 'Green' }
 
+            if ($executed) { $executedCount++ }
             Write-Host ("  {0}  {1,-28}  {2}" -f $icon, $t, $outcome) -ForegroundColor $color
 
             Write-SCTResult -Path $TechResultsPath -Timestamp $startTime -Control $Control `
@@ -529,6 +542,7 @@ function Invoke-TechniqueVector {
         }
 
         Write-Host ""
+        Write-Host "  $executedCount of $($toCheck.Count) techniques executed this run" -ForegroundColor Cyan
         Write-Host "  [i] [!] Red = executed (not blocked by control)" -ForegroundColor DarkGray
         Write-Host "  [i] [+] Green = blocked by control" -ForegroundColor DarkGray
     }
@@ -615,7 +629,18 @@ function Invoke-FilelessVector {
     }
 
     $technique   = $techniques[$idx - 1]
-    $needsServer = $remoteTechniques -contains $technique
+    $individualTechniques = @($techniques | Where-Object { $_ -notlike 'All*' })
+    $individualRemoteTechniques = @($remoteTechniques | Where-Object { $_ -notlike 'All*' })
+    $toCheck = if ($technique -eq 'All') {
+        $individualTechniques
+    } elseif ($technique -eq 'AllRemote') {
+        $individualRemoteTechniques
+    } elseif ($technique -eq 'AllLocal') {
+        @($individualTechniques | Where-Object { $individualRemoteTechniques -notcontains $_ })
+    } else {
+        @($technique)
+    }
+    $needsServer = ($remoteTechniques -contains $technique) -or (@($toCheck | Where-Object { $remoteTechniques -contains $_ }).Count -gt 0)
 
     # Only prompt for server IP if the chosen technique actually needs one
     $serverIP = $null
@@ -647,8 +672,15 @@ function Invoke-FilelessVector {
         '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$ScriptPath`"",
         '-Technique', $technique
     )
+    if (Test-SCTScriptSupportsParameter -ScriptPath $ScriptPath -ParameterName 'NoCleanupPrompt') {
+        $scriptArgs += '-NoCleanupPrompt'
+    }
     if ($serverIP) {
         $scriptArgs += @('-ServerIP', $serverIP, '-Port', $port)
+    }
+
+    foreach ($t in $toCheck) {
+        Remove-Item -LiteralPath "C:\Windows\Temp\art-marker-$t.txt" -Force -ErrorAction SilentlyContinue
     }
 
     Write-Host ""
@@ -658,26 +690,32 @@ function Invoke-FilelessVector {
     $startTime = Get-Date
     Start-Process -FilePath 'powershell.exe' -ArgumentList $scriptArgs -Wait -NoNewWindow
 
-    # Post-run: check whether calc.exe spawned as proof-of-execution
+    # Post-run: check one marker per fileless sub-technique.
     if ($TechResultsPath) {
         Write-Host ""
         Write-Host "  [*] Checking results..." -ForegroundColor Cyan
 
-        $result = Test-SCTCalcSpawned -After $startTime
+        $executedCount = 0
+        foreach ($t in $toCheck) {
+            $markerPath = "C:\Windows\Temp\art-marker-$t.txt"
+            $executed = Test-SCTMarkerFile -Path $markerPath
+            $outcome = if ($executed) { 'EXECUTED' } else { 'BLOCKED' }
+            $notes = if ($executed) { "marker found: $markerPath" } else { "marker absent after test: $markerPath" }
+            $icon  = if ($executed) { '[!]' } else { '[+]' }
+            $color = if ($executed) { 'Red' } else { 'Green' }
 
-        if ($result) {
-            $icon  = if ($result.Outcome -eq 'EXECUTED') { '[!]' } else { '[+]' }
-            $color = if ($result.Outcome -eq 'EXECUTED') { 'Red' } else { 'Green' }
+            if ($executed) { $executedCount++ }
             Write-Host ""
-            Write-Host ("  {0}  {1,-28}  {2}" -f $icon, $technique, $result.Outcome) -ForegroundColor $color
-            Write-Host "      $($result.Notes)" -ForegroundColor DarkGray
+            Write-Host ("  {0}  {1,-28}  {2}" -f $icon, $t, $outcome) -ForegroundColor $color
+            Write-Host "      $notes" -ForegroundColor DarkGray
 
             Write-SCTResult -Path $TechResultsPath -Timestamp $startTime -Control $Control `
-                -VectorId $Vector.id -VectorName $Vector.name -Technique $technique `
-                -Outcome $result.Outcome -Notes $result.Notes
+                -VectorId $Vector.id -VectorName $Vector.name -Technique $t `
+                -Outcome $outcome -Notes $notes
         }
 
         Write-Host ""
+        Write-Host "  $executedCount of $($toCheck.Count) techniques executed this run" -ForegroundColor Cyan
         Write-Host "  [i] [!] Red = executed (not blocked by control)" -ForegroundColor DarkGray
         Write-Host "  [i] [+] Green = blocked by control" -ForegroundColor DarkGray
     }
@@ -848,20 +886,51 @@ function Write-SCTResult {
 }
 
 # =============================================================================
-# MARKER FILE CHECK  -  returns $true if the file was written after $After.
-# A brief sleep gives the sub-process time to flush the file to disk.
+# MARKER FILE CHECK  -  returns $true if the expected marker file exists.
+# Invoke-TechniqueVector removes expected markers before launch, so presence
+# after the script exits is proof that the current run wrote the marker.
 # =============================================================================
 
 function Test-SCTMarkerFile {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)] [string]$Path,
-        [Parameter(Mandatory)] [datetime]$After
+        [Parameter(Mandatory)] [string]$Path
     )
 
     Start-Sleep -Milliseconds 800
-    if (-not (Test-Path $Path)) { return $false }
-    return ((Get-Item $Path).LastWriteTime -gt $After)
+    return (Test-Path -LiteralPath $Path)
+}
+
+# =============================================================================
+# SCRIPT PARAMETER CHECK
+# Used by the launcher to opt into newer script parameters without breaking
+# older vectors that do not know about them.
+# =============================================================================
+
+function Test-SCTScriptSupportsParameter {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$ScriptPath,
+        [Parameter(Mandatory)] [string]$ParameterName
+    )
+
+    try {
+        $tokens = $null
+        $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile(
+            $ScriptPath,
+            [ref]$tokens,
+            [ref]$errors
+        )
+        if ($errors.Count -gt 0 -or -not $ast.ParamBlock) { return $false }
+
+        $parameterNames = @($ast.ParamBlock.Parameters | ForEach-Object {
+            $_.Name.VariablePath.UserPath
+        })
+        return ($parameterNames -contains $ParameterName)
+    } catch {
+        return $false
+    }
 }
 
 # =============================================================================

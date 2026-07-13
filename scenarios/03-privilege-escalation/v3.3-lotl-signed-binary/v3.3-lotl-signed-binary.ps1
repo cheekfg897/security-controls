@@ -36,7 +36,8 @@
 
 param(
     [ValidateSet('MshtaHTA','Regsvr32SCT','Rundll32Advpack','InfDefaultInstall','All')]
-    [string]$Technique = 'MshtaHTA'
+    [string]$Technique = 'MshtaHTA',
+    [switch]$NoCleanupPrompt
 )
 
 $tempDir    = "C:\Windows\Temp"
@@ -349,7 +350,7 @@ function Test-All {
     foreach ($t in $tests) {
         $results += @{ Name = $t.Name; Success = (& $t.Fn) }
         Write-Host "`n[!] Check EDR/AV console before continuing." -ForegroundColor Yellow
-        Read-Host "    Press Enter for next sub-test"
+        [void](Read-Host "    Press Enter for next sub-test")
     }
     return $results
 }
@@ -385,9 +386,11 @@ switch ($Technique) {
         $results = Test-All
         Write-Report -Results $results
         Write-Host "`n[*] Marker files in $tempDir (art-v3.3-*.txt) left for review." -ForegroundColor Yellow
-        $c = Read-Host "Clean up now? (Y/N)"
-        if ($c -eq 'Y' -or $c -eq 'y') {
-            Invoke-Cleanup -Names @('MshtaHTA','Regsvr32SCT','Rundll32Advpack','InfDefaultInstall')
+        if (-not $NoCleanupPrompt) {
+            $c = Read-Host "Clean up now? (Y/N)"
+            if ($c -eq 'Y' -or $c -eq 'y') {
+                Invoke-Cleanup -Names @('MshtaHTA','Regsvr32SCT','Rundll32Advpack','InfDefaultInstall')
+            }
         }
     }
     default {
@@ -406,7 +409,9 @@ switch ($Technique) {
 
         $color = if ($success) { 'Green' } else { 'Red' }
         Write-Host "`n[RESULT] Technique '$Technique': $(if ($success) { 'EXECUTED' } else { 'BLOCKED' })" -ForegroundColor $color
-        $c = Read-Host "Clean up now? (Y/N)"
-        if ($c -eq 'Y' -or $c -eq 'y') { Invoke-Cleanup -Names @($Technique) }
+        if (-not $NoCleanupPrompt) {
+            $c = Read-Host "Clean up now? (Y/N)"
+            if ($c -eq 'Y' -or $c -eq 'y') { Invoke-Cleanup -Names @($Technique) }
+        }
     }
 }

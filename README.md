@@ -140,6 +140,8 @@ The new vector appears in the menu automatically. No changes to the launcher or 
 
 ## Adding a new module
 
+Shortcut: run `.\scripts\New-SCTModuleJson.ps1` from the repo root. It will prompt for the module fields, add one or more vectors, and write `module.json` for you. Use `-NoWrite` to preview only, or `-IncludeSupports` if you want to keep the legacy `supports` metadata in generated files.
+
 1. Create a numbered folder: `scenarios/05-lateral-movement/`
 2. Create `module.json` in it (copy any existing one as a starting point):
 
@@ -156,8 +158,7 @@ The new vector appears in the menu automatically. No changes to the launcher or 
       "description": "Authenticates to a remote host using a captured NTLM hash. MITRE T1550.002.",
       "mitre": "T1550.002",
       "script": "v5.1-pass-the-hash/v5.1-pth.ps1",
-      "type": "not-implemented",
-      "supports": []
+      "type": "not-implemented"
     }
   ]
 }
