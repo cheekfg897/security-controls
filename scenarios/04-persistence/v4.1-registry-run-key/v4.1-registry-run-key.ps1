@@ -36,7 +36,10 @@
 param(
     [ValidateSet('HKCURunKey','HKCURunOnce','StartupVBS','StartupBAT','SystemBC','All')]
     [string]$Technique = 'HKCURunKey',
-    [switch]$NoCleanupPrompt
+    [switch]$NoCleanupPrompt,
+    [switch]$NoReport,
+    [switch]$NoPause,
+    [switch]$CleanupOnly
 )
 
 $tempDir    = "C:\Windows\Temp"
@@ -117,7 +120,7 @@ function Test-HKCURunKey {
     Write-Host "    Write succeeded." -ForegroundColor Green
 
     Write-Host "`n[*] Verifying key was written..." -ForegroundColor Yellow
-    reg query "HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" /V $valueName
+    reg query "HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" /V $valueName | Out-Host
 
     Write-Host "`n[*] Executing payload now (simulates next-login trigger)..." -ForegroundColor Yellow
     Write-Host "    [Detection: Sysmon 1 - powershell.exe with -EncodedCommand and -WindowStyle Hidden]" -ForegroundColor DarkGray
@@ -361,8 +364,10 @@ function Test-All {
     $results = @()
     foreach ($t in $tests) {
         $results += @{ Name = $t.Name; Success = (& $t.Fn) }
-        Write-Host "`n[!] Check EDR/AV console before continuing." -ForegroundColor Yellow
-        [void](Read-Host "    Press Enter for next sub-test")
+        if (-not $NoPause) {
+            Write-Host "`n[!] Check EDR/AV console before continuing." -ForegroundColor Yellow
+            [void](Read-Host "    Press Enter for next sub-test")
+        }
     }
     return $results
 }
@@ -390,13 +395,20 @@ function Write-Report {
 # MAIN
 # ==============================================================================
 
+if ($CleanupOnly) {
+    Invoke-Cleanup -Names @('HKCURunKey','HKCURunOnce','StartupVBS','StartupBAT','SystemBC')
+    exit 0
+}
+
 Write-Host "`n[TEST] Registry Run Keys / Startup Folder Persistence (Vector 4.1)" -ForegroundColor Cyan
 Write-Host "  MITRE: T1547.001  |  Phase 4  |  Persistence`n"
 
 switch ($Technique) {
     'All' {
         $results = Test-All
-        Write-Report -Results $results
+        if (-not $NoReport) {
+            Write-Report -Results $results
+        }
         Write-Host "`n[*] Marker files in $tempDir (art-v4.1-*.txt) left for review." -ForegroundColor Yellow
         if (-not $NoCleanupPrompt) {
             $c = Read-Host "Clean up now? (Y/N)"

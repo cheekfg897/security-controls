@@ -43,7 +43,10 @@
 param(
     [ValidateSet('SchtasksOnLogon','PwshCmdlet','B64Registry','SystemTask','HiddenXML','All')]
     [string]$Technique = 'SchtasksOnLogon',
-    [switch]$NoCleanupPrompt
+    [switch]$NoCleanupPrompt,
+    [switch]$NoReport,
+    [switch]$NoPause,
+    [switch]$CleanupOnly
 )
 
 $tempDir = "C:\Windows\Temp"
@@ -135,7 +138,7 @@ function Test-SchtasksOnLogon {
     Write-Host "    Task created successfully." -ForegroundColor Green
 
     Write-Host "`n[*] Verifying task was registered..." -ForegroundColor Yellow
-    schtasks /query /tn $tn /fo LIST 2>&1 | Select-String "Task Name|Status|Schedule Type"
+    schtasks /query /tn $tn /fo LIST 2>&1 | Select-String "Task Name|Status|Schedule Type" | Out-Host
 
     Write-Host "`n[*] Executing task now (simulates login trigger)..." -ForegroundColor Yellow
     Write-Host "    [Detection: Sysmon 1 - powershell.exe -WindowStyle Hidden -EncodedCommand spawned by TaskScheduler]" -ForegroundColor DarkGray
@@ -331,7 +334,7 @@ function Test-SystemTask {
     Write-Host "    Task created successfully." -ForegroundColor Green
 
     Write-Host "`n[*] Verifying SYSTEM principal in task definition..." -ForegroundColor Yellow
-    schtasks /query /tn $tn /fo LIST 2>&1 | Select-String "Task Name|Run As User|Status"
+    schtasks /query /tn $tn /fo LIST 2>&1 | Select-String "Task Name|Run As User|Status" | Out-Host
 
     Write-Host "`n[*] Running task now (executes as NT AUTHORITY\SYSTEM)..." -ForegroundColor Yellow
     Write-Host "    [Detection: Sysmon 1 - powershell.exe spawned by Task Scheduler with SYSTEM token]" -ForegroundColor DarkGray
@@ -490,8 +493,10 @@ function Test-All {
     $results = @()
     foreach ($t in $tests) {
         $results += @{ Name = $t.Name; Success = (& $t.Fn) }
-        Write-Host "`n[!] Check EDR/AV console before continuing." -ForegroundColor Yellow
-        [void](Read-Host "    Press Enter for next sub-test")
+        if (-not $NoPause) {
+            Write-Host "`n[!] Check EDR/AV console before continuing." -ForegroundColor Yellow
+            [void](Read-Host "    Press Enter for next sub-test")
+        }
     }
     return $results
 }
@@ -519,13 +524,20 @@ function Write-Report {
 # MAIN
 # ==============================================================================
 
+if ($CleanupOnly) {
+    Invoke-Cleanup -Names @('SchtasksOnLogon','PwshCmdlet','B64Registry','SystemTask','HiddenXML')
+    exit 0
+}
+
 Write-Host "`n[TEST] Scheduled Task/Job Persistence (Vector 4.2)" -ForegroundColor Cyan
 Write-Host "  MITRE: T1053.005  |  Phase 4  |  Persistence`n"
 
 switch ($Technique) {
     'All' {
         $results = Test-All
-        Write-Report -Results $results
+        if (-not $NoReport) {
+            Write-Report -Results $results
+        }
         Write-Host "`n[*] Marker files in $tempDir (art-v4.2-*.txt) left for review." -ForegroundColor Yellow
         if (-not $NoCleanupPrompt) {
             $c = Read-Host "Clean up now? (Y/N)"

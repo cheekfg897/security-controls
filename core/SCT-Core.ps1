@@ -444,7 +444,14 @@ function Invoke-ClientServerVector {
 
 function Invoke-TechniqueVector {
     [CmdletBinding()]
-    param($Vector, [string]$ScriptPath, [string]$Control, [string]$TechResultsPath)
+    param(
+        $Vector,
+        [string]$ScriptPath,
+        [string]$Control,
+        [string]$TechResultsPath,
+        [switch]$NonInteractive,
+        [string]$RunId
+    )
 
     $techniques = @($Vector.techniques)
 
@@ -455,30 +462,37 @@ function Invoke-TechniqueVector {
         return
     }
 
-    Write-Host ""
-    Write-Host "  Available techniques:" -ForegroundColor White
-    Write-Host ""
+    if ($NonInteractive) {
+        if ($techniques -notcontains 'All') {
+            throw "Vector $($Vector.id) does not support the 'All' technique required for non-interactive execution."
+        }
+        $technique = 'All'
+    } else {
+        Write-Host ""
+        Write-Host "  Available techniques:" -ForegroundColor White
+        Write-Host ""
 
-    for ($i = 0; $i -lt $techniques.Count; $i++) {
-        $t     = $techniques[$i]
-        $color = if ($t -eq 'All') { 'Yellow' } else { 'White' }
-        Write-Host ("  [{0}]  {1}" -f ($i + 1), $t) -ForegroundColor $color
+        for ($i = 0; $i -lt $techniques.Count; $i++) {
+            $t     = $techniques[$i]
+            $color = if ($t -eq 'All') { 'Yellow' } else { 'White' }
+            Write-Host ("  [{0}]  {1}" -f ($i + 1), $t) -ForegroundColor $color
+        }
+
+        Write-Host "  [0]   Cancel" -ForegroundColor DarkGray
+        Write-Host ""
+
+        $choice = (Read-Host "  Select technique").Trim()
+        if ($choice -eq '0' -or $choice -eq '') { return }
+
+        $idx = $choice -as [int]
+        if ($idx -lt 1 -or $idx -gt $techniques.Count) {
+            Write-Host "  Invalid selection." -ForegroundColor Yellow
+            Read-Host "`n  Press Enter to return"
+            return
+        }
+
+        $technique = $techniques[$idx - 1]
     }
-
-    Write-Host "  [0]   Cancel" -ForegroundColor DarkGray
-    Write-Host ""
-
-    $choice = (Read-Host "  Select technique").Trim()
-    if ($choice -eq '0' -or $choice -eq '') { return }
-
-    $idx = $choice -as [int]
-    if ($idx -lt 1 -or $idx -gt $techniques.Count) {
-        Write-Host "  Invalid selection." -ForegroundColor Yellow
-        Read-Host "`n  Press Enter to return"
-        return
-    }
-
-    $technique = $techniques[$idx - 1]
 
     $markerPattern = $Vector.marker_file
     $individualTechniques = @($Vector.individual_techniques)
@@ -491,6 +505,7 @@ function Invoke-TechniqueVector {
     } else {
         @($technique)
     }
+    $runResults = @()
 
     if ($markerPattern) {
         foreach ($t in $toCheck) {
@@ -500,8 +515,12 @@ function Invoke-TechniqueVector {
     }
 
     Write-Host ""
-    Write-Host "  [*] Open your EDR/AV console and start monitoring before proceeding." -ForegroundColor Yellow
-    Read-Host "  Press Enter to run: $technique"
+    if ($NonInteractive) {
+        Write-Host "  [*] Running $technique without prompts." -ForegroundColor Yellow
+    } else {
+        Write-Host "  [*] Open your EDR/AV console and start monitoring before proceeding." -ForegroundColor Yellow
+        Read-Host "  Press Enter to run: $technique"
+    }
 
     $scriptArgs = @(
         '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$ScriptPath`"",
@@ -509,6 +528,12 @@ function Invoke-TechniqueVector {
     )
     if (Test-SCTScriptSupportsParameter -ScriptPath $ScriptPath -ParameterName 'NoCleanupPrompt') {
         $scriptArgs += '-NoCleanupPrompt'
+    }
+    if (Test-SCTScriptSupportsParameter -ScriptPath $ScriptPath -ParameterName 'NoReport') {
+        $scriptArgs += '-NoReport'
+    }
+    if ($NonInteractive -and (Test-SCTScriptSupportsParameter -ScriptPath $ScriptPath -ParameterName 'NoPause')) {
+        $scriptArgs += '-NoPause'
     }
 
     Write-Host ""
@@ -538,7 +563,16 @@ function Invoke-TechniqueVector {
 
             Write-SCTResult -Path $TechResultsPath -Timestamp $startTime -Control $Control `
                 -VectorId $Vector.id -VectorName $Vector.name -Technique $t `
-                -Outcome $outcome -Notes $notes
+                -Outcome $outcome -Notes $notes -RunId $RunId
+
+            $runResults += [pscustomobject]@{
+                run_id    = $RunId
+                control   = $Control
+                vector_id = $Vector.id
+                technique = $t
+                outcome   = $outcome
+                notes     = $notes
+            }
         }
 
         Write-Host ""
@@ -547,7 +581,150 @@ function Invoke-TechniqueVector {
         Write-Host "  [i] [+] Green = blocked by control" -ForegroundColor DarkGray
     }
 
+    if ($NonInteractive) {
+        return $runResults
+    }
+
     Read-Host "`n  Press Enter to return"
+}
+
+# =============================================================================
+# NON-INTERACTIVE MODULE RUNNER
+# Runs every technique vector in Module 04 without menu, pause, or cleanup
+# prompts. Results are recorded before each vector is cleaned up.
+# =============================================================================
+
+function Test-SCTAdministrator {
+    [CmdletBinding()]
+    param()
+
+    $identity  = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = New-Object -TypeName Security.Principal.WindowsPrincipal -ArgumentList $identity
+    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Start-SCTCountdown {
+    [CmdletBinding()]
+    param([ValidateRange(0, 300)] [int]$Seconds)
+
+    for ($remaining = $Seconds; $remaining -gt 0; $remaining--) {
+        Write-Host ("  Starting in {0} second{1}..." -f $remaining, $(if ($remaining -eq 1) { '' } else { 's' })) -ForegroundColor Yellow
+        Start-Sleep -Seconds 1
+    }
+}
+
+function Invoke-SCTVectorCleanup {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)] [string]$ScriptPath)
+
+    $cleanupArgs = @(
+        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$ScriptPath`"",
+        '-CleanupOnly', '-NoCleanupPrompt', '-NoPause', '-NoReport'
+    )
+    $process = Start-Process -FilePath 'powershell.exe' -ArgumentList $cleanupArgs -Wait -NoNewWindow -PassThru
+    if ($process.ExitCode -ne 0) {
+        Write-Host "  [!] Cleanup script exited with code $($process.ExitCode): $ScriptPath" -ForegroundColor Red
+    }
+}
+
+function Show-SCTModuleRunSummary {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [array]$Results,
+        [Parameter(Mandatory)] [string]$RunId,
+        [Parameter(Mandatory)] [string]$TechResultsPath
+    )
+
+    $total    = $Results.Count
+    $executed = @($Results | Where-Object { $_.outcome -eq 'EXECUTED' }).Count
+    $blocked  = @($Results | Where-Object { $_.outcome -eq 'BLOCKED' }).Count
+
+    Write-Host ""
+    Write-Host "  ============================================================================" -ForegroundColor Cyan
+    Write-Host "  MODULE 04 RUN COMPLETE" -ForegroundColor Cyan
+    Write-Host "  ============================================================================" -ForegroundColor Cyan
+    Write-Host "  Run ID   : $RunId" -ForegroundColor White
+    Write-Host "  Results  : $total total | $executed executed | $blocked blocked" -ForegroundColor White
+    Write-Host "  CSV      : $TechResultsPath" -ForegroundColor DarkGray
+
+    foreach ($group in ($Results | Group-Object vector_id | Sort-Object Name)) {
+        $groupExecuted = @($group.Group | Where-Object { $_.outcome -eq 'EXECUTED' }).Count
+        $groupBlocked  = @($group.Group | Where-Object { $_.outcome -eq 'BLOCKED' }).Count
+        Write-Host ("  Vector {0}: {1} total | {2} executed | {3} blocked" -f $group.Name, $group.Count, $groupExecuted, $groupBlocked) -ForegroundColor White
+    }
+}
+
+function Invoke-SCTModuleNonInteractive {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] $Module,
+        [Parameter(Mandatory)] [string]$Control,
+        [Parameter(Mandatory)] [string]$TechResultsPath,
+        [ValidateRange(0, 300)] [int]$StartDelaySeconds = 10,
+        [ValidateRange(0, 300)] [int]$InterVectorDelaySeconds = 3
+    )
+
+    if ($Module.id -ne '04') {
+        throw "Non-interactive module runs are currently supported only for Module 04."
+    }
+    if (-not (Test-SCTAdministrator)) {
+        throw "Module 04 full runs require an elevated PowerShell session. Open PowerShell as Administrator and run the command again."
+    }
+
+    $vectors = @($Module.vectors)
+    if ($vectors.Count -eq 0 -or @($vectors | Where-Object { $_.type -ne 'technique' }).Count -gt 0) {
+        throw "Module 04 must contain only technique vectors for a non-interactive run."
+    }
+
+    $techniqueCount = 0
+    foreach ($vector in $vectors) {
+        $scriptPath = Join-Path $Module.ScriptDir $vector.script
+        if (-not (Test-Path -LiteralPath $scriptPath)) {
+            throw "Script not found: $scriptPath"
+        }
+        foreach ($parameter in @('NoPause', 'NoReport', 'CleanupOnly')) {
+            if (-not (Test-SCTScriptSupportsParameter -ScriptPath $scriptPath -ParameterName $parameter)) {
+                throw "Vector $($vector.id) must support -$parameter for a non-interactive Module 04 run."
+            }
+        }
+        $techniqueCount += @($vector.individual_techniques).Count
+    }
+
+    $runId = "M04-" + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + ([guid]::NewGuid().ToString('N').Substring(0, 6))
+
+    Write-Host ""
+    Write-Host "  Module 04 non-interactive run" -ForegroundColor Cyan
+    Write-Host "  Control  : $Control" -ForegroundColor White
+    Write-Host "  Vectors  : $($vectors.Count)" -ForegroundColor White
+    Write-Host "  Tests    : $techniqueCount" -ForegroundColor White
+    Write-Host "  Run ID   : $runId" -ForegroundColor White
+    Write-Host "  Cleanup  : automatic after each vector is recorded" -ForegroundColor DarkGray
+    Start-SCTCountdown -Seconds $StartDelaySeconds
+
+    $runResults = @()
+    for ($index = 0; $index -lt $vectors.Count; $index++) {
+        $vector     = $vectors[$index]
+        $scriptPath = Join-Path $Module.ScriptDir $vector.script
+
+        Write-Host ""
+        Write-Host "  [>] Vector $($vector.id): $($vector.name)" -ForegroundColor Cyan
+        try {
+            $vectorResults = @(Invoke-TechniqueVector -Vector $vector -ScriptPath $scriptPath -Control $Control `
+                -TechResultsPath $TechResultsPath -NonInteractive -RunId $runId)
+            $runResults += $vectorResults
+        } finally {
+            Write-Host "  [*] Cleaning up Vector $($vector.id)..." -ForegroundColor DarkGray
+            Invoke-SCTVectorCleanup -ScriptPath $scriptPath
+        }
+
+        if ($index -lt ($vectors.Count - 1) -and $InterVectorDelaySeconds -gt 0) {
+            Write-Host "  Waiting $InterVectorDelaySeconds seconds before the next vector..." -ForegroundColor DarkGray
+            Start-Sleep -Seconds $InterVectorDelaySeconds
+        }
+    }
+
+    Show-SCTModuleRunSummary -Results $runResults -RunId $runId -TechResultsPath $TechResultsPath
+    return $runResults
 }
 
 # =============================================================================
@@ -860,6 +1037,7 @@ function Write-SCTResult {
     param(
         [Parameter(Mandatory)] [string]$Path,
         [Parameter(Mandatory)] [datetime]$Timestamp,
+        [string]$RunId = '',
         [Parameter(Mandatory)] [string]$Control,
         [Parameter(Mandatory)] [string]$VectorId,
         [Parameter(Mandatory)] [string]$VectorName,
@@ -874,8 +1052,11 @@ function Write-SCTResult {
         New-Item -ItemType Directory -Path $dir -Force | Out-Null
     }
 
-    [pscustomobject]@{
+    Update-SCTTechniqueResultsSchema -Path $Path
+
+    [pscustomobject][ordered]@{
         timestamp   = $Timestamp.ToString('o')
+        run_id      = $RunId
         control     = $Control
         vector_id   = $VectorId
         vector_name = $VectorName
@@ -883,6 +1064,40 @@ function Write-SCTResult {
         outcome     = $Outcome
         notes       = $Notes
     } | Export-Csv -Path $Path -Append -NoTypeInformation -Encoding UTF8
+}
+
+function Update-SCTTechniqueResultsSchema {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)] [string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) { return }
+
+    $header = Get-Content -LiteralPath $Path -TotalCount 1 -ErrorAction Stop
+    if ($header -match '(^|,)"?run_id"?(,|$)') { return }
+
+    $dir      = Split-Path -Path $Path -Parent
+    $tempPath = Join-Path $dir (".{0}.{1}.tmp" -f (Split-Path -Path $Path -Leaf), [guid]::NewGuid())
+    $existing = @(Import-Csv -LiteralPath $Path -Encoding UTF8)
+
+    if ($existing.Count -gt 0) {
+        $existing | ForEach-Object {
+            [pscustomobject][ordered]@{
+                timestamp   = $_.timestamp
+                run_id      = ''
+                control     = $_.control
+                vector_id   = $_.vector_id
+                vector_name = $_.vector_name
+                technique   = $_.technique
+                outcome     = $_.outcome
+                notes       = $_.notes
+            }
+        } | Export-Csv -LiteralPath $tempPath -NoTypeInformation -Encoding UTF8
+    } else {
+        '"timestamp","run_id","control","vector_id","vector_name","technique","outcome","notes"' |
+            Set-Content -LiteralPath $tempPath -Encoding UTF8
+    }
+
+    Move-Item -LiteralPath $tempPath -Destination $Path -Force
 }
 
 # =============================================================================

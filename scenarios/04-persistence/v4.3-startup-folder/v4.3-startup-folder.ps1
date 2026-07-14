@@ -49,7 +49,10 @@
 param(
     [ValidateSet('JSEStartup','LNKShortcut','AllUsersBAT','ShellFolderRedirect','WinlogonUserinit','All')]
     [string]$Technique = 'JSEStartup',
-    [switch]$NoCleanupPrompt
+    [switch]$NoCleanupPrompt,
+    [switch]$NoReport,
+    [switch]$NoPause,
+    [switch]$CleanupOnly
 )
 
 $tempDir         = "C:\Windows\Temp"
@@ -439,8 +442,10 @@ function Test-All {
     $results = @()
     foreach ($t in $tests) {
         $results += @{ Name = $t.Name; Success = (& $t.Fn) }
-        Write-Host "`n[!] Check EDR/AV console before continuing." -ForegroundColor Yellow
-        [void](Read-Host "    Press Enter for next sub-test")
+        if (-not $NoPause) {
+            Write-Host "`n[!] Check EDR/AV console before continuing." -ForegroundColor Yellow
+            [void](Read-Host "    Press Enter for next sub-test")
+        }
     }
     return $results
 }
@@ -468,13 +473,20 @@ function Write-Report {
 # MAIN
 # ==============================================================================
 
+if ($CleanupOnly) {
+    Invoke-Cleanup -Names @('JSEStartup','LNKShortcut','AllUsersBAT','ShellFolderRedirect','WinlogonUserinit')
+    exit 0
+}
+
 Write-Host "`n[TEST] Startup Folder / Advanced Logon Persistence (Vector 4.3)" -ForegroundColor Cyan
 Write-Host "  MITRE: T1547.001  |  Phase 4  |  Persistence`n"
 
 switch ($Technique) {
     'All' {
         $results = Test-All
-        Write-Report -Results $results
+        if (-not $NoReport) {
+            Write-Report -Results $results
+        }
         Write-Host "`n[*] Marker files in $tempDir (art-v4.3-*.txt) left for review." -ForegroundColor Yellow
         if (-not $NoCleanupPrompt) {
             $c = Read-Host "Clean up now? (Y/N)"

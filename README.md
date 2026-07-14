@@ -6,13 +6,14 @@ Run `Start-SCT.ps1` on a Windows lab VM to test how well an EDR or AV product de
 
 ---
 
-## Before you start
+## Lab requirements
 
-- **Isolated Windows 10/11 VM** — snapshot it before running anything
-- **PowerShell 5.1+** — built-in on Windows 10/11, no extra modules needed
-- **Sysmon installed** — required for fileless vector result detection; useful for everything else. Use the [SwiftOnSecurity config](https://github.com/SwiftOnSecurity/sysmon-config) if you don't have one already
-- Clone this repo onto the VM
-- **Confirm your EDR/AV is actually active first** — run a quick check from [sanity_checks/](sanity_checks/README.md) (e.g. drop an EICAR file) before spending time on real technique tests. A "BLOCKED" result only means something if you know detection was on to begin with.
+- **One isolated Windows 10/11 VM** — take a snapshot before testing.
+- **PowerShell 5.1+** — included with Windows 10 and 11.
+- **Sysmon (recommended)** — [download Microsoft Sysinternals Sysmon](https://learn.microsoft.com/sysinternals/downloads/sysmon). It is required to record fileless-test results and useful for other tests. Use the [SwiftOnSecurity configuration](https://github.com/SwiftOnSecurity/sysmon-config) if needed. Vector 1.1 has [install, start, and verification steps](scenarios/01-malware-introduction/v1.1-known-malware/README.md#sysmon-setup-check).
+- **VM count** — most tests need one VM. Vector 1.3 needs two Windows VMs. Vector 1.5 needs a second VM only for remote download tests. Keep both VMs on an isolated network.
+- Clone this repository onto the test VM.
+- Confirm the EDR/AV is active first. Run a check from [sanity_checks/](sanity_checks/README.md), such as the EICAR test, before running other tests.
 
 ---
 
@@ -25,6 +26,16 @@ Run `Start-SCT.ps1` on a Windows lab VM to test how well an EDR or AV product de
 # Or pre-set the product name to skip the first prompt:
 .\Start-SCT.ps1 -Control SentinelOne
 ```
+
+### Run all Module 4 persistence tests
+
+Open **PowerShell as Administrator**, then run:
+
+```powershell
+.\Start-SCT.ps1 -Control SentinelOne -RunModule 04 -NonInteractive
+```
+
+This runs all 15 Module 4 sub-tests without prompts, waits 10 seconds before starting, records one CSV row per sub-test in `results/raw/technique-results.csv`, and cleans up each vector after its results are recorded. Every row from this batch has the same `run_id`.
 
 **On first launch** you'll be asked for the product under test (e.g. `SentinelOne`, `CarbonBlack`). This tags every result row so you can compare products side-by-side later.
 
@@ -62,6 +73,8 @@ All results are saved to `results/raw/technique-results.csv` (technique tests) a
 ## Malware tests (module 1)
 
 Module 1 has 6 vectors, and **they don't all take samples the same way** — where you put your files depends on which one you pick:
+
+> **Testing limitation — Vector 1.2:** This vector has **not been tested** in the current environment. The company-issued test laptop cannot accept physical USB media, and the planned air-gapped system has separate USB device-control monitoring. A virtual disk or shared-folder workaround can test file-copy detection, but is not evidence that the USB monitoring control has been tested. Validate this vector only on an authorised lab endpoint with physical USB passthrough.
 
 | Vector | Where samples go |
 |---|---|

@@ -41,7 +41,11 @@
 [CmdletBinding()]
 param(
     [string]$Control,
-    [string]$SamplesPath
+    [string]$SamplesPath,
+    [string]$RunModule,
+    [switch]$NonInteractive,
+    [ValidateRange(0, 300)] [int]$StartDelaySeconds = 10,
+    [ValidateRange(0, 300)] [int]$InterVectorDelaySeconds = 3
 )
 
 $ErrorActionPreference = 'Stop'
@@ -79,6 +83,9 @@ Show-SCTBanner
 # Prompt for security product name (once, reused for all tests)
 # ---------------------------------------------------------------------------
 if (-not $Control) {
+    if ($NonInteractive) {
+        throw "-Control is required with -NonInteractive so CSV rows identify the product under test."
+    }
     Write-Host "  Before we start, identify the security product under test." -ForegroundColor White
     Write-Host "  This label tags every result row in results.csv." -ForegroundColor DarkGray
     Write-Host "  Examples: SentinelOne, CarbonBlack, Morphisec, Baseline-NoAV" -ForegroundColor DarkGray
@@ -106,6 +113,26 @@ if ($modules.Count -eq 0) {
 }
 
 Write-Host "  Modules  : $($modules.Count) loaded" -ForegroundColor DarkGray
+
+if ($NonInteractive) {
+    if (-not $RunModule) {
+        throw "-NonInteractive requires -RunModule. Module 04 is currently supported."
+    }
+
+    $targetModule = @($modules | Where-Object { $_.id -eq $RunModule })
+    if ($targetModule.Count -ne 1) {
+        throw "Module '$RunModule' was not found. Use -RunModule 04 for the Persistence module."
+    }
+
+    [void](Invoke-SCTModuleNonInteractive -Module $targetModule[0] -Control $Control `
+        -TechResultsPath $techResultsPath -StartDelaySeconds $StartDelaySeconds `
+        -InterVectorDelaySeconds $InterVectorDelaySeconds)
+    exit 0
+}
+
+if ($RunModule) {
+    throw "-RunModule requires -NonInteractive. Use: .\Start-SCT.ps1 -Control <product> -RunModule 04 -NonInteractive"
+}
 
 # ---------------------------------------------------------------------------
 # Main menu loop
