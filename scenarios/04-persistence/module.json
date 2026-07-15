@@ -1,47 +1,31 @@
 {
   "id": "04",
-  "display_name": "Persistence",
-  "description": "Tests detection of mechanisms that allow an attacker to survive reboot, logoff, or credential change",
-  "mitre_tactics": ["Persistence"],
-  "vectors": [
+  "name": "Persistence",
+  "description": "Tests mechanisms that can survive logon, reboot, or credential changes.",
+  "techniques": [
     {
       "id": "4.1",
       "name": "Registry Run Keys / Startup Folder",
-      "description": "Five sub-tests: HKCU Run key via reg.exe, HKCU RunOnce via Set-ItemProperty, VBS in startup folder, BAT in startup folder, and SystemBC hidden-PS pattern. MITRE T1547.001.",
-      "mitre": "T1547.001",
+      "description": "Tests run keys, RunOnce, startup scripts, and a hidden PowerShell pattern.",
+      "attack_id": "T1547.001",
       "script": "v4.1-registry-run-key/v4.1-registry-run-key.ps1",
-      "type": "technique",
-      "techniques": ["HKCURunKey", "HKCURunOnce", "StartupVBS", "StartupBAT", "SystemBC", "All"],
-      "individual_techniques": ["HKCURunKey", "HKCURunOnce", "StartupVBS", "StartupBAT", "SystemBC"],
-      "marker_file": "C:\\Windows\\Temp\\art-v4.1-{technique}.txt",
-      "default_technique": "All",
-      "supports": ["technique"]
+      "subtests": ["HKCURunKey", "HKCURunOnce", "StartupVBS", "StartupBAT", "SystemBC"]
     },
     {
       "id": "4.2",
       "name": "Scheduled Task / Job",
-      "description": "Five sub-tests: schtasks.exe /create, New-ScheduledTask cmdlets, Base64+registry loader (Qakbot pattern), SYSTEM-level task, and hidden XML task (TrickBot/Industroyer2). MITRE T1053.005.",
-      "mitre": "T1053.005",
+      "description": "Tests user, cmdlet, registry-loader, SYSTEM, and hidden XML task patterns.",
+      "attack_id": "T1053.005",
       "script": "v4.2-scheduled-task/v4.2-scheduled-task.ps1",
-      "type": "technique",
-      "techniques": ["SchtasksOnLogon", "PwshCmdlet", "B64Registry", "SystemTask", "HiddenXML", "All"],
-      "individual_techniques": ["SchtasksOnLogon", "PwshCmdlet", "B64Registry", "SystemTask", "HiddenXML"],
-      "marker_file": "C:\\Windows\\Temp\\art-v4.2-{technique}.txt",
-      "default_technique": "All",
-      "supports": ["technique"]
+      "subtests": ["SchtasksOnLogon", "PwshCmdlet", "B64Registry", "SystemTask", "HiddenXML"]
     },
     {
       "id": "4.3",
       "name": "Startup Folder (Advanced)",
-      "description": "Five sub-tests: JScript Encoded (.jse) file, LNK shortcut with encoded payload, AllUsers BAT (requires admin), Shell Folder redirect (HKCU), and Winlogon Userinit append (requires admin). MITRE T1547.001.",
-      "mitre": "T1547.001",
+      "description": "Tests JSE, LNK, all-users, shell-folder redirect, and Winlogon persistence.",
+      "attack_id": "T1547.001",
       "script": "v4.3-startup-folder/v4.3-startup-folder.ps1",
-      "type": "technique",
-      "techniques": ["JSEStartup", "LNKShortcut", "AllUsersBAT", "ShellFolderRedirect", "WinlogonUserinit", "All"],
-      "individual_techniques": ["JSEStartup", "LNKShortcut", "AllUsersBAT", "ShellFolderRedirect", "WinlogonUserinit"],
-      "marker_file": "C:\\Windows\\Temp\\art-v4.3-{technique}.txt",
-      "default_technique": "All",
-      "supports": ["technique"]
+      "subtests": ["JSEStartup", "LNKShortcut", "AllUsersBAT", "ShellFolderRedirect", "WinlogonUserinit"]
     }
   ]
 }

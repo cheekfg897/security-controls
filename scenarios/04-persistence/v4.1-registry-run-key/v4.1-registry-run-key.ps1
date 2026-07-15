@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Vector 4.1: Registry Run Keys / Startup Folder Persistence (T1547.001)
+    Technique 4.1: Registry Run Keys / Startup Folder Persistence (T1547.001)
 
 .DESCRIPTION
     Five sub-tests covering the most common autostart persistence locations.
@@ -24,22 +24,28 @@
     All sub-tests write a marker file to C:\Windows\Temp\ as proof-of-execution.
     Nothing malicious runs - benign file writes only.
 
-.PARAMETER Technique
+.PARAMETER Subtest
     Which sub-test to run. Use 'All' to run all five sequentially.
     Default: HKCURunKey.
 
+.PARAMETER CheckHKLMWriteAccess
+    Probe write access to the machine-wide HKLM Run key, remove the temporary
+    value immediately, and exit. Run from an elevated PowerShell to test HKLM.
+
 .EXAMPLE
-    .\v4.1-registry-run-key.ps1 -Technique HKCURunKey
-    .\v4.1-registry-run-key.ps1 -Technique All
+    .\v4.1-registry-run-key.ps1 -Subtest HKCURunKey
+    .\v4.1-registry-run-key.ps1 -Subtest All
 #>
 
 param(
     [ValidateSet('HKCURunKey','HKCURunOnce','StartupVBS','StartupBAT','SystemBC','All')]
-    [string]$Technique = 'HKCURunKey',
+    [Alias('Technique')]
+    [string]$Subtest = 'HKCURunKey',
     [switch]$NoCleanupPrompt,
     [switch]$NoReport,
     [switch]$NoPause,
-    [switch]$CleanupOnly
+    [switch]$CleanupOnly,
+    [switch]$CheckHKLMWriteAccess
 )
 
 $tempDir    = "C:\Windows\Temp"
@@ -53,7 +59,7 @@ $startupDir = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup"
 function Write-Header {
     param([string]$Title, [string]$Detection)
     Write-Host ("`n" + ("="*90)) -ForegroundColor Magenta
-    Write-Host "  TECHNIQUE: $Title" -ForegroundColor Magenta
+    Write-Host "  SUBTEST: $Title" -ForegroundColor Magenta
     Write-Host "  DETECTION DIFFICULTY: $Detection" -ForegroundColor Magenta
     Write-Host ("="*90) -ForegroundColor Magenta
 }
@@ -85,6 +91,42 @@ function Invoke-Cleanup {
     Write-Host "[+] Cleanup complete" -ForegroundColor Green
 }
 
+function Test-HKLMRunWriteAccess {
+    <#
+        Tests whether the current token can create and remove a temporary value
+        in the machine-wide Run key. This is opt-in because it intentionally
+        produces HKLM persistence telemetry.
+    #>
+    $runPath   = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run"
+    $probeName = "SecurityControlsTest-WriteProbe-$PID"
+    $created   = $false
+
+    Write-Host "`n[*] Checking write access to the machine-wide Run key..." -ForegroundColor Yellow
+    Write-Host "    Path : $runPath" -ForegroundColor DarkGray
+    Write-Host "    Note : This creates and immediately removes a temporary test value." -ForegroundColor DarkGray
+
+    try {
+        New-ItemProperty -Path $runPath -Name $probeName -PropertyType String `
+            -Value "SCT HKLM write-access probe; safe to remove" -Force -ErrorAction Stop | Out-Null
+        $created = $true
+        Write-Host "[+] HKLM Run key is writable by this PowerShell session." -ForegroundColor Green
+        return $true
+    } catch {
+        Write-Host "[-] HKLM Run key is not writable by this session: $($_.Exception.Message)" -ForegroundColor Yellow
+        Write-Host "    Run PowerShell elevated to test or use machine-wide persistence." -ForegroundColor DarkGray
+        return $false
+    } finally {
+        if ($created) {
+            try {
+                Remove-ItemProperty -Path $runPath -Name $probeName -Force -ErrorAction Stop
+                Write-Host "    Temporary HKLM probe value removed." -ForegroundColor DarkGray
+            } catch {
+                Write-Host "[!] Could not remove temporary HKLM probe value '$probeName': $($_.Exception.Message)" -ForegroundColor Red
+            }
+        }
+    }
+}
+
 # ==============================================================================
 # SUB-TEST 1: HKCU Run Key via reg.exe
 # Atomic Red Team: T1547.001 Test #1
@@ -102,7 +144,7 @@ function Test-HKCURunKey {
     Write-Host "  SIEM rule  - Run key modification followed by a new process within short window"
 
     $marker  = "$tempDir\art-v4.1-HKCURunKey.txt"
-    $command = "Set-Content -Path '$marker' -Value '[' + (Get-Date) + '] HKCURunKey executed'"
+    $command = "Set-Content -Path '$marker' -Value ('[' + (Get-Date) + '] HKCURunKey executed')"
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
     $runVal  = "powershell.exe -NoProfile -WindowStyle Hidden -EncodedCommand $encoded"
 
@@ -154,7 +196,7 @@ function Test-HKCURunOnce {
 
     $marker       = "$tempDir\art-v4.1-HKCURunOnce.txt"
     $runOncePath  = "HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce"
-    $command      = "Set-Content -Path '$marker' -Value '[' + (Get-Date) + '] HKCURunOnce executed'"
+    $command      = "Set-Content -Path '$marker' -Value ('[' + (Get-Date) + '] HKCURunOnce executed')"
     $encoded      = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
     $runVal       = "powershell.exe -NoProfile -WindowStyle Hidden -EncodedCommand $encoded"
 
@@ -227,7 +269,7 @@ f.Close
     Write-Host "`n[*] Executing VBS via cscript.exe (simulates login trigger)..." -ForegroundColor Yellow
     Write-Host "    [Detection: Sysmon 1 - cscript.exe launched from startup-folder path]" -ForegroundColor DarkGray
     try {
-        Start-Process cscript.exe -ArgumentList @("//nologo", $vbsPath) -Wait -ErrorAction Stop
+        Start-Process cscript.exe -ArgumentList ('//nologo "{0}"' -f $vbsPath) -Wait -ErrorAction Stop
     } catch {
         Write-Host "  Execution blocked: $($_.Exception.Message)" -ForegroundColor Green
         return $false
@@ -269,7 +311,7 @@ function Test-StartupBAT {
     Write-Host "`n[*] Executing BAT via cmd.exe (simulates login trigger)..." -ForegroundColor Yellow
     Write-Host "    [Detection: Sysmon 1 - cmd.exe spawned from startup-folder path]" -ForegroundColor DarkGray
     try {
-        Start-Process cmd.exe -ArgumentList @("/c", $batPath) -Wait -ErrorAction Stop
+        Start-Process cmd.exe -ArgumentList ('/c ""{0}""' -f $batPath) -Wait -ErrorAction Stop
     } catch {
         Write-Host "  Execution blocked: $($_.Exception.Message)" -ForegroundColor Green
         return $false
@@ -400,10 +442,15 @@ if ($CleanupOnly) {
     exit 0
 }
 
-Write-Host "`n[TEST] Registry Run Keys / Startup Folder Persistence (Vector 4.1)" -ForegroundColor Cyan
+if ($CheckHKLMWriteAccess) {
+    [void](Test-HKLMRunWriteAccess)
+    exit 0
+}
+
+Write-Host "`n[TEST] Registry Run Keys / Startup Folder Persistence (Technique 4.1)" -ForegroundColor Cyan
 Write-Host "  MITRE: T1547.001  |  Phase 4  |  Persistence`n"
 
-switch ($Technique) {
+switch ($Subtest) {
     'All' {
         $results = Test-All
         if (-not $NoReport) {
@@ -419,12 +466,12 @@ switch ($Technique) {
     }
     default {
         Write-Host "+==============================================================================+" -ForegroundColor Cyan
-        Write-Host "|   SINGLE TECHNIQUE: $Technique" -ForegroundColor Cyan
+        Write-Host "|   SINGLE SUBTEST: $Subtest" -ForegroundColor Cyan
         Write-Host "+==============================================================================+" -ForegroundColor Cyan
         Write-Host "`n[!] Have EDR/AV console visible before proceeding." -ForegroundColor Yellow
         Read-Host "    Press Enter to start"
 
-        $success = switch ($Technique) {
+        $success = switch ($Subtest) {
             'HKCURunKey'  { Test-HKCURunKey  }
             'HKCURunOnce' { Test-HKCURunOnce }
             'StartupVBS'  { Test-StartupVBS  }
@@ -433,10 +480,10 @@ switch ($Technique) {
         }
 
         $color = if ($success) { 'Green' } else { 'Red' }
-        Write-Host "`n[RESULT] Technique '$Technique': $(if ($success) { 'EXECUTED' } else { 'BLOCKED' })" -ForegroundColor $color
+        Write-Host "`n[RESULT] Subtest '$Subtest': $(if ($success) { 'EXECUTED' } else { 'BLOCKED' })" -ForegroundColor $color
         if (-not $NoCleanupPrompt) {
             $c = Read-Host "Clean up now? (Y/N)"
-            if ($c -eq 'Y' -or $c -eq 'y') { Invoke-Cleanup -Names @($Technique) }
+            if ($c -eq 'Y' -or $c -eq 'y') { Invoke-Cleanup -Names @($Subtest) }
         }
     }
 }

@@ -1,1 +1,61 @@
-﻿# Threat Scenarios
+# Threat Scenarios
+
+SCT groups vectors by security objective. Use the interactive launcher to select a scenario and consult its vector guide when additional preparation is required.
+
+## Module 01 — Malware Introduction
+
+Tests common ways malware reaches or executes on an endpoint.
+
+| Vector | Purpose | Preparation |
+|---|---|---|
+| 1.1 Disk Drop | Copy samples to disk and optionally execute them. | Put ZIPs in `samples/`; see the [vector guide](../scenarios/01-malware-introduction/v1.1-known-malware/README.md). |
+| 1.2 Removable Media | Deliver samples from USB media. | Use an authorised endpoint with physical USB passthrough; see the [vector guide](../scenarios/01-malware-introduction/v1.2-removable-media/README.md). |
+| 1.3 Internet Download | Download samples over HTTP. | Start the companion server on a second VM; see the [two-VM guide](../scenarios/01-malware-introduction/v1.3-download-internet/README.md). |
+| 1.4 Trojanised COTS | Exercise a decoy application and hidden payload chain. | Self-contained; see the [vector guide](../scenarios/01-malware-introduction/v1.4-trojanised-cots/README.md). |
+| 1.5 Fileless PowerShell | Exercise local or remotely fetched in-memory techniques. | Sysmon is required for result collection; remote techniques need a second VM. |
+| 1.6 DLL Sideloading | Load an unsigned DLL through a trusted process. | Self-contained; see the [vector guide](../scenarios/01-malware-introduction/v1.6-dll-sideloading/README.md). |
+
+> Vector 1.2 has not been validated in the current environment. A virtual disk can exercise file-copy detection, but it does not validate USB device-control monitoring.
+
+## Module 02 — Exploitation
+
+Tests exploit-like delivery and execution behaviour.
+
+| Vector | Purpose | Status |
+|---|---|---|
+| 2.1 Malicious Macro | Exercise an Office VBA delivery chain. | Planned |
+| 2.2 CVE Simulation | Exercise behaviour associated with a known-vulnerability proof of concept. | Available; follow the [vector guide](../scenarios/02-exploitation/v2.2-cve-simulation/README.md). |
+
+## Module 03 — Privilege Escalation
+
+Tests elevation and signed-binary proxy execution.
+
+| Vector | Purpose | Status |
+|---|---|---|
+| 3.1 Process Hollowing | Exercise memory-resident code replacement. | Planned |
+| 3.2 UAC Bypass | Run Fodhelper, Eventvwr, ComputerDefaults, and SilentCleanup sub-tests. | Available |
+| 3.3 LOLBin Signed Binary | Run Mshta, Regsvr32, Rundll32, and InfDefaultInstall sub-tests. | Available; see the [vector guide](../scenarios/03-privilege-escalation/v3.3-lotl-signed-binary/README.md). |
+
+## Module 04 — Persistence
+
+Tests mechanisms that can survive logon, reboot, or credential changes.
+
+| Vector | Purpose | Guide |
+|---|---|---|
+| 4.1 Registry Run Keys / Startup Folder | Run key, RunOnce, VBS/BAT startup, and hidden PowerShell patterns. | [Vector 4.1](../scenarios/04-persistence/v4.1-registry-run-key/README.md) |
+| 4.2 Scheduled Task / Job | User, cmdlet, registry-loader, SYSTEM, and hidden XML task patterns. | [Vector 4.2](../scenarios/04-persistence/v4.2-scheduled-task/README.md) |
+| 4.3 Startup Folder (Advanced) | JSE, LNK, all-users BAT, shell-folder redirect, and Winlogon patterns. | [Vector 4.3](../scenarios/04-persistence/v4.3-startup-folder/README.md) |
+
+Module 04 can run all 15 sub-tests without prompts:
+
+```powershell
+.\Start-SCT.ps1 -Control SentinelOne -RunModule 04 -NonInteractive
+```
+
+## General operating guidance
+
+- Snapshot the isolated VM before each test series.
+- Confirm the EDR/AV is active with a [sanity check](../sanity_checks/README.md).
+- Monitor the product console while the vector runs.
+- Review generated CSVs under `results/raw/`.
+- Complete the vector's cleanup before restoring or reusing the VM.

@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-    Vector 4.2: Scheduled Task/Job Persistence (T1053.005)
+    Technique 4.2: Scheduled Task/Job Persistence (T1053.005)
 
 .DESCRIPTION
     Five sub-tests covering scheduled task persistence techniques.
@@ -31,18 +31,19 @@
     All sub-tests write a marker file to C:\Windows\Temp\ as proof-of-execution.
     Nothing malicious runs - benign file writes only.
 
-.PARAMETER Technique
+.PARAMETER Subtest
     Which sub-test to run. Use 'All' to run all five sequentially.
     Default: SchtasksOnLogon.
 
 .EXAMPLE
-    .\v4.2-scheduled-task.ps1 -Technique SchtasksOnLogon
-    .\v4.2-scheduled-task.ps1 -Technique All
+    .\v4.2-scheduled-task.ps1 -Subtest SchtasksOnLogon
+    .\v4.2-scheduled-task.ps1 -Subtest All
 #>
 
 param(
     [ValidateSet('SchtasksOnLogon','PwshCmdlet','B64Registry','SystemTask','HiddenXML','All')]
-    [string]$Technique = 'SchtasksOnLogon',
+    [Alias('Technique')]
+    [string]$Subtest = 'SchtasksOnLogon',
     [switch]$NoCleanupPrompt,
     [switch]$NoReport,
     [switch]$NoPause,
@@ -69,7 +70,7 @@ $b64RegName = "payload"
 function Write-Header {
     param([string]$Title, [string]$Detection)
     Write-Host ("`n" + ("="*90)) -ForegroundColor Magenta
-    Write-Host "  TECHNIQUE: $Title" -ForegroundColor Magenta
+    Write-Host "  SUBTEST: $Title" -ForegroundColor Magenta
     Write-Host "  DETECTION DIFFICULTY: $Detection" -ForegroundColor Magenta
     Write-Host ("="*90) -ForegroundColor Magenta
 }
@@ -529,10 +530,10 @@ if ($CleanupOnly) {
     exit 0
 }
 
-Write-Host "`n[TEST] Scheduled Task/Job Persistence (Vector 4.2)" -ForegroundColor Cyan
+Write-Host "`n[TEST] Scheduled Task/Job Persistence (Technique 4.2)" -ForegroundColor Cyan
 Write-Host "  MITRE: T1053.005  |  Phase 4  |  Persistence`n"
 
-switch ($Technique) {
+switch ($Subtest) {
     'All' {
         $results = Test-All
         if (-not $NoReport) {
@@ -548,12 +549,12 @@ switch ($Technique) {
     }
     default {
         Write-Host "+==============================================================================+" -ForegroundColor Cyan
-        Write-Host "|   SINGLE TECHNIQUE: $Technique" -ForegroundColor Cyan
+        Write-Host "|   SINGLE SUBTEST: $Subtest" -ForegroundColor Cyan
         Write-Host "+==============================================================================+" -ForegroundColor Cyan
         Write-Host "`n[!] Have EDR/AV console visible before proceeding." -ForegroundColor Yellow
         Read-Host "    Press Enter to start"
 
-        $success = switch ($Technique) {
+        $success = switch ($Subtest) {
             'SchtasksOnLogon' { Test-SchtasksOnLogon }
             'PwshCmdlet'      { Test-PwshCmdlet      }
             'B64Registry'     { Test-B64Registry     }
@@ -562,10 +563,10 @@ switch ($Technique) {
         }
 
         $color = if ($success) { 'Green' } else { 'Red' }
-        Write-Host "`n[RESULT] Technique '$Technique': $(if ($success) { 'EXECUTED' } else { 'BLOCKED' })" -ForegroundColor $color
+        Write-Host "`n[RESULT] Subtest '$Subtest': $(if ($success) { 'EXECUTED' } else { 'BLOCKED' })" -ForegroundColor $color
         if (-not $NoCleanupPrompt) {
             $c = Read-Host "Clean up now? (Y/N)"
-            if ($c -eq 'Y' -or $c -eq 'y') { Invoke-Cleanup -Names @($Technique) }
+            if ($c -eq 'Y' -or $c -eq 'y') { Invoke-Cleanup -Names @($Subtest) }
         }
     }
 }

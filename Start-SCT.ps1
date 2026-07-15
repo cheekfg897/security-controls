@@ -6,13 +6,13 @@
 .DESCRIPTION
     Menu-driven launcher for structured endpoint security control evaluation.
     Discovers test modules automatically by scanning scenarios/ for module.json
-    files - no code changes required to add new scenarios or vectors.
+    files - no code changes required to add new modules or techniques.
 
     Supports Windows 10 and Windows 11. Requires PowerShell 5.1 or later.
     No external modules or tools required beyond what ships with Windows.
 
     See README.md for full usage, and for how to extend the framework with
-    new malware samples, new vectors, or entirely new test modules.
+    new malware samples, techniques, or entirely new test modules.
 
 .PARAMETER Control
     Name of the security product under test (e.g. SentinelOne, CarbonBlack,
@@ -45,7 +45,8 @@ param(
     [string]$RunModule,
     [switch]$NonInteractive,
     [ValidateRange(0, 300)] [int]$StartDelaySeconds = 10,
-    [ValidateRange(0, 300)] [int]$InterVectorDelaySeconds = 3
+    [Alias('InterVectorDelaySeconds')]
+    [ValidateRange(0, 300)] [int]$InterTechniqueDelaySeconds = 3
 )
 
 $ErrorActionPreference = 'Stop'
@@ -69,7 +70,7 @@ if (-not (Test-Path $corePath)) {
 # ---------------------------------------------------------------------------
 $scenariosPath    = Join-Path $PSScriptRoot 'scenarios'
 $resultsPath      = Join-Path $PSScriptRoot 'results\raw\results.csv'
-$techResultsPath  = Join-Path $PSScriptRoot 'results\raw\technique-results.csv'
+$testResultsPath  = Join-Path $PSScriptRoot 'results\raw\test-results.csv'
 if (-not $SamplesPath) {
     $SamplesPath = Join-Path $PSScriptRoot 'samples'
 }
@@ -125,8 +126,8 @@ if ($NonInteractive) {
     }
 
     [void](Invoke-SCTModuleNonInteractive -Module $targetModule[0] -Control $Control `
-        -TechResultsPath $techResultsPath -StartDelaySeconds $StartDelaySeconds `
-        -InterVectorDelaySeconds $InterVectorDelaySeconds)
+        -TestResultsPath $testResultsPath -StartDelaySeconds $StartDelaySeconds `
+        -InterTechniqueDelaySeconds $InterTechniqueDelaySeconds)
     exit 0
 }
 
@@ -153,7 +154,7 @@ while ($true) {
             exit 0
         }
         'V' {
-            Show-SCTSummary -ResultsPath $resultsPath -TechResultsPath $techResultsPath
+            Show-SCTSummary -ResultsPath $resultsPath -TestResultsPath $testResultsPath
         }
         default {
             $idx = $choice -as [int]
@@ -163,7 +164,7 @@ while ($true) {
                     -SamplesPath $SamplesPath `
                     -ScenarioRoot $scenariosPath `
                     -ResultsPath $resultsPath `
-                    -TechResultsPath $techResultsPath
+                    -TestResultsPath $testResultsPath
             } else {
                 Write-Host "  Invalid selection. Enter 1-$($modules.Count), [V], or [Q]." -ForegroundColor Yellow
                 Start-Sleep -Milliseconds 600

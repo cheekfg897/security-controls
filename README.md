@@ -1,252 +1,181 @@
 # Security Controls Testing Framework (SCT)
 
-Run `Start-SCT.ps1` on a Windows lab VM to test how well an EDR or AV product detects and blocks attack techniques, mapped to MITRE ATT&CK.
+Security Controls Testing Framework (SCT) is a PowerShell lab framework for testing whether endpoint detection and response (EDR) or antivirus (AV) products detect and block simulated attack techniques. It provides repeatable MITRE ATT&CK-mapped scenarios, guided execution, result capture, and cleanup.
 
-> **Lab VMs only — never run on a production or networked machine.**
-
----
-
-## Lab requirements
-
-- **One isolated Windows 10/11 VM** — take a snapshot before testing.
-- **PowerShell 5.1+** — included with Windows 10 and 11.
-- **Sysmon (recommended)** — [download Microsoft Sysinternals Sysmon](https://learn.microsoft.com/sysinternals/downloads/sysmon). It is required to record fileless-test results and useful for other tests. Use the [SwiftOnSecurity configuration](https://github.com/SwiftOnSecurity/sysmon-config) if needed. Vector 1.1 has [install, start, and verification steps](scenarios/01-malware-introduction/v1.1-known-malware/README.md#sysmon-setup-check).
-- **VM count** — most tests need one VM. Vector 1.3 needs two Windows VMs. Vector 1.5 needs a second VM only for remote download tests. Keep both VMs on an isolated network.
-- Clone this repository onto the test VM.
-- Confirm the EDR/AV is active first. Run a check from [sanity_checks/](sanity_checks/README.md), such as the EICAR test, before running other tests.
+> **Lab VMs only — never run SCT on a production or networked machine.**
 
 ---
 
-## Running a test
+## Table of contents
+
+- [Getting started](#getting-started)
+  - [Requirements](#requirements)
+  - [Install and run](#install-and-run)
+  - [Using malware samples](#using-malware-samples)
+  - [Run Module 4 non-interactively](#run-module-4-non-interactively)
+- [Built-in modules](#built-in-modules)
+- [Project structure](#project-structure)
+- [Documentation](#documentation)
+- [Extending SCT](#extending-sct)
+- [Reference](#reference)
+  - [Vector types](#vector-types)
+
+---
+
+<a id="getting-started"></a>
+
+## Getting started
+
+<a id="requirements"></a>
+
+### Requirements
+
+- An isolated Windows 10/11 VM with a snapshot.
+- PowerShell 5.1 or later; no external PowerShell modules are required.
+- An active EDR/AV product to test.
+- [Sysmon](https://learn.microsoft.com/sysinternals/downloads/sysmon) is recommended and required for fileless-test result collection. See the [Sysmon setup guide](scenarios/01-malware-introduction/v1.1-known-malware/README.md#sysmon-setup-check).
+- Most tests use one VM. Vector 1.3 and the remote Vector 1.5 techniques require a second Windows VM on the same isolated network.
+
+<a id="install-and-run"></a>
+
+### Install and run
+
+Open PowerShell on the lab VM:
 
 ```powershell
-# From the repo root:
+git clone https://github.com/cheekfg897/security-controls.git
+Set-Location security-controls
 .\Start-SCT.ps1
+```
 
-# Or pre-set the product name to skip the first prompt:
+Before testing, confirm the security product is active with a check from [`sanity_checks/`](sanity_checks/README.md). To skip the product-name prompt:
+
+```powershell
 .\Start-SCT.ps1 -Control SentinelOne
 ```
 
-### Run all Module 4 persistence tests
+Select a module, vector, and sub-technique when prompted, then monitor the EDR/AV console. `EXECUTED` means the technique ran without being blocked; `BLOCKED` means the control prevented it. Press `V` in the main menu to view the current summary.
 
-Open **PowerShell as Administrator**, then run:
+Results are written to:
+
+- `results/raw/technique-results.csv` for technique and fileless tests.
+- `results/raw/results.csv` for malware-delivery tests.
+
+<a id="using-malware-samples"></a>
+
+### Using malware samples
+
+| Vector | Sample source |
+|---|---|
+| **1.1 Disk Drop** | Put ZIP files in `samples/`, then select one or combine all ZIPs in the launcher. |
+| **1.2 Removable Media** | Pre-load samples on an authorised USB drive; the launcher requests its drive letter. |
+| **1.3 Internet Download** | Host samples on a second VM with `v1.3-server.ps1`. |
+| **1.4, 1.5, 1.6** | Self-contained or in-memory; local techniques do not require sample files. |
+
+For ZIP layouts and password-protected archives, see the [sample guide](samples/README.md).
+
+> **Vector 1.2 validation note:** USB delivery has not been validated in the current environment. Test it only on an authorised lab endpoint with physical USB passthrough; a virtual disk does not validate USB device-control monitoring.
+
+<a id="run-module-4-non-interactively"></a>
+
+### Run Module 4 non-interactively
+
+From an Administrator PowerShell session:
 
 ```powershell
 .\Start-SCT.ps1 -Control SentinelOne -RunModule 04 -NonInteractive
 ```
 
-This runs all 15 Module 4 sub-tests without prompts, waits 10 seconds before starting, records one CSV row per sub-test in `results/raw/technique-results.csv`, and cleans up each vector after its results are recorded. Every row from this batch has the same `run_id`.
-
-**On first launch** you'll be asked for the product under test (e.g. `SentinelOne`, `CarbonBlack`). This tags every result row so you can compare products side-by-side later.
-
-**Test flow:**
-1. Select a module — e.g. `[4] Persistence`
-2. Select a vector — e.g. `[3] Startup Folder / Advanced Logon`
-3. Select a sub-technique, or `All` to run them in sequence
-4. **Open your EDR/AV console and start monitoring** when the script prompts you
-5. Press Enter — the test runs automatically
-6. Results appear immediately after the script exits, then get logged to CSV
-
-**Reading results:**
-```
-  [!]  JSEStartup    EXECUTED    ← technique ran; EDR did NOT block it  (red)
-  [+]  LNKShortcut   BLOCKED     ← EDR stopped it                       (green)
-```
-
-Press `[V]` from the main menu at any time to see a summary of everything run so far, grouped by product.
-
-All results are saved to `results/raw/technique-results.csv` (technique tests) and `results/raw/results.csv` (malware delivery tests).
+This runs all 15 persistence sub-tests, records one row per sub-test with a shared `run_id`, and performs each vector's cleanup.
 
 ---
 
-## What's included
+<a id="built-in-modules"></a>
 
-| # | Module | Status | What it tests |
-|---|--------|--------|---------------|
-| 1 | Malware Introduction | Active (6 vectors) | File delivery, removable media, internet download, fileless PS, DLL sideload |
-| 2 | Exploitation | Stubs | Placeholder — not yet implemented |
-| 3 | Privilege Escalation | Partial | v3.2 UAC Bypass and v3.3 LOLBin signed-binary proxy execution implemented; v3.1 is a stub |
-| 4 | Persistence | Active (3 vectors) | Registry run keys, scheduled tasks, startup folder |
+## Built-in modules
 
----
+| # | Module | Status | Vectors |
+|---|---|---|---|
+| 1 | Malware Introduction | Active | 1.1 Disk Drop; 1.2 Removable Media; 1.3 Internet Download; 1.4 Trojanised COTS; 1.5 Fileless PowerShell; 1.6 DLL Sideloading |
+| 2 | Exploitation | Partial | 2.1 Malicious Macro *(planned)*; 2.2 CVE Simulation |
+| 3 | Privilege Escalation | Partial | 3.1 Process Hollowing *(planned)*; 3.2 UAC Bypass; 3.3 LOLBin Signed Binary |
+| 4 | Persistence | Active | 4.1 Registry Run Keys; 4.2 Scheduled Tasks; 4.3 Advanced Startup Folder |
 
-## Malware tests (module 1)
-
-Module 1 has 6 vectors, and **they don't all take samples the same way** — where you put your files depends on which one you pick:
-
-> **Testing limitation — Vector 1.2:** This vector has **not been tested** in the current environment. The company-issued test laptop cannot accept physical USB media, and the planned air-gapped system has separate USB device-control monitoring. A virtual disk or shared-folder workaround can test file-copy detection, but is not evidence that the USB monitoring control has been tested. Validate this vector only on an authorised lab endpoint with physical USB passthrough.
-
-| Vector | Where samples go |
-|---|---|
-| **1.1 Disk Drop** | Drop ZIP(s) into `samples/` in this repo, pick by number in the launcher. See below. |
-| **1.2 Removable Media** | Samples must already be on a USB drive, prepared on a separate machine — the launcher just asks for the drive letter, it doesn't read `samples/`. No manifest needed. |
-| **1.3 Internet Download** | Samples go in the serve directory on a *second* VM running `v1.3-server.ps1` — not in this repo at all. See [v1.3's README](scenarios/01-malware-introduction/v1.3-download-internet/README.md) for the two-VM setup. |
-| 1.4 Trojanised COTS / 1.6 DLL Sideload | Self-contained — the script builds its own payload. No external samples needed. |
-| 1.5 Fileless PowerShell | Runs named in-memory techniques. No sample files involved. |
-
-**If you just want to test "does the product block my malware sample" — use 1.1.** It's the simplest path: drop your ZIP into `samples/`, run `Start-SCT.ps1`, choose Module 1 → Vector 1.1, and pick your ZIP by number.
-
-### Vector 1.1 — ZIP layouts
-
-Samples live as ZIPs in `samples/` — no manifest or per-sample metadata file needed in any layout. Every recognised file in the ZIP gets tested.
-
-| Layout | When to use | How to run |
-|--------|-------------|------------|
-| One ZIP with all EXEs | Single pack | Pick the ZIP by number |
-| One ZIP per EXE | Samples arrived individually or from a threat feed | Pick **`[A] Combine and run ALL ZIPs`** |
-
-Whether you pick a single ZIP by number or use `[A]` to combine every ZIP in `samples/` into one staging folder, the launcher asks **"Execute samples after delivery?"** before running — by default files are only copied to `C:\Temp\`, not run, and that choice applies to every file in the batch.
-
-**Password-protected ZIPs** (conventional AV-sharing password: `infected`) require [7-Zip](https://www.7-zip.org). If 7-Zip isn't installed, the launcher will tell you to extract it manually and use `[M]` to point at the folder. Unprotected ZIPs use built-in .NET — no tools needed.
-
-To add samples, see [samples/README.md](samples/README.md).
+See the [control matrix](docs/control-matrix.md) for vector types, implementation status, and MITRE ATT&CK mappings.
 
 ---
 
-## Adding a new vector to an existing module
+<a id="project-structure"></a>
 
-This is the most common task. Here's a worked example adding a WMI persistence vector to module 4.
+## Project structure
 
-**Step 1 — Create the folder and write the script**
-
-```
-scenarios/04-persistence/
-    v4.4-wmi-subscription/
-        v4.4-wmi-subscription.ps1     ← your new script
-```
-
-The quickest way to start: copy [v4.3-startup-folder.ps1](scenarios/04-persistence/v4.3-startup-folder/v4.3-startup-folder.ps1) and adapt it. It's the most complete example in the repo.
-
-Script conventions for `technique`-type vectors:
-- Accept `-Technique` with `[ValidateSet('SubtechA','SubtechB','All')]`
-- Write one marker file per sub-technique: `C:\Windows\Temp\art-v4.4-<TechniqueName>.txt` — the launcher reads these to determine EXECUTED / BLOCKED automatically
-- Include a cleanup function and offer to clean up at the end
-
-**Step 2 — Register it in `module.json`**
-
-Open `scenarios/04-persistence/module.json` and add to the `vectors` array:
-
-```json
-{
-  "id": "4.4",
-  "name": "WMI Subscription Persistence",
-  "description": "Permanent WMI event subscription executes payload on system events.",
-  "mitre": "T1546.003",
-  "script": "v4.4-wmi-subscription/v4.4-wmi-subscription.ps1",
-  "type": "technique",
-  "techniques": ["EventFilter", "EventConsumer", "FilterToConsumerBinding", "All"],
-  "individual_techniques": ["EventFilter", "EventConsumer", "FilterToConsumerBinding"],
-  "marker_file": "C:\\Windows\\Temp\\art-v4.4-{technique}.txt"
-}
+```text
+security-controls/
+├── Start-SCT.ps1       # Main launcher
+├── core/               # Discovery, dispatch, and result logic
+├── docs/               # Detailed documentation
+├── results/            # Generated raw and analysed results
+├── samples/            # Local malware ZIP store (samples are gitignored)
+├── sanity_checks/      # EDR/AV verification checks
+├── scenarios/          # Module metadata and vector scripts
+│   └── <module>/
+│       ├── module.json
+│       └── <vector>/
+└── scripts/            # Module scaffolding and result utilities
 ```
 
-Two fields that are easy to get wrong:
-
-- **`individual_techniques`** — same as `techniques` but **without `"All"`**. The launcher checks one marker file per entry when `All` is selected, so this must match the names your script appends to the marker filename exactly.
-- **`marker_file`** — must match what your script actually writes. The `{technique}` placeholder is replaced with each technique name at runtime. If your script writes `art-v4.4-EventFilter.txt`, the template is `C:\\Windows\\Temp\\art-v4.4-{technique}.txt`.
-
-**Step 3 — Restart `Start-SCT.ps1`**
-
-The new vector appears in the menu automatically. No changes to the launcher or core needed.
+See [Project Structure](docs/project-structure.md) for folder conventions and where to add modules, vectors, samples, and documentation.
 
 ---
 
-## Adding a new module
+<a id="documentation"></a>
 
-Shortcut: run `.\scripts\New-SCTModuleJson.ps1` from the repo root. It will prompt for the module fields, add one or more vectors, and write `module.json` for you. Use `-NoWrite` to preview only, or `-IncludeSupports` if you want to keep the legacy `supports` metadata in generated files.
+## Documentation
 
-1. Create a numbered folder: `scenarios/05-lateral-movement/`
-2. Create `module.json` in it (copy any existing one as a starting point):
-
-```json
-{
-  "id": "05",
-  "display_name": "Lateral Movement",
-  "description": "Tests detection of techniques used to move between hosts.",
-  "mitre_tactics": ["Lateral Movement"],
-  "vectors": [
-    {
-      "id": "5.1",
-      "name": "Pass-the-Hash (SMB)",
-      "description": "Authenticates to a remote host using a captured NTLM hash. MITRE T1550.002.",
-      "mitre": "T1550.002",
-      "script": "v5.1-pass-the-hash/v5.1-pth.ps1",
-      "type": "not-implemented"
-    }
-  ]
-}
-```
-
-3. Create the script at the `"script"` path (relative to the module folder)
-4. Change `"type"` from `"not-implemented"` to the appropriate type when the script is ready
-5. Restart — the module appears as a numbered option automatically
+- [Framework Design](docs/framework-design.md) — discovery, execution, vector dispatch, outcomes, and result storage.
+- [Control Matrix](docs/control-matrix.md) — implementation status and MITRE ATT&CK mapping for every vector.
+- [Threat Scenarios](docs/threat-scenarios.md) — scenario purpose, prerequisites, and operational notes.
+- [Project Structure](docs/project-structure.md) — repository navigation and extension conventions.
+- [Sample Guide](samples/README.md) — ZIP layouts, adding samples, and handling guidance.
+- [Sanity Checks](sanity_checks/README.md) — confirm the endpoint control is active before testing.
 
 ---
+
+<a id="extending-sct"></a>
+
+## Extending SCT
+
+SCT discovers modules from `scenarios/*/module.json` at startup, so extending it does not require launcher changes.
+
+To add a vector:
+
+1. Create a vector folder and PowerShell script inside the relevant module.
+2. Add its metadata to the module's `vectors` array.
+3. Follow the contract for its [vector type](#vector-types), including marker files for `technique` vectors.
+4. Restart `Start-SCT.ps1`.
+
+To scaffold a module, run `.\scripts\New-SCTModuleJson.ps1` and add scripts at the generated metadata paths. See [Project Structure](docs/project-structure.md#adding-a-vector) for the full conventions.
+
+---
+
+<a id="reference"></a>
 
 ## Reference
 
+<a id="vector-types"></a>
+
 ### Vector types
 
-| Type | What the launcher does |
+A vector type tells the launcher how to collect input, execute the script, and evaluate the result.
+
+| Type | Launcher behaviour |
 |---|---|
-| `technique` | Shows sub-technique menu; calls script with `-Technique <name>`; checks marker files and logs results automatically |
-| `fileless` | Like `technique` but only prompts for a server IP when the selected technique is in `remote_techniques` |
-| `malware-batch` | Shows ZIPs from `samples/`, extracts the chosen one, calls script with `-SourcePath -Control` |
-| `removable-media` | Prompts for a drive letter, calls script with `-DriveLetter -Control` |
-| `client-server` | Prompts for server IP/port, calls script with `-ServerIP -Port -Control` |
-| `simple` | Runs the script directly with no extra parameters |
-| `not-implemented` | Shows a placeholder — update `type` when the script is ready |
+| `technique` | Selects sub-techniques, passes `-Technique`, checks marker files, and logs outcomes. |
+| `fileless` | Runs in-memory techniques and requests a server only for remote techniques. |
+| `malware-batch` | Selects and extracts ZIPs from `samples/`. |
+| `removable-media` | Requests a removable-drive letter. |
+| `client-server` | Requests the companion server's IP address and port. |
+| `simple` | Runs the script without vector-specific input. |
+| `not-implemented` | Displays a placeholder and does not run a test. |
 
-### module.json field reference
-
-**Module-level:**
-
-| Field | Required | Description |
-|---|---|---|
-| `id` | Yes | Two-digit number, e.g. `"05"` |
-| `display_name` | Yes | Shown in the main menu |
-| `description` | Yes | One-line summary |
-| `mitre_tactics` | Yes | Array of tactic names, e.g. `["Persistence"]` |
-| `vectors` | Yes | Array of vector objects |
-
-**Vector-level:**
-
-| Field | Required | Description |
-|---|---|---|
-| `id` | Yes | e.g. `"4.4"` |
-| `name` | Yes | Short display name |
-| `description` | Yes | One sentence |
-| `mitre` | Yes | MITRE technique ID, e.g. `"T1546.003"` |
-| `script` | Yes | Path to the PS1 file, relative to the module folder |
-| `type` | Yes | One of the types above |
-| `techniques` | `technique` / `fileless` only | Sub-technique names passed to `-Technique`. Include `"All"` last if supported. |
-| `individual_techniques` | `technique` only | Same as `techniques` minus `"All"`. One marker file is checked per entry. |
-| `marker_file` | `technique` only | Marker path template. Use `{technique}` as the placeholder. |
-| `remote_techniques` | `fileless` only | Subset that need a server VM — launcher only prompts for IP when one of these is selected. |
-| `default_technique` | No | Default shown in the menu (informational only). |
-
-### Repo layout
-
-```
-security-controls/
-├── Start-SCT.ps1                  # Entry point — run this
-├── core/
-│   └── SCT-Core.ps1               # Menu, dispatch, and result-writing logic
-├── samples/                       # Malware ZIPs (gitignored — never commit real samples)
-│   └── README.md
-├── scenarios/
-│   ├── 01-malware-introduction/
-│   ├── 02-exploitation/
-│   ├── 03-privilege-escalation/
-│   └── 04-persistence/
-│       ├── module.json            # Describes vectors; launcher reads this at startup
-│       ├── v4.1-registry-run-key/
-│       ├── v4.2-scheduled-task/
-│       └── v4.3-startup-folder/
-├── results/
-│   ├── raw/                       # results.csv and technique-results.csv (gitignored)
-│   └── analysis/
-└── scripts/
-    ├── run-scenario.ps1
-    └── collect-results.py         # Parses CSVs into a report (Python 3, optional)
-```
+The complete `module.json` field reference is in [Framework Design](docs/framework-design.md#module-metadata).

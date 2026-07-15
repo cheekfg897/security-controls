@@ -1,11 +1,11 @@
 <#
 .SYNOPSIS
-    Interactively creates a scenarios/<module>/module.json manifest for SCT.
+    Creates a simplified SCT module.json file.
 
 .DESCRIPTION
-    Prompts for module-level metadata and one or more vectors, then writes a
-    formatted module.json file. By default, it omits legacy "supports" metadata
-    because the launcher dispatches by "type" and does not read "supports".
+    Guides an author through the module -> techniques -> subtests hierarchy.
+    Execution behavior, run-all entries, and marker paths are inferred by SCT
+    and are intentionally not stored in module.json.
 
 .EXAMPLE
     .\scripts\New-SCTModuleJson.ps1
@@ -20,22 +20,11 @@
 [CmdletBinding()]
 param(
     [string]$OutputPath,
-    [switch]$NoWrite,
-    [switch]$IncludeSupports
+    [switch]$NoWrite
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-
-$ValidVectorTypes = @(
-    'technique',
-    'fileless',
-    'malware-batch',
-    'removable-media',
-    'client-server',
-    'simple',
-    'not-implemented'
-)
 
 function Read-Required {
     param(
@@ -49,35 +38,22 @@ function Read-Required {
         $label = if ($Default) { "$Prompt [$Default]" } else { $Prompt }
         $value = (Read-Host $label).Trim()
         if (-not $value -and $Default) { $value = $Default }
-
-        if (-not [string]::IsNullOrWhiteSpace($value)) {
-            if (-not $Validate -or (& $Validate $value)) {
-                return $value
-            }
-            Write-Host "  $ValidationMessage" -ForegroundColor Yellow
-        } else {
-            Write-Host '  Value is required.' -ForegroundColor Yellow
-        }
+        if ($value -and (-not $Validate -or (& $Validate $value))) { return $value }
+        Write-Host "  $ValidationMessage" -ForegroundColor Yellow
     }
 }
 
 function Read-Optional {
-    param(
-        [Parameter(Mandatory)][string]$Prompt,
-        [string]$Default
-    )
+    param([Parameter(Mandatory)][string]$Prompt, [string]$Default)
 
     $label = if ($Default) { "$Prompt [$Default]" } else { $Prompt }
     $value = (Read-Host $label).Trim()
-    if (-not $value -and $Default) { return $Default }
+    if (-not $value) { return $Default }
     return $value
 }
 
 function Read-YesNo {
-    param(
-        [Parameter(Mandatory)][string]$Prompt,
-        [bool]$Default = $false
-    )
+    param([Parameter(Mandatory)][string]$Prompt, [bool]$Default = $false)
 
     $suffix = if ($Default) { '[Y/n]' } else { '[y/N]' }
     while ($true) {
@@ -89,54 +65,23 @@ function Read-YesNo {
     }
 }
 
-function Read-CsvList {
-    param(
-        [Parameter(Mandatory)][string]$Prompt,
-        [string[]]$Default = @(),
-        [switch]$Required
-    )
+function Read-List {
+    param([Parameter(Mandatory)][string]$Prompt)
 
-    $defaultText = if ($Default.Count -gt 0) { $Default -join ', ' } else { $null }
-    while ($true) {
-        $label = if ($defaultText) { "$Prompt [$defaultText]" } else { $Prompt }
-        $raw = (Read-Host $label).Trim()
-        if (-not $raw -and $Default.Count -gt 0) {
-            return @($Default)
-        }
-
-        $items = @($raw -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-        if ($items.Count -gt 0 -or -not $Required) {
-            return $items
-        }
-
-        Write-Host '  Enter at least one comma-separated value.' -ForegroundColor Yellow
-    }
+    $raw = (Read-Host $Prompt).Trim()
+    if (-not $raw) { return @() }
+    return @($raw -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 }
 
 function ConvertTo-Slug {
     param([Parameter(Mandatory)][string]$Value)
 
-    $slug = $Value.ToLowerInvariant()
-    $slug = $slug -replace '[^a-z0-9]+', '-'
-    $slug = $slug.Trim('-')
-    if (-not $slug) { return 'new-module' }
-    return $slug
+    $slug = ($Value.ToLowerInvariant() -replace '[^a-z0-9]+', '-').Trim('-')
+    if ($slug) { return $slug }
+    return 'new-technique'
 }
 
-function Get-SupportsForType {
-    param([Parameter(Mandatory)][string]$Type)
-
-    switch ($Type) {
-        'malware-batch'   { return @('control', 'source_path', 'execute', 'dry_run', 'summarize') }
-        'removable-media' { return @('control', 'drive_letter', 'execute', 'dry_run', 'summarize') }
-        'client-server'   { return @('control', 'server_ip', 'port', 'execute', 'dry_run', 'summarize') }
-        'technique'       { return @('technique') }
-        'fileless'        { return @('technique', 'server_ip', 'port') }
-        default           { return @() }
-    }
-}
-
-function Add-OptionalProperty {
+function Add-IfPresent {
     param(
         [Parameter(Mandatory)][System.Collections.Specialized.OrderedDictionary]$Target,
         [Parameter(Mandatory)][string]$Name,
@@ -144,123 +89,79 @@ function Add-OptionalProperty {
     )
 
     if ($null -eq $Value) { return }
-    if ($Value -is [string] -and [string]::IsNullOrWhiteSpace($Value)) { return }
+    if ($Value -is [string] -and -not $Value) { return }
     if ($Value -is [array] -and $Value.Count -eq 0) { return }
-
     $Target[$Name] = $Value
 }
 
 Write-Host ''
 Write-Host 'SCT module.json generator' -ForegroundColor Cyan
-Write-Host 'Creates a module manifest from guided prompts.' -ForegroundColor DarkGray
+Write-Host 'Hierarchy: module -> techniques -> optional subtests' -ForegroundColor DarkGray
 Write-Host ''
 
-$moduleId = Read-Required `
-    -Prompt 'Module id, two digits' `
-    -Default '05' `
-    -Validate { param($v) $v -match '^\d{2}$' } `
-    -ValidationMessage 'Use two digits, e.g. 05.'
-
-$displayName = Read-Required -Prompt 'Display name' -Default 'Lateral Movement'
-$description = Read-Required -Prompt 'Module description'
-$mitreTactics = Read-CsvList -Prompt 'MITRE tactics, comma-separated' -Required
+$moduleId = Read-Required -Prompt 'Module id, two digits' -Default '05' `
+    -Validate { param($value) $value -match '^\d{2}$' } `
+    -ValidationMessage 'Use two digits, for example 05.'
+$moduleName = Read-Required -Prompt 'Module name' -Default 'Lateral Movement'
+$moduleDescription = Read-Optional -Prompt 'Module description (optional)'
 $moduleNumber = [int]$moduleId
 
 if (-not $OutputPath) {
-    $defaultFolder = Join-Path 'scenarios' ("{0}-{1}" -f $moduleId, (ConvertTo-Slug $displayName))
-    $defaultOutputPath = Join-Path $defaultFolder 'module.json'
-    $OutputPath = Read-Optional -Prompt 'Output path' -Default $defaultOutputPath
+    $folder = Join-Path 'scenarios' ("{0}-{1}" -f $moduleId, (ConvertTo-Slug $moduleName))
+    $OutputPath = Read-Optional -Prompt 'Output path' -Default (Join-Path $folder 'module.json')
 }
 
-$vectors = @()
-$vectorIndex = 1
-
+$techniques = @()
+$index = 1
 do {
     Write-Host ''
-    Write-Host "Vector $vectorIndex" -ForegroundColor Cyan
+    Write-Host "Technique $index" -ForegroundColor Cyan
 
-    $defaultVectorId = "$moduleNumber.$vectorIndex"
-    $vectorId = Read-Required -Prompt 'Vector id' -Default $defaultVectorId
-    $vectorName = Read-Required -Prompt 'Vector name'
-    $vectorDescription = Read-Required -Prompt 'Vector description'
-    $mitre = Read-Required -Prompt 'MITRE technique id' -Default 'T0000'
-    $vectorSlug = ConvertTo-Slug $vectorName
-    $defaultScriptPath = "v$vectorId-$vectorSlug/v$vectorId-$vectorSlug.ps1"
-    $script = Read-Required -Prompt 'Script path, relative to module folder' -Default $defaultScriptPath
+    $techniqueId = Read-Required -Prompt 'Technique id' -Default "$moduleNumber.$index" `
+        -Validate { param($value) $value -match '^\d+\.\d+$' } `
+        -ValidationMessage 'Use module.technique notation, for example 5.1.'
+    $name = Read-Required -Prompt 'Technique name'
+    $description = Read-Optional -Prompt 'Technique description (optional)'
+    $attackId = Read-Required -Prompt 'MITRE ATT&CK id' -Default 'T0000'
+    $slug = ConvertTo-Slug $name
+    $script = Read-Required -Prompt 'Script path, relative to the module folder' `
+        -Default ("{0}-{1}/{0}-{1}.ps1" -f $techniqueId, $slug)
 
-    Write-Host ''
-    Write-Host 'Vector types:' -ForegroundColor White
-    for ($i = 0; $i -lt $ValidVectorTypes.Count; $i++) {
-        Write-Host ("  [{0}] {1}" -f ($i + 1), $ValidVectorTypes[$i]) -ForegroundColor DarkGray
+    $technique = [ordered]@{
+        id = $techniqueId
+        name = $name
     }
+    Add-IfPresent -Target $technique -Name 'description' -Value $description
+    $technique['attack_id'] = $attackId
+    $technique['script'] = $script
 
-    $typeChoice = Read-Required `
-        -Prompt 'Vector type, name or number' `
-        -Default 'not-implemented' `
-        -Validate {
-            param($v)
-            (($v -as [int]) -ge 1 -and ($v -as [int]) -le $ValidVectorTypes.Count) -or ($ValidVectorTypes -contains $v)
-        } `
-        -ValidationMessage 'Choose one of the listed types.'
-
-    $typeNumber = $typeChoice -as [int]
-    $type = if ($typeNumber -ge 1 -and $typeNumber -le $ValidVectorTypes.Count) {
-        $ValidVectorTypes[$typeNumber - 1]
+    if (Read-YesNo -Prompt 'Is this technique still planned?' -Default $false) {
+        $technique['status'] = 'planned'
     } else {
-        $typeChoice
-    }
-
-    $vector = [ordered]@{
-        id = $vectorId
-        name = $vectorName
-        description = $vectorDescription
-        mitre = $mitre
-        script = $script
-        type = $type
-    }
-
-    if ($type -eq 'technique' -or $type -eq 'fileless') {
-        $techniques = Read-CsvList -Prompt 'Techniques, comma-separated' -Required
-        if (($techniques -notcontains 'All') -and (Read-YesNo -Prompt 'Add All as the final technique?' -Default $true)) {
-            $techniques += 'All'
+        $subtests = @(Read-List -Prompt 'Subtests, comma-separated (leave blank for none)')
+        if ($subtests.Count -gt 0) {
+            $technique['subtests'] = $subtests
+            $serverSubtests = @(Read-List -Prompt 'Subtests that need a server VM (leave blank for none)')
+            $invalid = @($serverSubtests | Where-Object { $subtests -notcontains $_ })
+            if ($invalid.Count -gt 0) {
+                throw "Server subtests must also appear in subtests: $($invalid -join ', ')"
+            }
+            Add-IfPresent -Target $technique -Name 'server_subtests' -Value $serverSubtests
         }
-        Add-OptionalProperty -Target $vector -Name 'techniques' -Value $techniques
     }
 
-    if ($type -eq 'technique') {
-        $individual = @($vector['techniques'] | Where-Object { $_ -ne 'All' })
-        Add-OptionalProperty -Target $vector -Name 'individual_techniques' -Value $individual
+    $techniques += [pscustomobject]$technique
+    $index++
+} while (Read-YesNo -Prompt 'Add another technique?' -Default $false)
 
-        $defaultMarker = "C:\Windows\Temp\art-v$vectorId-{technique}.txt"
-        $marker = Read-Optional -Prompt 'Marker file template' -Default $defaultMarker
-        Add-OptionalProperty -Target $vector -Name 'marker_file' -Value $marker
-
-        $defaultTechnique = Read-Optional -Prompt 'Default technique (optional)'
-        Add-OptionalProperty -Target $vector -Name 'default_technique' -Value $defaultTechnique
-    }
-
-    if ($type -eq 'fileless') {
-        $remoteTechniques = Read-CsvList -Prompt 'Remote techniques that need server VM, comma-separated'
-        Add-OptionalProperty -Target $vector -Name 'remote_techniques' -Value $remoteTechniques
-    }
-
-    if ($IncludeSupports) {
-        $vector['supports'] = @(Get-SupportsForType -Type $type)
-    }
-
-    $vectors += [pscustomobject]$vector
-    $vectorIndex++
-} while (Read-YesNo -Prompt 'Add another vector?' -Default $false)
-
-$manifest = [ordered]@{
+$module = [ordered]@{
     id = $moduleId
-    display_name = $displayName
-    description = $description
-    mitre_tactics = @($mitreTactics)
-    vectors = @($vectors)
+    name = $moduleName
 }
+Add-IfPresent -Target $module -Name 'description' -Value $moduleDescription
+$module['techniques'] = @($techniques)
 
-$json = [pscustomobject]$manifest | ConvertTo-Json -Depth 12
+$json = [pscustomobject]$module | ConvertTo-Json -Depth 8
 $null = $json | ConvertFrom-Json
 
 Write-Host ''
@@ -273,23 +174,15 @@ if ($NoWrite) {
     return
 }
 
-$resolvedOutputPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputPath)
-$outputDir = Split-Path -Path $resolvedOutputPath -Parent
-
+$resolvedPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputPath)
+$outputDir = Split-Path -Path $resolvedPath -Parent
 if ($outputDir -and -not (Test-Path -LiteralPath $outputDir)) {
-    if (Read-YesNo -Prompt "Create directory $outputDir?" -Default $true) {
-        New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
-    } else {
-        Write-Host 'Directory was not created; manifest was not written.' -ForegroundColor Yellow
-        return
-    }
+    if (-not (Read-YesNo -Prompt "Create directory $outputDir?" -Default $true)) { return }
+    New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
 }
+if ((Test-Path -LiteralPath $resolvedPath) -and
+    -not (Read-YesNo -Prompt "Overwrite $resolvedPath?" -Default $false)) { return }
 
-if ((Test-Path -LiteralPath $resolvedOutputPath) -and -not (Read-YesNo -Prompt "Overwrite $resolvedOutputPath?" -Default $false)) {
-    Write-Host 'Existing file left unchanged.' -ForegroundColor Yellow
-    return
-}
-
-Set-Content -LiteralPath $resolvedOutputPath -Value $json -Encoding UTF8
+Set-Content -LiteralPath $resolvedPath -Value $json -Encoding UTF8
 Write-Host ''
-Write-Host "Wrote $resolvedOutputPath" -ForegroundColor Green
+Write-Host "Wrote $resolvedPath" -ForegroundColor Green

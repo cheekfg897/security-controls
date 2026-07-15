@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Vector 3.2: UAC Bypass Techniques (T1548.002)
+    Technique 3.2: UAC Bypass (T1548.002)
 
 .DESCRIPTION
     Four sub-tests covering different UAC bypass mechanisms, all requiring only
@@ -37,18 +37,19 @@
     Nothing malicious runs - benign file writes only.
     All registry / environment changes are restored after each sub-test.
 
-.PARAMETER Technique
+.PARAMETER Subtest
     Which sub-test to run. Use 'All' to run all four sequentially.
     Default: Fodhelper.
 
 .EXAMPLE
-    .\v3.2-uac-bypass.ps1 -Technique Fodhelper
-    .\v3.2-uac-bypass.ps1 -Technique All
+    .\v3.2-uac-bypass.ps1 -Subtest Fodhelper
+    .\v3.2-uac-bypass.ps1 -Subtest All
 #>
 
 param(
     [ValidateSet('Fodhelper','Eventvwr','ComputerDefaults','SilentCleanup','All')]
-    [string]$Technique = 'Fodhelper',
+    [Alias('Technique')]
+    [string]$Subtest = 'Fodhelper',
     [switch]$NoCleanupPrompt
 )
 
@@ -63,7 +64,7 @@ $mscfilePath    = "HKCU:\Software\Classes\mscfile\shell\open\command"
 function Write-Header {
     param([string]$Title, [string]$Detection)
     Write-Host ("`n" + ("="*90)) -ForegroundColor Magenta
-    Write-Host "  TECHNIQUE: $Title" -ForegroundColor Magenta
+    Write-Host "  SUBTEST: $Title" -ForegroundColor Magenta
     Write-Host "  DETECTION DIFFICULTY: $Detection" -ForegroundColor Magenta
     Write-Host ("="*90) -ForegroundColor Magenta
 }
@@ -376,10 +377,10 @@ function Write-Report {
 # MAIN
 # ==============================================================================
 
-Write-Host "`n[TEST] UAC Bypass (Vector 3.2)" -ForegroundColor Cyan
+Write-Host "`n[TEST] UAC Bypass (Technique 3.2)" -ForegroundColor Cyan
 Write-Host "  MITRE: T1548.002  |  Phase 3  |  Privilege Escalation`n"
 
-switch ($Technique) {
+switch ($Subtest) {
     'All' {
         $results = Test-All
         Write-Report -Results $results
@@ -393,12 +394,12 @@ switch ($Technique) {
     }
     default {
         Write-Host "+==============================================================================+" -ForegroundColor Cyan
-        Write-Host "|   SINGLE TECHNIQUE: $Technique" -ForegroundColor Cyan
+        Write-Host "|   SINGLE SUBTEST: $Subtest" -ForegroundColor Cyan
         Write-Host "+==============================================================================+" -ForegroundColor Cyan
         Write-Host "`n[!] Have EDR/AV console visible before proceeding." -ForegroundColor Yellow
         Read-Host "    Press Enter to start"
 
-        $success = switch ($Technique) {
+        $success = switch ($Subtest) {
             'Fodhelper'        { Test-Fodhelper        }
             'Eventvwr'         { Test-Eventvwr         }
             'ComputerDefaults' { Test-ComputerDefaults }
@@ -406,10 +407,10 @@ switch ($Technique) {
         }
 
         $color = if ($success) { 'Green' } else { 'Red' }
-        Write-Host "`n[RESULT] Technique '$Technique': $(if ($success) { 'BYPASSED' } else { 'BLOCKED' })" -ForegroundColor $color
+        Write-Host "`n[RESULT] Subtest '$Subtest': $(if ($success) { 'BYPASSED' } else { 'BLOCKED' })" -ForegroundColor $color
         if (-not $NoCleanupPrompt) {
             $c = Read-Host "Clean up now? (Y/N)"
-            if ($c -eq 'Y' -or $c -eq 'y') { Invoke-Cleanup -Names @($Technique) }
+            if ($c -eq 'Y' -or $c -eq 'y') { Invoke-Cleanup -Names @($Subtest) }
         }
     }
 }

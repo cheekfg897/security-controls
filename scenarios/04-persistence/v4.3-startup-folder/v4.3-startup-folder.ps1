@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-    Vector 4.3: Startup Folder / Advanced Logon Persistence (T1547.001)
+    Technique 4.3: Startup Folder / Advanced Logon Persistence (T1547.001)
 
 .DESCRIPTION
     Five sub-tests covering startup folder and advanced logon persistence techniques,
@@ -37,18 +37,19 @@
     All sub-tests write a marker file to C:\Windows\Temp\ as proof-of-execution.
     Nothing malicious runs - benign file writes only.
 
-.PARAMETER Technique
+.PARAMETER Subtest
     Which sub-test to run. Use 'All' to run all five sequentially.
     Default: JSEStartup.
 
 .EXAMPLE
-    .\v4.3-startup-folder.ps1 -Technique JSEStartup
-    .\v4.3-startup-folder.ps1 -Technique All
+    .\v4.3-startup-folder.ps1 -Subtest JSEStartup
+    .\v4.3-startup-folder.ps1 -Subtest All
 #>
 
 param(
     [ValidateSet('JSEStartup','LNKShortcut','AllUsersBAT','ShellFolderRedirect','WinlogonUserinit','All')]
-    [string]$Technique = 'JSEStartup',
+    [Alias('Technique')]
+    [string]$Subtest = 'JSEStartup',
     [switch]$NoCleanupPrompt,
     [switch]$NoReport,
     [switch]$NoPause,
@@ -69,7 +70,7 @@ $shellFolderPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Use
 function Write-Header {
     param([string]$Title, [string]$Detection)
     Write-Host ("`n" + ("="*90)) -ForegroundColor Magenta
-    Write-Host "  TECHNIQUE: $Title" -ForegroundColor Magenta
+    Write-Host "  SUBTEST: $Title" -ForegroundColor Magenta
     Write-Host "  DETECTION DIFFICULTY: $Detection" -ForegroundColor Magenta
     Write-Host ("="*90) -ForegroundColor Magenta
 }
@@ -152,7 +153,7 @@ f.Close();
     Write-Host "`n[*] Executing via cscript.exe /E:Jscript (simulates login trigger)..." -ForegroundColor Yellow
     Write-Host "    [Detection: Sysmon 1 - cscript.exe /E:Jscript from startup-folder path]" -ForegroundColor DarkGray
     try {
-        Start-Process cscript.exe -ArgumentList @("//nologo", "/E:Jscript", $jsePath) -Wait -ErrorAction Stop
+        Start-Process cscript.exe -ArgumentList ('//nologo /E:Jscript "{0}"' -f $jsePath) -Wait -ErrorAction Stop
     } catch {
         Write-Host "  Execution blocked: $($_.Exception.Message)" -ForegroundColor Green
         return $false
@@ -256,7 +257,7 @@ function Test-AllUsersBAT {
     Write-Host "`n[*] Executing BAT via cmd.exe (simulates any-user login trigger)..." -ForegroundColor Yellow
     Write-Host "    [Detection: Sysmon 1 - cmd.exe spawned from C:\ProgramData startup path]" -ForegroundColor DarkGray
     try {
-        Start-Process cmd.exe -ArgumentList @("/c", $batPath) -Wait -ErrorAction Stop
+        Start-Process cmd.exe -ArgumentList ('/c ""{0}""' -f $batPath) -Wait -ErrorAction Stop
     } catch {
         Write-Host "  Execution blocked: $($_.Exception.Message)" -ForegroundColor Green
         return $false
@@ -325,7 +326,7 @@ function Test-ShellFolderRedirect {
     Write-Host "`n[*] Executing payload from redirect dir (simulates login trigger)..." -ForegroundColor Yellow
     Write-Host "    [Detection: Sysmon 1 - cmd.exe launched from non-standard startup folder path]" -ForegroundColor DarkGray
     try {
-        Start-Process cmd.exe -ArgumentList @("/c", $batPayload) -Wait -ErrorAction Stop
+        Start-Process cmd.exe -ArgumentList ('/c ""{0}""' -f $batPayload) -Wait -ErrorAction Stop
     } catch {
         Write-Host "  Execution blocked: $($_.Exception.Message)" -ForegroundColor Green
         Set-ItemProperty -Path $shellFolderPath -Name "Startup" -Value $originalStartup -ErrorAction Ignore
@@ -478,10 +479,10 @@ if ($CleanupOnly) {
     exit 0
 }
 
-Write-Host "`n[TEST] Startup Folder / Advanced Logon Persistence (Vector 4.3)" -ForegroundColor Cyan
+Write-Host "`n[TEST] Startup Folder / Advanced Logon Persistence (Technique 4.3)" -ForegroundColor Cyan
 Write-Host "  MITRE: T1547.001  |  Phase 4  |  Persistence`n"
 
-switch ($Technique) {
+switch ($Subtest) {
     'All' {
         $results = Test-All
         if (-not $NoReport) {
@@ -497,12 +498,12 @@ switch ($Technique) {
     }
     default {
         Write-Host "+==============================================================================+" -ForegroundColor Cyan
-        Write-Host "|   SINGLE TECHNIQUE: $Technique" -ForegroundColor Cyan
+        Write-Host "|   SINGLE SUBTEST: $Subtest" -ForegroundColor Cyan
         Write-Host "+==============================================================================+" -ForegroundColor Cyan
         Write-Host "`n[!] Have EDR/AV console visible before proceeding." -ForegroundColor Yellow
         Read-Host "    Press Enter to start"
 
-        $success = switch ($Technique) {
+        $success = switch ($Subtest) {
             'JSEStartup'          { Test-JSEStartup          }
             'LNKShortcut'         { Test-LNKShortcut         }
             'AllUsersBAT'         { Test-AllUsersBAT         }
@@ -511,10 +512,10 @@ switch ($Technique) {
         }
 
         $color = if ($success) { 'Green' } else { 'Red' }
-        Write-Host "`n[RESULT] Technique '$Technique': $(if ($success) { 'EXECUTED' } else { 'BLOCKED' })" -ForegroundColor $color
+        Write-Host "`n[RESULT] Subtest '$Subtest': $(if ($success) { 'EXECUTED' } else { 'BLOCKED' })" -ForegroundColor $color
         if (-not $NoCleanupPrompt) {
             $c = Read-Host "Clean up now? (Y/N)"
-            if ($c -eq 'Y' -or $c -eq 'y') { Invoke-Cleanup -Names @($Technique) }
+            if ($c -eq 'Y' -or $c -eq 'y') { Invoke-Cleanup -Names @($Subtest) }
         }
     }
 }

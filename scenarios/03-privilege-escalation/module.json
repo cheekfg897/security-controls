@@ -1,43 +1,31 @@
 {
   "id": "03",
-  "display_name": "Privilege Escalation",
-  "description": "Tests detection of techniques used to elevate from standard user to SYSTEM or administrator",
-  "mitre_tactics": ["Privilege Escalation", "Defense Evasion"],
-  "vectors": [
+  "name": "Privilege Escalation",
+  "description": "Tests elevation and signed-binary proxy execution.",
+  "techniques": [
     {
       "id": "3.1",
       "name": "Process Hollowing",
-      "description": "Spawns a legitimate suspended process and replaces its image with a malicious payload, then resumes execution. Tests whether AV/EDR detects memory-resident code injection.",
-      "mitre": "T1055.012",
+      "description": "Exercises memory-resident process image replacement.",
+      "attack_id": "T1055.012",
       "script": "v3.1-process-hollowing.ps1",
-      "type": "not-implemented",
-      "supports": []
+      "status": "planned"
     },
     {
       "id": "3.2",
       "name": "UAC Bypass",
-      "description": "Four sub-tests covering different auto-elevation hijacks (Fodhelper, Eventvwr, ComputerDefaults, SilentCleanup) that execute a payload with elevated privileges without triggering a UAC prompt. No admin rights required to attempt.",
-      "mitre": "T1548.002",
+      "description": "Tests four auto-elevation hijacks that bypass the UAC prompt.",
+      "attack_id": "T1548.002",
       "script": "v3.2-uac-bypass.ps1",
-      "type": "technique",
-      "techniques": ["Fodhelper", "Eventvwr", "ComputerDefaults", "SilentCleanup", "All"],
-      "individual_techniques": ["Fodhelper", "Eventvwr", "ComputerDefaults", "SilentCleanup"],
-      "marker_file": "C:\\Windows\\Temp\\art-v3.2-{technique}.txt",
-      "default_technique": "Fodhelper",
-      "supports": ["technique"]
+      "subtests": ["Fodhelper", "Eventvwr", "ComputerDefaults", "SilentCleanup"]
     },
     {
       "id": "3.3",
       "name": "Living-off-the-Land (LOLBin) Signed Binary",
-      "description": "Abuses a Microsoft-signed binary (LOLBin) to proxy execution of an unsigned payload, evading application whitelisting and binary-trust policies.",
-      "mitre": "T1218",
+      "description": "Tests Microsoft-signed binaries that proxy execution of unsigned content.",
+      "attack_id": "T1218",
       "script": "v3.3-lotl-signed-binary/v3.3-lotl-signed-binary.ps1",
-      "type": "technique",
-      "techniques": ["MshtaHTA", "Regsvr32SCT", "Rundll32Advpack", "InfDefaultInstall", "All"],
-      "individual_techniques": ["MshtaHTA", "Regsvr32SCT", "Rundll32Advpack", "InfDefaultInstall"],
-      "marker_file": "C:\\Windows\\Temp\\art-v3.3-{technique}.txt",
-      "default_technique": "MshtaHTA",
-      "supports": ["technique"]
+      "subtests": ["MshtaHTA", "Regsvr32SCT", "Rundll32Advpack", "InfDefaultInstall"]
     }
   ]
 }

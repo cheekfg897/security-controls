@@ -27,6 +27,120 @@ function Show-SCTBanner {
 # MODULE DISCOVERY
 # =============================================================================
 
+function Get-SCTPropertyValue {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] $InputObject,
+        [Parameter(Mandatory)] [string]$Name,
+        $Default = $null
+    )
+
+    $property = $InputObject.PSObject.Properties[$Name]
+    if ($property) { return $property.Value }
+    return $Default
+}
+
+function Get-SCTModuleErrors {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] $Module,
+        [Parameter(Mandatory)] [string]$ModuleDir
+    )
+
+    $errors = @()
+    $moduleFields = @('id', 'name', 'description', 'techniques')
+    $techniqueFields = @('id', 'name', 'description', 'attack_id', 'script', 'subtests', 'server_subtests', 'status')
+
+    foreach ($property in $Module.PSObject.Properties.Name) {
+        if ($moduleFields -notcontains $property) {
+            $errors += "Unknown module field '$property'."
+        }
+    }
+
+    foreach ($required in @('id', 'name', 'techniques')) {
+        $value = Get-SCTPropertyValue -InputObject $Module -Name $required
+        if ($null -eq $value -or ($value -is [string] -and [string]::IsNullOrWhiteSpace($value))) {
+            $errors += "Missing required module field '$required'."
+        }
+    }
+
+    $moduleId = [string](Get-SCTPropertyValue -InputObject $Module -Name 'id' -Default '')
+    if ($moduleId -and $moduleId -notmatch '^\d{2}$') {
+        $errors += "Module id '$moduleId' must contain two digits, for example '04'."
+    }
+
+    $techniques = @(Get-SCTPropertyValue -InputObject $Module -Name 'techniques' -Default @())
+    if ($techniques.Count -eq 0) {
+        $errors += "Module '$moduleId' must define at least one technique."
+    }
+
+    $seenIds = @{}
+    foreach ($technique in $techniques) {
+        foreach ($property in $technique.PSObject.Properties.Name) {
+            if ($techniqueFields -notcontains $property) {
+                $errors += "Technique '$($technique.id)' has unknown field '$property'."
+            }
+        }
+
+        foreach ($required in @('id', 'name', 'attack_id', 'script')) {
+            $value = Get-SCTPropertyValue -InputObject $technique -Name $required
+            if ($null -eq $value -or ($value -is [string] -and [string]::IsNullOrWhiteSpace($value))) {
+                $errors += "A technique is missing required field '$required'."
+            }
+        }
+
+        $techniqueId = [string](Get-SCTPropertyValue -InputObject $technique -Name 'id' -Default '')
+        if ($techniqueId -and $techniqueId -notmatch '^\d+\.\d+$') {
+            $errors += "Technique id '$techniqueId' must use module.technique notation, for example '4.1'."
+        }
+        if ($seenIds.ContainsKey($techniqueId)) {
+            $errors += "Technique id '$techniqueId' is duplicated."
+        } else {
+            $seenIds[$techniqueId] = $true
+        }
+
+        $status = [string](Get-SCTPropertyValue -InputObject $technique -Name 'status' -Default '')
+        if ($status -and $status -ne 'planned') {
+            $errors += "Technique '$techniqueId' has invalid status '$status'. Omit status when ready, or use 'planned'."
+        }
+
+        $subtests = @(Get-SCTPropertyValue -InputObject $technique -Name 'subtests' -Default @())
+        $serverSubtests = @(Get-SCTPropertyValue -InputObject $technique -Name 'server_subtests' -Default @())
+        $seenSubtests = @{}
+        foreach ($subtest in $subtests) {
+            if ([string]::IsNullOrWhiteSpace([string]$subtest)) {
+                $errors += "Technique '$techniqueId' contains an empty subtest name."
+                continue
+            }
+            if ([string]$subtest -in @('All', 'AllLocal', 'AllRemote')) {
+                $errors += "Technique '$techniqueId' must not list '$subtest'; the launcher adds run-all choices automatically."
+            }
+            if ($seenSubtests.ContainsKey([string]$subtest)) {
+                $errors += "Technique '$techniqueId' contains duplicate subtest '$subtest'."
+            } else {
+                $seenSubtests[[string]$subtest] = $true
+            }
+        }
+        foreach ($subtest in $serverSubtests) {
+            if ($subtests -notcontains $subtest) {
+                $errors += "Technique '$techniqueId' server_subtest '$subtest' is not listed in subtests."
+            }
+        }
+
+        if ($status -ne 'planned') {
+            $script = [string](Get-SCTPropertyValue -InputObject $technique -Name 'script' -Default '')
+            $scriptPath = Join-Path $ModuleDir $script
+            if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
+                $errors += "Technique '$techniqueId' script was not found: $script"
+            } elseif ($subtests.Count -gt 0 -and -not (Test-SCTScriptSupportsParameter -ScriptPath $scriptPath -ParameterName 'Subtest')) {
+                $errors += "Technique '$techniqueId' defines subtests, but its script does not accept -Subtest."
+            }
+        }
+    }
+
+    return $errors
+}
+
 function Get-SCTModules {
     [CmdletBinding()]
     param(
@@ -50,7 +164,15 @@ function Get-SCTModules {
             $raw    = Get-Content -Path $jsonFile -Raw -Encoding UTF8
             $module = $raw | ConvertFrom-Json
 
-            # Attach the folder path so callers can resolve script paths
+            $moduleErrors = @(Get-SCTModuleErrors -Module $module -ModuleDir $dir.FullName)
+            if ($moduleErrors.Count -gt 0) {
+                foreach ($message in $moduleErrors) {
+                    Write-Warning "$($dir.Name)/module.json: $message"
+                }
+                continue
+            }
+
+            # Runtime-only path used to resolve technique scripts.
             $module | Add-Member -NotePropertyName 'ScriptDir' `
                 -NotePropertyValue $dir.FullName -Force
 
@@ -87,11 +209,13 @@ function Show-SCTMainMenu {
     Write-Host ""
 
     for ($i = 0; $i -lt $Modules.Count; $i++) {
-        $m            = $Modules[$i]
-        $vectorCount  = if ($m.vectors) { "($(@($m.vectors).Count) vectors)" } else { '(0 vectors)' }
-        $label        = "[$($i + 1)]"
-        Write-Host ("  {0,-5} {1,-45} {2}" -f $label, $m.display_name, $vectorCount) -ForegroundColor White
-        Write-Host ("        $($m.description)") -ForegroundColor DarkGray
+        $m              = $Modules[$i]
+        $techniqueCount = @($m.techniques).Count
+        $countLabel     = "($techniqueCount techniques)"
+        $label          = "[$($i + 1)]"
+        Write-Host ("  {0,-5} {1,-45} {2}" -f $label, $m.name, $countLabel) -ForegroundColor White
+        $description = Get-SCTPropertyValue -InputObject $m -Name 'description' -Default ''
+        if ($description) { Write-Host ("        $description") -ForegroundColor DarkGray }
         Write-Host ""
     }
 
@@ -112,26 +236,27 @@ function Invoke-SCTModuleMenu {
         [Parameter(Mandatory)] [string]$SamplesPath,
         [Parameter(Mandatory)] [string]$ScenarioRoot,
         [Parameter(Mandatory)] [string]$ResultsPath,
-        [Parameter(Mandatory)] [string]$TechResultsPath
+        [Parameter(Mandatory)] [string]$TestResultsPath
     )
 
     while ($true) {
         Write-Host ""
         Write-Host "  +----------------------------------------------------------------------------+" -ForegroundColor Magenta
-        Write-Host ("  |  " + $Module.display_name.ToUpper()) -ForegroundColor Magenta
-        Write-Host ("  |  MITRE Tactics: " + ($Module.mitre_tactics -join ', ')) -ForegroundColor DarkGray
+        Write-Host ("  |  " + $Module.name.ToUpper()) -ForegroundColor Magenta
         Write-Host "  +----------------------------------------------------------------------------+" -ForegroundColor Magenta
         Write-Host ""
 
-        $vectors = @($Module.vectors)
+        $techniques = @($Module.techniques)
 
-        for ($i = 0; $i -lt $vectors.Count; $i++) {
-            $v      = $vectors[$i]
-            $stub   = if ($v.type -eq 'not-implemented') { '  [STUB - not yet implemented]' } else { '' }
-            $color  = if ($v.type -eq 'not-implemented') { 'DarkGray' } else { 'White' }
-            Write-Host ("  [{0}]  {1}{2}" -f ($i + 1), $v.name, $stub) -ForegroundColor $color
-            Write-Host ("        $($v.description)") -ForegroundColor DarkGray
-            Write-Host ("        MITRE: $($v.mitre)  |  Type: $($v.type)") -ForegroundColor DarkGray
+        for ($i = 0; $i -lt $techniques.Count; $i++) {
+            $technique = $techniques[$i]
+            $status = Get-SCTPropertyValue -InputObject $technique -Name 'status' -Default ''
+            $stub   = if ($status -eq 'planned') { '  [PLANNED]' } else { '' }
+            $color  = if ($status -eq 'planned') { 'DarkGray' } else { 'White' }
+            Write-Host ("  [{0}]  {1}{2}" -f ($i + 1), $technique.name, $stub) -ForegroundColor $color
+            $description = Get-SCTPropertyValue -InputObject $technique -Name 'description' -Default ''
+            if ($description) { Write-Host ("        $description") -ForegroundColor DarkGray }
+            Write-Host ("        ATT&CK: $($technique.attack_id)") -ForegroundColor DarkGray
             Write-Host ""
         }
 
@@ -143,13 +268,13 @@ function Invoke-SCTModuleMenu {
         if ($choice -eq '0' -or $choice -eq '') { return }
 
         $idx = $choice -as [int]
-        if ($idx -ge 1 -and $idx -le $vectors.Count) {
-            Invoke-SCTVector -Vector $vectors[$idx - 1] `
+        if ($idx -ge 1 -and $idx -le $techniques.Count) {
+            Invoke-SCTTechnique -Technique $techniques[$idx - 1] `
                 -ModuleScriptDir $Module.ScriptDir `
                 -Control $Control `
                 -SamplesPath $SamplesPath `
                 -ResultsPath $ResultsPath `
-                -TechResultsPath $TechResultsPath
+                -TestResultsPath $TestResultsPath
         } else {
             Write-Host "  Invalid selection." -ForegroundColor Yellow
         }
@@ -160,31 +285,31 @@ function Invoke-SCTModuleMenu {
 # VECTOR EXECUTION DISPATCHER
 # =============================================================================
 
-function Invoke-SCTVector {
+function Invoke-SCTTechnique {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)] $Vector,
+        [Parameter(Mandatory)] $Technique,
         [Parameter(Mandatory)] [string]$ModuleScriptDir,
         [Parameter(Mandatory)] [string]$Control,
         [Parameter(Mandatory)] [string]$SamplesPath,
         [Parameter(Mandatory)] [string]$ResultsPath,
-        [Parameter(Mandatory)] [string]$TechResultsPath
+        [Parameter(Mandatory)] [string]$TestResultsPath
     )
 
-    $scriptPath = Join-Path $ModuleScriptDir $Vector.script
+    $scriptPath = Join-Path $ModuleScriptDir $Technique.script
 
     Write-Host ""
     Write-Host "  ============================================================================" -ForegroundColor Cyan
-    Write-Host "  VECTOR $($Vector.id): $($Vector.name)" -ForegroundColor Cyan
-    Write-Host "  MITRE: $($Vector.mitre)" -ForegroundColor DarkGray
+    Write-Host "  TECHNIQUE $($Technique.id): $($Technique.name)" -ForegroundColor Cyan
+    Write-Host "  ATT&CK: $($Technique.attack_id)" -ForegroundColor DarkGray
     Write-Host "  ============================================================================" -ForegroundColor Cyan
 
-    # Handle stubs before checking file existence
-    if ($Vector.type -eq 'not-implemented') {
+    $status = Get-SCTPropertyValue -InputObject $Technique -Name 'status' -Default ''
+    if ($status -eq 'planned') {
         Write-Host ""
-        Write-Host "  [i] This vector is not yet implemented." -ForegroundColor Yellow
+        Write-Host "  [i] This technique is planned but not yet implemented." -ForegroundColor Yellow
         Write-Host "  [i] Create the script at: $scriptPath" -ForegroundColor DarkGray
-        Write-Host "  [i] Then update 'type' in module.json to the appropriate vector type." -ForegroundColor DarkGray
+        Write-Host "  [i] Then remove 'status' from its module.json entry." -ForegroundColor DarkGray
         Read-Host "`n  Press Enter to return"
         return
     }
@@ -192,36 +317,61 @@ function Invoke-SCTVector {
     if (-not (Test-Path $scriptPath)) {
         Write-Host ""
         Write-Host "  [!] Script not found: $scriptPath" -ForegroundColor Red
-        Write-Host "  [!] Check that module.json 'script' path is correct relative to the module folder." -ForegroundColor Red
+        Write-Host "  [!] Check the technique's 'script' path in module.json." -ForegroundColor Red
         Read-Host "`n  Press Enter to return"
         return
     }
 
-    switch ($Vector.type) {
-        'malware-batch'    { Invoke-MalwareBatchVector   -Vector $Vector -ScriptPath $scriptPath -Control $Control -SamplesPath $SamplesPath -ResultsPath $ResultsPath }
-        'removable-media'  { Invoke-RemovableMediaVector -Vector $Vector -ScriptPath $scriptPath -Control $Control -ResultsPath $ResultsPath }
-        'client-server'    { Invoke-ClientServerVector   -Vector $Vector -ScriptPath $scriptPath -Control $Control -ResultsPath $ResultsPath }
-        'technique'        { Invoke-TechniqueVector      -Vector $Vector -ScriptPath $scriptPath -Control $Control -TechResultsPath $TechResultsPath }
-        'simple'           { Invoke-SimpleVector         -Vector $Vector -ScriptPath $scriptPath }
-        'fileless'         { Invoke-FilelessVector       -Vector $Vector -ScriptPath $scriptPath -Control $Control -TechResultsPath $TechResultsPath }
+    switch (Get-SCTTechniqueWorkflow -Technique $Technique -ScriptPath $scriptPath) {
+        'subtests' {
+            Invoke-SCTSubtests -Technique $Technique -ScriptPath $scriptPath -Control $Control -TestResultsPath $TestResultsPath
+        }
+        'sample-batch' {
+            Invoke-MalwareBatchTechnique -Technique $Technique -ScriptPath $scriptPath -Control $Control -SamplesPath $SamplesPath -ResultsPath $ResultsPath
+        }
+        'removable-media' {
+            Invoke-RemovableMediaTechnique -Technique $Technique -ScriptPath $scriptPath -Control $Control -ResultsPath $ResultsPath
+        }
+        'client-server' {
+            Invoke-ClientServerTechnique -Technique $Technique -ScriptPath $scriptPath -Control $Control -ResultsPath $ResultsPath
+        }
         default {
-            Write-Host ""
-            Write-Host "  [!] Unknown vector type '$($Vector.type)' in module.json." -ForegroundColor Red
-            Write-Host "  [!] Valid types: malware-batch, removable-media, client-server, technique, simple, not-implemented" -ForegroundColor DarkGray
-            Read-Host "`n  Press Enter to return"
+            Invoke-SimpleTechnique -Technique $Technique -ScriptPath $scriptPath
         }
     }
 }
 
+function Get-SCTTechniqueWorkflow {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] $Technique,
+        [Parameter(Mandatory)] [string]$ScriptPath
+    )
+
+    if (@(Get-SCTPropertyValue -InputObject $Technique -Name 'subtests' -Default @()).Count -gt 0) {
+        return 'subtests'
+    }
+    if (Test-SCTScriptSupportsParameter -ScriptPath $ScriptPath -ParameterName 'SourcePath') {
+        return 'sample-batch'
+    }
+    if (Test-SCTScriptSupportsParameter -ScriptPath $ScriptPath -ParameterName 'DriveLetter') {
+        return 'removable-media'
+    }
+    if (Test-SCTScriptSupportsParameter -ScriptPath $ScriptPath -ParameterName 'ServerIP') {
+        return 'client-server'
+    }
+    return 'direct'
+}
+
 # =============================================================================
-# TYPE: malware-batch
+# WORKFLOW: staged sample batch
 # Extracts a ZIP from samples/ to C:\Temp\SCT-Staging\, then calls the
 # script with -SourcePath and -Control. Supports -DryRun.
 # =============================================================================
 
-function Invoke-MalwareBatchVector {
+function Invoke-MalwareBatchTechnique {
     [CmdletBinding()]
-    param($Vector, [string]$ScriptPath, [string]$Control, [string]$SamplesPath, [string]$ResultsPath)
+    param($Technique, [string]$ScriptPath, [string]$Control, [string]$SamplesPath, [string]$ResultsPath)
 
     Write-Host ""
     Write-Host "  Delivers and optionally executes malware/tool samples from the samples/ folder." -ForegroundColor White
@@ -336,13 +486,13 @@ function Invoke-MalwareBatchVector {
 }
 
 # =============================================================================
-# TYPE: removable-media
+# WORKFLOW: removable media
 # Prompts for a drive letter, then calls the script with -DriveLetter -Control.
 # =============================================================================
 
-function Invoke-RemovableMediaVector {
+function Invoke-RemovableMediaTechnique {
     [CmdletBinding()]
-    param($Vector, [string]$ScriptPath, [string]$Control, [string]$ResultsPath)
+    param($Technique, [string]$ScriptPath, [string]$Control, [string]$ResultsPath)
 
     Write-Host ""
     Write-Host "  Prerequisites:" -ForegroundColor White
@@ -362,7 +512,7 @@ function Invoke-RemovableMediaVector {
 
     Write-Host ""
     Write-Host "  [*] Open your EDR/AV console and start monitoring before proceeding." -ForegroundColor Yellow
-    Read-Host "  Press Enter to launch Vector $($Vector.id)"
+    Read-Host "  Press Enter to launch Technique $($Technique.id)"
 
     $scriptArgs = @(
         '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$ScriptPath`"",
@@ -382,14 +532,14 @@ function Invoke-RemovableMediaVector {
 }
 
 # =============================================================================
-# TYPE: client-server
+# WORKFLOW: client/server
 # Prompts for server IP/port, calls the victim script with -ServerIP -Control.
 # The tester must start the companion server script on a second VM first.
 # =============================================================================
 
-function Invoke-ClientServerVector {
+function Invoke-ClientServerTechnique {
     [CmdletBinding()]
-    param($Vector, [string]$ScriptPath, [string]$Control, [string]$ResultsPath)
+    param($Technique, [string]$ScriptPath, [string]$Control, [string]$ResultsPath)
 
     Write-Host ""
     Write-Host "  Prerequisites:" -ForegroundColor White
@@ -400,7 +550,7 @@ function Invoke-ClientServerVector {
 
     $serverIP = (Read-Host "  IP address of the server VM (e.g. 192.168.1.100)").Trim()
     if (-not $serverIP) {
-        Write-Host "  Server IP is required for this vector." -ForegroundColor Red
+        Write-Host "  Server IP is required for this technique." -ForegroundColor Red
         Read-Host "`n  Press Enter to return"
         return
     }
@@ -416,7 +566,7 @@ function Invoke-ClientServerVector {
 
     Write-Host ""
     Write-Host "  [*] Open your EDR/AV console and start monitoring before proceeding." -ForegroundColor Yellow
-    Read-Host "  Press Enter to launch Vector $($Vector.id)"
+    Read-Host "  Press Enter to launch Technique $($Technique.id)"
 
     $scriptArgs = @(
         '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$ScriptPath`"",
@@ -437,95 +587,125 @@ function Invoke-ClientServerVector {
 }
 
 # =============================================================================
-# TYPE: technique
-# Shows a sub-menu of technique names from module.json, calls the script
-# with -Technique <selected>. Used by persistence and priv-esc scripts.
+# SUBTEST RUNNER
+# module.json lists real subtests only. The launcher supplies run-all choices,
+# derives marker paths, and asks for a server only when the selection needs one.
 # =============================================================================
 
-function Invoke-TechniqueVector {
+function Get-SCTMarkerPath {
     [CmdletBinding()]
     param(
-        $Vector,
+        [Parameter(Mandatory)] [string]$TechniqueId,
+        [Parameter(Mandatory)] [string]$Subtest
+    )
+
+    return (Join-Path $env:SystemRoot "Temp\art-v$TechniqueId-$Subtest.txt")
+}
+
+function Invoke-SCTSubtests {
+    [CmdletBinding()]
+    param(
+        $Technique,
         [string]$ScriptPath,
         [string]$Control,
-        [string]$TechResultsPath,
+        [string]$TestResultsPath,
         [switch]$NonInteractive,
         [string]$RunId
     )
 
-    $techniques = @($Vector.techniques)
-
-    if ($techniques.Count -eq 0) {
+    $subtests = @(Get-SCTPropertyValue -InputObject $Technique -Name 'subtests' -Default @())
+    $serverSubtests = @(Get-SCTPropertyValue -InputObject $Technique -Name 'server_subtests' -Default @())
+    if ($subtests.Count -eq 0) {
         Write-Host ""
-        Write-Host "  [!] No techniques defined in module.json for this vector." -ForegroundColor Red
+        Write-Host "  [!] No subtests are defined for Technique $($Technique.id)." -ForegroundColor Red
         Read-Host "`n  Press Enter to return"
         return
     }
 
     if ($NonInteractive) {
-        if ($techniques -notcontains 'All') {
-            throw "Vector $($Vector.id) does not support the 'All' technique required for non-interactive execution."
-        }
-        $technique = 'All'
+        $selected = 'All'
     } else {
+        $choices = @($subtests)
+        if ($serverSubtests.Count -gt 0) {
+            $localSubtests = @($subtests | Where-Object { $serverSubtests -notcontains $_ })
+            if ($localSubtests.Count -gt 0) { $choices += 'AllLocal' }
+            $choices += 'AllRemote'
+        }
+        $choices += 'All'
+
         Write-Host ""
-        Write-Host "  Available techniques:" -ForegroundColor White
+        Write-Host "  Available subtests:" -ForegroundColor White
         Write-Host ""
 
-        for ($i = 0; $i -lt $techniques.Count; $i++) {
-            $t     = $techniques[$i]
-            $color = if ($t -eq 'All') { 'Yellow' } else { 'White' }
-            Write-Host ("  [{0}]  {1}" -f ($i + 1), $t) -ForegroundColor $color
+        for ($i = 0; $i -lt $choices.Count; $i++) {
+            $item = $choices[$i]
+            $needsServer = $serverSubtests -contains $item
+            $tag = if ($needsServer) { '  [needs server VM]' } else { '' }
+            $color = if ($item -like 'All*') { 'Yellow' } elseif ($needsServer) { 'Cyan' } else { 'White' }
+            Write-Host ("  [{0}]  {1}{2}" -f ($i + 1), $item, $tag) -ForegroundColor $color
         }
 
         Write-Host "  [0]   Cancel" -ForegroundColor DarkGray
         Write-Host ""
 
-        $choice = (Read-Host "  Select technique").Trim()
+        $choice = (Read-Host "  Select subtest").Trim()
         if ($choice -eq '0' -or $choice -eq '') { return }
 
         $idx = $choice -as [int]
-        if ($idx -lt 1 -or $idx -gt $techniques.Count) {
+        if ($idx -lt 1 -or $idx -gt $choices.Count) {
             Write-Host "  Invalid selection." -ForegroundColor Yellow
             Read-Host "`n  Press Enter to return"
             return
         }
 
-        $technique = $techniques[$idx - 1]
+        $selected = $choices[$idx - 1]
     }
 
-    $markerPattern = $Vector.marker_file
-    $individualTechniques = @($Vector.individual_techniques)
-    if ($individualTechniques.Count -eq 0) {
-        $individualTechniques = @($techniques | Where-Object { $_ -ne 'All' })
-    }
-
-    $toCheck = if ($technique -eq 'All') {
-        $individualTechniques
-    } else {
-        @($technique)
+    $toCheck = switch ($selected) {
+        'All'       { @($subtests) }
+        'AllRemote' { @($serverSubtests) }
+        'AllLocal'  { @($subtests | Where-Object { $serverSubtests -notcontains $_ }) }
+        default     { @($selected) }
     }
     $runResults = @()
+    $needsServer = @($toCheck | Where-Object { $serverSubtests -contains $_ }).Count -gt 0
 
-    if ($markerPattern) {
-        foreach ($t in $toCheck) {
-            $markerPath = $markerPattern -replace '\{technique\}', $t
-            Remove-Item -LiteralPath $markerPath -Force -ErrorAction SilentlyContinue
+    $serverIP = $null
+    $port = '8080'
+    if ($needsServer) {
+        if ($NonInteractive) {
+            throw "Technique $($Technique.id) needs server details and cannot run non-interactively."
         }
+        Write-Host ""
+        Write-Host "  '$selected' needs the companion server VM." -ForegroundColor Cyan
+        $serverIP = (Read-Host "  Server VM IP address").Trim()
+        if (-not $serverIP) {
+            Write-Host "  Server IP is required for '$selected'." -ForegroundColor Red
+            Read-Host "`n  Press Enter to return"
+            return
+        }
+        $portInput = (Read-Host "  Port number [default: 8080]").Trim()
+        if ($portInput) { $port = $portInput }
+    }
+
+    foreach ($subtest in $toCheck) {
+        $markerPath = Get-SCTMarkerPath -TechniqueId $Technique.id -Subtest $subtest
+        Remove-Item -LiteralPath $markerPath -Force -ErrorAction SilentlyContinue
     }
 
     Write-Host ""
     if ($NonInteractive) {
-        Write-Host "  [*] Running $technique without prompts." -ForegroundColor Yellow
+        Write-Host "  [*] Running all subtests without prompts." -ForegroundColor Yellow
     } else {
         Write-Host "  [*] Open your EDR/AV console and start monitoring before proceeding." -ForegroundColor Yellow
-        Read-Host "  Press Enter to run: $technique"
+        Read-Host "  Press Enter to run: $selected"
     }
 
     $scriptArgs = @(
         '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$ScriptPath`"",
-        '-Technique', $technique
+        '-Subtest', $selected
     )
+    if ($serverIP) { $scriptArgs += @('-ServerIP', $serverIP, '-Port', $port) }
     if (Test-SCTScriptSupportsParameter -ScriptPath $ScriptPath -ParameterName 'NoCleanupPrompt') {
         $scriptArgs += '-NoCleanupPrompt'
     }
@@ -537,21 +717,20 @@ function Invoke-TechniqueVector {
     }
 
     Write-Host ""
-    Write-Host "  [>] Launching: $ScriptPath -Technique $technique" -ForegroundColor Cyan
+    Write-Host "  [>] Launching: $ScriptPath -Subtest $selected" -ForegroundColor Cyan
     Write-Host ""
 
     $startTime = Get-Date
     Start-Process -FilePath 'powershell.exe' -ArgumentList $scriptArgs -Wait -NoNewWindow
 
-    # Post-run: check marker files and write a result row per technique
-    if ($markerPattern -and $TechResultsPath) {
+    if ($TestResultsPath) {
         Write-Host ""
         Write-Host "  [*] Checking results..." -ForegroundColor Cyan
         Write-Host ""
 
         $executedCount = 0
-        foreach ($t in $toCheck) {
-            $markerPath = $markerPattern -replace '\{technique\}', $t
+        foreach ($subtest in $toCheck) {
+            $markerPath = Get-SCTMarkerPath -TechniqueId $Technique.id -Subtest $subtest
             $executed   = Test-SCTMarkerFile -Path $markerPath
             $outcome    = if ($executed) { 'EXECUTED' } else { 'BLOCKED' }
             $notes      = if ($executed) { "marker found: $markerPath" } else { "marker absent after test: $markerPath" }
@@ -559,24 +738,24 @@ function Invoke-TechniqueVector {
             $color      = if ($executed) { 'Red' } else { 'Green' }
 
             if ($executed) { $executedCount++ }
-            Write-Host ("  {0}  {1,-28}  {2}" -f $icon, $t, $outcome) -ForegroundColor $color
+            Write-Host ("  {0}  {1,-28}  {2}" -f $icon, $subtest, $outcome) -ForegroundColor $color
 
-            Write-SCTResult -Path $TechResultsPath -Timestamp $startTime -Control $Control `
-                -VectorId $Vector.id -VectorName $Vector.name -Technique $t `
+            Write-SCTResult -Path $TestResultsPath -Timestamp $startTime -Control $Control `
+                -TechniqueId $Technique.id -TechniqueName $Technique.name -Subtest $subtest `
                 -Outcome $outcome -Notes $notes -RunId $RunId
 
             $runResults += [pscustomobject]@{
-                run_id    = $RunId
-                control   = $Control
-                vector_id = $Vector.id
-                technique = $t
-                outcome   = $outcome
-                notes     = $notes
+                run_id      = $RunId
+                control     = $Control
+                technique_id = $Technique.id
+                subtest     = $subtest
+                outcome     = $outcome
+                notes       = $notes
             }
         }
 
         Write-Host ""
-        Write-Host "  $executedCount of $($toCheck.Count) techniques executed this run" -ForegroundColor Cyan
+        Write-Host "  $executedCount of $($toCheck.Count) subtests executed this run" -ForegroundColor Cyan
         Write-Host "  [i] [!] Red = executed (not blocked by control)" -ForegroundColor DarkGray
         Write-Host "  [i] [+] Green = blocked by control" -ForegroundColor DarkGray
     }
@@ -590,8 +769,8 @@ function Invoke-TechniqueVector {
 
 # =============================================================================
 # NON-INTERACTIVE MODULE RUNNER
-# Runs every technique vector in Module 04 without menu, pause, or cleanup
-# prompts. Results are recorded before each vector is cleaned up.
+# Runs every subtest in Module 04 without menu, pause, or cleanup prompts.
+# Results are recorded before each technique is cleaned up.
 # =============================================================================
 
 function Test-SCTAdministrator {
@@ -613,7 +792,7 @@ function Start-SCTCountdown {
     }
 }
 
-function Invoke-SCTVectorCleanup {
+function Invoke-SCTTechniqueCleanup {
     [CmdletBinding()]
     param([Parameter(Mandatory)] [string]$ScriptPath)
 
@@ -632,7 +811,7 @@ function Show-SCTModuleRunSummary {
     param(
         [Parameter(Mandatory)] [array]$Results,
         [Parameter(Mandatory)] [string]$RunId,
-        [Parameter(Mandatory)] [string]$TechResultsPath
+        [Parameter(Mandatory)] [string]$TestResultsPath
     )
 
     $total    = $Results.Count
@@ -645,12 +824,12 @@ function Show-SCTModuleRunSummary {
     Write-Host "  ============================================================================" -ForegroundColor Cyan
     Write-Host "  Run ID   : $RunId" -ForegroundColor White
     Write-Host "  Results  : $total total | $executed executed | $blocked blocked" -ForegroundColor White
-    Write-Host "  CSV      : $TechResultsPath" -ForegroundColor DarkGray
+    Write-Host "  CSV      : $TestResultsPath" -ForegroundColor DarkGray
 
-    foreach ($group in ($Results | Group-Object vector_id | Sort-Object Name)) {
+    foreach ($group in ($Results | Group-Object technique_id | Sort-Object Name)) {
         $groupExecuted = @($group.Group | Where-Object { $_.outcome -eq 'EXECUTED' }).Count
         $groupBlocked  = @($group.Group | Where-Object { $_.outcome -eq 'BLOCKED' }).Count
-        Write-Host ("  Vector {0}: {1} total | {2} executed | {3} blocked" -f $group.Name, $group.Count, $groupExecuted, $groupBlocked) -ForegroundColor White
+        Write-Host ("  Technique {0}: {1} total | {2} executed | {3} blocked" -f $group.Name, $group.Count, $groupExecuted, $groupBlocked) -ForegroundColor White
     }
 }
 
@@ -659,9 +838,9 @@ function Invoke-SCTModuleNonInteractive {
     param(
         [Parameter(Mandatory)] $Module,
         [Parameter(Mandatory)] [string]$Control,
-        [Parameter(Mandatory)] [string]$TechResultsPath,
+        [Parameter(Mandatory)] [string]$TestResultsPath,
         [ValidateRange(0, 300)] [int]$StartDelaySeconds = 10,
-        [ValidateRange(0, 300)] [int]$InterVectorDelaySeconds = 3
+        [ValidateRange(0, 300)] [int]$InterTechniqueDelaySeconds = 3
     )
 
     if ($Module.id -ne '04') {
@@ -671,23 +850,23 @@ function Invoke-SCTModuleNonInteractive {
         throw "Module 04 full runs require an elevated PowerShell session. Open PowerShell as Administrator and run the command again."
     }
 
-    $vectors = @($Module.vectors)
-    if ($vectors.Count -eq 0 -or @($vectors | Where-Object { $_.type -ne 'technique' }).Count -gt 0) {
-        throw "Module 04 must contain only technique vectors for a non-interactive run."
+    $techniques = @($Module.techniques)
+    if ($techniques.Count -eq 0 -or @($techniques | Where-Object { @(Get-SCTPropertyValue -InputObject $_ -Name 'subtests' -Default @()).Count -eq 0 }).Count -gt 0) {
+        throw "Module 04 must contain only techniques with subtests for a non-interactive run."
     }
 
-    $techniqueCount = 0
-    foreach ($vector in $vectors) {
-        $scriptPath = Join-Path $Module.ScriptDir $vector.script
+    $subtestCount = 0
+    foreach ($technique in $techniques) {
+        $scriptPath = Join-Path $Module.ScriptDir $technique.script
         if (-not (Test-Path -LiteralPath $scriptPath)) {
             throw "Script not found: $scriptPath"
         }
         foreach ($parameter in @('NoPause', 'NoReport', 'CleanupOnly')) {
             if (-not (Test-SCTScriptSupportsParameter -ScriptPath $scriptPath -ParameterName $parameter)) {
-                throw "Vector $($vector.id) must support -$parameter for a non-interactive Module 04 run."
+                throw "Technique $($technique.id) must support -$parameter for a non-interactive Module 04 run."
             }
         }
-        $techniqueCount += @($vector.individual_techniques).Count
+        $subtestCount += @($technique.subtests).Count
     }
 
     $runId = "M04-" + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + ([guid]::NewGuid().ToString('N').Substring(0, 6))
@@ -695,51 +874,51 @@ function Invoke-SCTModuleNonInteractive {
     Write-Host ""
     Write-Host "  Module 04 non-interactive run" -ForegroundColor Cyan
     Write-Host "  Control  : $Control" -ForegroundColor White
-    Write-Host "  Vectors  : $($vectors.Count)" -ForegroundColor White
-    Write-Host "  Tests    : $techniqueCount" -ForegroundColor White
+    Write-Host "  Techniques: $($techniques.Count)" -ForegroundColor White
+    Write-Host "  Subtests  : $subtestCount" -ForegroundColor White
     Write-Host "  Run ID   : $runId" -ForegroundColor White
-    Write-Host "  Cleanup  : automatic after each vector is recorded" -ForegroundColor DarkGray
+    Write-Host "  Cleanup  : automatic after each technique is recorded" -ForegroundColor DarkGray
     Start-SCTCountdown -Seconds $StartDelaySeconds
 
     $runResults = @()
-    for ($index = 0; $index -lt $vectors.Count; $index++) {
-        $vector     = $vectors[$index]
-        $scriptPath = Join-Path $Module.ScriptDir $vector.script
+    for ($index = 0; $index -lt $techniques.Count; $index++) {
+        $technique  = $techniques[$index]
+        $scriptPath = Join-Path $Module.ScriptDir $technique.script
 
         Write-Host ""
-        Write-Host "  [>] Vector $($vector.id): $($vector.name)" -ForegroundColor Cyan
+        Write-Host "  [>] Technique $($technique.id): $($technique.name)" -ForegroundColor Cyan
         try {
-            $vectorResults = @(Invoke-TechniqueVector -Vector $vector -ScriptPath $scriptPath -Control $Control `
-                -TechResultsPath $TechResultsPath -NonInteractive -RunId $runId)
-            $runResults += $vectorResults
+            $techniqueResults = @(Invoke-SCTSubtests -Technique $technique -ScriptPath $scriptPath -Control $Control `
+                -TestResultsPath $TestResultsPath -NonInteractive -RunId $runId)
+            $runResults += $techniqueResults
         } finally {
-            Write-Host "  [*] Cleaning up Vector $($vector.id)..." -ForegroundColor DarkGray
-            Invoke-SCTVectorCleanup -ScriptPath $scriptPath
+            Write-Host "  [*] Cleaning up Technique $($technique.id)..." -ForegroundColor DarkGray
+            Invoke-SCTTechniqueCleanup -ScriptPath $scriptPath
         }
 
-        if ($index -lt ($vectors.Count - 1) -and $InterVectorDelaySeconds -gt 0) {
-            Write-Host "  Waiting $InterVectorDelaySeconds seconds before the next vector..." -ForegroundColor DarkGray
-            Start-Sleep -Seconds $InterVectorDelaySeconds
+        if ($index -lt ($techniques.Count - 1) -and $InterTechniqueDelaySeconds -gt 0) {
+            Write-Host "  Waiting $InterTechniqueDelaySeconds seconds before the next technique..." -ForegroundColor DarkGray
+            Start-Sleep -Seconds $InterTechniqueDelaySeconds
         }
     }
 
-    Show-SCTModuleRunSummary -Results $runResults -RunId $runId -TechResultsPath $TechResultsPath
+    Show-SCTModuleRunSummary -Results $runResults -RunId $runId -TestResultsPath $TestResultsPath
     return $runResults
 }
 
 # =============================================================================
-# TYPE: simple
+# WORKFLOW: direct script
 # Runs the script directly with no extra parameters. Used for self-contained
-# vectors that handle their own prompting (e.g. DLL sideloading, trojanised COTS).
+# techniques that handle their own prompting (for example DLL sideloading).
 # =============================================================================
 
-function Invoke-SimpleVector {
+function Invoke-SimpleTechnique {
     [CmdletBinding()]
-    param($Vector, [string]$ScriptPath)
+    param($Technique, [string]$ScriptPath)
 
     Write-Host ""
     Write-Host "  [*] Open your EDR/AV console and start monitoring before proceeding." -ForegroundColor Yellow
-    Read-Host "  Press Enter to launch Vector $($Vector.id)"
+    Read-Host "  Press Enter to launch Technique $($Technique.id)"
 
     $scriptArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$ScriptPath`"")
 
@@ -748,155 +927,6 @@ function Invoke-SimpleVector {
     Write-Host ""
 
     Start-Process -FilePath 'powershell.exe' -ArgumentList $scriptArgs -Wait -NoNewWindow
-    Read-Host "`n  Press Enter to return"
-}
-
-# =============================================================================
-# TYPE: fileless
-# Like technique type but aware that some sub-techniques need a remote server
-# and some run entirely in local memory. Only prompts for server IP when the
-# selected technique is listed in the vector's "remote_techniques" array.
-# Nothing is written to disk during execution - no staging folder is created.
-# =============================================================================
-
-function Invoke-FilelessVector {
-    [CmdletBinding()]
-    param($Vector, [string]$ScriptPath, [string]$Control, [string]$TechResultsPath)
-
-    $techniques       = @($Vector.techniques)
-    $remoteTechniques = @($Vector.remote_techniques)
-
-    if ($techniques.Count -eq 0) {
-        Write-Host ""
-        Write-Host "  [!] No techniques defined in module.json for this vector." -ForegroundColor Red
-        Read-Host "`n  Press Enter to return"
-        return
-    }
-
-    Write-Host ""
-    Write-Host "  Execution model: FILELESS - nothing is written to disk." -ForegroundColor Yellow
-    Write-Host "  Payloads run entirely in memory (PowerShell process, .NET, WMI, COM)." -ForegroundColor DarkGray
-    Write-Host ""
-
-    # Annotate which techniques need a server VM
-    Write-Host "  Available techniques:" -ForegroundColor White
-    Write-Host ""
-    for ($i = 0; $i -lt $techniques.Count; $i++) {
-        $t      = $techniques[$i]
-        $isAll  = $t -like 'All*'
-        $needsServer = $remoteTechniques -contains $t
-        $tag    = if ($needsServer)  { '  [needs server VM]' } else { '' }
-        $color  = if ($isAll) { 'Yellow' } elseif ($needsServer) { 'Cyan' } else { 'White' }
-        Write-Host ("  [{0}]  {1}{2}" -f ($i + 1), $t, $tag) -ForegroundColor $color
-    }
-    Write-Host "  [0]   Cancel" -ForegroundColor DarkGray
-    Write-Host ""
-    Write-Host "  Cyan  = requires companion server script on VM2" -ForegroundColor DarkGray
-    Write-Host "  White = runs locally, no VM2 needed" -ForegroundColor DarkGray
-    Write-Host ""
-
-    $choice = (Read-Host "  Select technique").Trim()
-    if ($choice -eq '0' -or $choice -eq '') { return }
-
-    $idx = $choice -as [int]
-    if ($idx -lt 1 -or $idx -gt $techniques.Count) {
-        Write-Host "  Invalid selection." -ForegroundColor Yellow
-        Read-Host "`n  Press Enter to return"
-        return
-    }
-
-    $technique   = $techniques[$idx - 1]
-    $individualTechniques = @($techniques | Where-Object { $_ -notlike 'All*' })
-    $individualRemoteTechniques = @($remoteTechniques | Where-Object { $_ -notlike 'All*' })
-    $toCheck = if ($technique -eq 'All') {
-        $individualTechniques
-    } elseif ($technique -eq 'AllRemote') {
-        $individualRemoteTechniques
-    } elseif ($technique -eq 'AllLocal') {
-        @($individualTechniques | Where-Object { $individualRemoteTechniques -notcontains $_ })
-    } else {
-        @($technique)
-    }
-    $needsServer = ($remoteTechniques -contains $technique) -or (@($toCheck | Where-Object { $remoteTechniques -contains $_ }).Count -gt 0)
-
-    # Only prompt for server IP if the chosen technique actually needs one
-    $serverIP = $null
-    $port     = '8080'
-    if ($needsServer) {
-        Write-Host ""
-        Write-Host "  '$technique' fetches payloads from a companion server VM at runtime." -ForegroundColor Cyan
-        Write-Host "  Start v1.5-server.ps1 on VM2 before continuing." -ForegroundColor DarkGray
-        Write-Host ""
-        $serverIP = (Read-Host "  IP address of the server VM (e.g. 192.168.1.100)").Trim()
-        if (-not $serverIP) {
-            Write-Host "  Server IP is required for '$technique'." -ForegroundColor Red
-            Read-Host "`n  Press Enter to return"
-            return
-        }
-        $portInput = (Read-Host "  Port number [default: 8080]").Trim()
-        if ($portInput) { $port = $portInput }
-    } else {
-        Write-Host ""
-        Write-Host "  '$technique' runs locally - no server VM required." -ForegroundColor Green
-    }
-
-    Write-Host ""
-    Write-Host "  [*] Open your EDR/AV console and start monitoring before proceeding." -ForegroundColor Yellow
-    Write-Host "  [*] No files will be written to disk during this test." -ForegroundColor Yellow
-    Read-Host "  Press Enter to run: $technique"
-
-    $scriptArgs = @(
-        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$ScriptPath`"",
-        '-Technique', $technique
-    )
-    if (Test-SCTScriptSupportsParameter -ScriptPath $ScriptPath -ParameterName 'NoCleanupPrompt') {
-        $scriptArgs += '-NoCleanupPrompt'
-    }
-    if ($serverIP) {
-        $scriptArgs += @('-ServerIP', $serverIP, '-Port', $port)
-    }
-
-    foreach ($t in $toCheck) {
-        Remove-Item -LiteralPath "C:\Windows\Temp\art-marker-$t.txt" -Force -ErrorAction SilentlyContinue
-    }
-
-    Write-Host ""
-    Write-Host "  [>] Launching: $ScriptPath -Technique $technique" -ForegroundColor Cyan
-    Write-Host ""
-
-    $startTime = Get-Date
-    Start-Process -FilePath 'powershell.exe' -ArgumentList $scriptArgs -Wait -NoNewWindow
-
-    # Post-run: check one marker per fileless sub-technique.
-    if ($TechResultsPath) {
-        Write-Host ""
-        Write-Host "  [*] Checking results..." -ForegroundColor Cyan
-
-        $executedCount = 0
-        foreach ($t in $toCheck) {
-            $markerPath = "C:\Windows\Temp\art-marker-$t.txt"
-            $executed = Test-SCTMarkerFile -Path $markerPath
-            $outcome = if ($executed) { 'EXECUTED' } else { 'BLOCKED' }
-            $notes = if ($executed) { "marker found: $markerPath" } else { "marker absent after test: $markerPath" }
-            $icon  = if ($executed) { '[!]' } else { '[+]' }
-            $color = if ($executed) { 'Red' } else { 'Green' }
-
-            if ($executed) { $executedCount++ }
-            Write-Host ""
-            Write-Host ("  {0}  {1,-28}  {2}" -f $icon, $t, $outcome) -ForegroundColor $color
-            Write-Host "      $notes" -ForegroundColor DarkGray
-
-            Write-SCTResult -Path $TechResultsPath -Timestamp $startTime -Control $Control `
-                -VectorId $Vector.id -VectorName $Vector.name -Technique $t `
-                -Outcome $outcome -Notes $notes
-        }
-
-        Write-Host ""
-        Write-Host "  $executedCount of $($toCheck.Count) techniques executed this run" -ForegroundColor Cyan
-        Write-Host "  [i] [!] Red = executed (not blocked by control)" -ForegroundColor DarkGray
-        Write-Host "  [i] [+] Green = blocked by control" -ForegroundColor DarkGray
-    }
-
     Read-Host "`n  Press Enter to return"
 }
 
@@ -1028,8 +1058,7 @@ function Merge-StagingFromZips {
 }
 
 # =============================================================================
-# RESULT WRITER  -  writes one row to technique-results.csv
-# All technique and fileless vectors call this after checking their indicators.
+# RESULT WRITER - writes one row per subtest to test-results.csv.
 # =============================================================================
 
 function Write-SCTResult {
@@ -1039,9 +1068,9 @@ function Write-SCTResult {
         [Parameter(Mandatory)] [datetime]$Timestamp,
         [string]$RunId = '',
         [Parameter(Mandatory)] [string]$Control,
-        [Parameter(Mandatory)] [string]$VectorId,
-        [Parameter(Mandatory)] [string]$VectorName,
-        [Parameter(Mandatory)] [string]$Technique,
+        [Parameter(Mandatory)] [string]$TechniqueId,
+        [Parameter(Mandatory)] [string]$TechniqueName,
+        [Parameter(Mandatory)] [string]$Subtest,
         [Parameter(Mandatory)] [ValidateSet('EXECUTED','BLOCKED','NOT-EXPLOITABLE','ERROR')]
         [string]$Outcome,
         [string]$Notes = ''
@@ -1052,28 +1081,30 @@ function Write-SCTResult {
         New-Item -ItemType Directory -Path $dir -Force | Out-Null
     }
 
-    Update-SCTTechniqueResultsSchema -Path $Path
+    Update-SCTTestResultsSchema -Path $Path
 
     [pscustomobject][ordered]@{
-        timestamp   = $Timestamp.ToString('o')
-        run_id      = $RunId
-        control     = $Control
-        vector_id   = $VectorId
-        vector_name = $VectorName
-        technique   = $Technique
-        outcome     = $Outcome
-        notes       = $Notes
+        timestamp      = $Timestamp.ToString('o')
+        run_id         = $RunId
+        control        = $Control
+        technique_id   = $TechniqueId
+        technique_name = $TechniqueName
+        subtest        = $Subtest
+        outcome        = $Outcome
+        notes          = $Notes
     } | Export-Csv -Path $Path -Append -NoTypeInformation -Encoding UTF8
 }
 
-function Update-SCTTechniqueResultsSchema {
+function Update-SCTTestResultsSchema {
     [CmdletBinding()]
     param([Parameter(Mandatory)] [string]$Path)
 
     if (-not (Test-Path -LiteralPath $Path)) { return }
 
     $header = Get-Content -LiteralPath $Path -TotalCount 1 -ErrorAction Stop
-    if ($header -match '(^|,)"?run_id"?(,|$)') { return }
+    if ($header -match '(^|,)"?run_id"?(,|$)' -and
+        $header -match '(^|,)"?technique_id"?(,|$)' -and
+        $header -match '(^|,)"?subtest"?(,|$)') { return }
 
     $dir      = Split-Path -Path $Path -Parent
     $tempPath = Join-Path $dir (".{0}.{1}.tmp" -f (Split-Path -Path $Path -Leaf), [guid]::NewGuid())
@@ -1081,19 +1112,23 @@ function Update-SCTTechniqueResultsSchema {
 
     if ($existing.Count -gt 0) {
         $existing | ForEach-Object {
+            $oldRunId = if ($_.PSObject.Properties['run_id']) { $_.run_id } else { '' }
+            $techniqueId = if ($_.PSObject.Properties['technique_id']) { $_.technique_id } else { $_.vector_id }
+            $techniqueName = if ($_.PSObject.Properties['technique_name']) { $_.technique_name } else { $_.vector_name }
+            $subtest = if ($_.PSObject.Properties['subtest']) { $_.subtest } else { $_.technique }
             [pscustomobject][ordered]@{
-                timestamp   = $_.timestamp
-                run_id      = ''
-                control     = $_.control
-                vector_id   = $_.vector_id
-                vector_name = $_.vector_name
-                technique   = $_.technique
-                outcome     = $_.outcome
-                notes       = $_.notes
+                timestamp      = $_.timestamp
+                run_id         = $oldRunId
+                control        = $_.control
+                technique_id   = $techniqueId
+                technique_name = $techniqueName
+                subtest        = $subtest
+                outcome        = $_.outcome
+                notes          = $_.notes
             }
         } | Export-Csv -LiteralPath $tempPath -NoTypeInformation -Encoding UTF8
     } else {
-        '"timestamp","run_id","control","vector_id","vector_name","technique","outcome","notes"' |
+        '"timestamp","run_id","control","technique_id","technique_name","subtest","outcome","notes"' |
             Set-Content -LiteralPath $tempPath -Encoding UTF8
     }
 
@@ -1102,7 +1137,7 @@ function Update-SCTTechniqueResultsSchema {
 
 # =============================================================================
 # MARKER FILE CHECK  -  returns $true if the expected marker file exists.
-# Invoke-TechniqueVector removes expected markers before launch, so presence
+# Invoke-SCTSubtests removes expected markers before launch, so presence
 # after the script exits is proof that the current run wrote the marker.
 # =============================================================================
 
@@ -1119,7 +1154,7 @@ function Test-SCTMarkerFile {
 # =============================================================================
 # SCRIPT PARAMETER CHECK
 # Used by the launcher to opt into newer script parameters without breaking
-# older vectors that do not know about them.
+# older technique scripts that do not know about them.
 # =============================================================================
 
 function Test-SCTScriptSupportsParameter {
@@ -1149,7 +1184,7 @@ function Test-SCTScriptSupportsParameter {
 }
 
 # =============================================================================
-# CALC.EXE SPAWN CHECK  -  proof-of-execution for fileless vectors.
+# CALC.EXE SPAWN CHECK - proof of execution for in-memory subtests.
 # Checks Sysmon EID 1 first. If Sysmon is not installed, falls back to a
 # manual [E]xecuted / [B]locked / [S]kip prompt so nothing is lost.
 # =============================================================================
@@ -1186,7 +1221,7 @@ function Test-SCTCalcSpawned {
 
 # =============================================================================
 # RESULTS SUMMARY
-# Reads both results.csv (malware delivery) and technique-results.csv
+# Reads both results.csv (malware delivery) and test-results.csv
 # and displays a combined aggregated view.
 # =============================================================================
 
@@ -1194,7 +1229,7 @@ function Show-SCTSummary {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)] [string]$ResultsPath,
-        [Parameter(Mandatory)] [string]$TechResultsPath
+        [Parameter(Mandatory)] [string]$TestResultsPath
     )
 
     Write-Host ""
@@ -1218,14 +1253,16 @@ function Show-SCTSummary {
                 Write-Host ("  " + ('-' * 76)) -ForegroundColor DarkGray
 
                 $hdr = "  {0,-22} {1,-8} {2,-8} {3,-20} {4}"
-                Write-Host ($hdr -f 'Control', 'Vector', 'Samples', 'Delivered', 'Sysmon Hit') -ForegroundColor White
+                Write-Host ($hdr -f 'Control', 'Technique', 'Samples', 'Delivered', 'Sysmon Hit') -ForegroundColor White
 
-                $groups = $data | Group-Object -Property control, vector | Sort-Object Name
+                $idProperty = if ($data[0].PSObject.Properties['technique_id']) { 'technique_id' } else { 'vector' }
+                $groups = $data | Group-Object -Property control, $idProperty | Sort-Object Name
                 foreach ($g in $groups) {
                     $tot  = $g.Count
                     $del  = ($g.Group | Where-Object { $_.delivery_success   -eq 'True' }).Count
                     $sys  = ($g.Group | Where-Object { $_.sysmon_event_found -eq 'True' }).Count
-                    Write-Host ($hdr -f $g.Group[0].control, $g.Group[0].vector, $tot,
+                    $techniqueId = $g.Group[0].$idProperty
+                    Write-Host ($hdr -f $g.Group[0].control, $techniqueId, $tot,
                         "$del/$tot ($([math]::Round(100*$del/$tot,0))%)",
                         "$sys/$tot ($([math]::Round(100*$sys/$tot,0))%)"
                     ) -ForegroundColor White
@@ -1247,20 +1284,20 @@ function Show-SCTSummary {
     }
 
     # -------------------------------------------------------------------------
-    # SECTION 2: Technique and fileless results (technique-results.csv)
-    # Written by Invoke-TechniqueVector and Invoke-FilelessVector above.
+    # SECTION 2: Per-subtest results (test-results.csv)
+    # Written by Invoke-SCTSubtests above.
     # -------------------------------------------------------------------------
-    if (Test-Path $TechResultsPath) {
+    if (Test-Path $TestResultsPath) {
         try {
-            $tdata = Import-Csv -Path $TechResultsPath -Encoding UTF8 -ErrorAction Stop
+            $tdata = Import-Csv -Path $TestResultsPath -Encoding UTF8 -ErrorAction Stop
             if ($tdata) {
                 $anyData = $true
                 Write-Host ""
-                Write-Host "  TECHNIQUES & FILELESS" -ForegroundColor White
+                Write-Host "  SUBTEST RESULTS" -ForegroundColor White
                 Write-Host ("  " + ('-' * 76)) -ForegroundColor DarkGray
 
                 $thdr = "  {0,-10} {1,-20} {2,-8} {3,-26} {4}"
-                Write-Host ($thdr -f 'Time', 'Control', 'Vector', 'Technique', 'Outcome') -ForegroundColor White
+                Write-Host ($thdr -f 'Time', 'Control', 'Technique', 'Subtest', 'Outcome') -ForegroundColor White
 
                 foreach ($row in $tdata) {
                     $ts    = try { ([datetime]$row.timestamp).ToString('HH:mm:ss') } catch { '?' }
@@ -1270,13 +1307,15 @@ function Show-SCTSummary {
                         'NOT-EXPLOITABLE' { 'Yellow' }
                         default           { 'Gray'   }
                     }
-                    Write-Host ($thdr -f $ts, $row.control, $row.vector_id, $row.technique, $row.outcome) -ForegroundColor $color
+                    $techniqueId = if ($row.PSObject.Properties['technique_id']) { $row.technique_id } else { $row.vector_id }
+                    $subtest = if ($row.PSObject.Properties['subtest']) { $row.subtest } else { $row.technique }
+                    Write-Host ($thdr -f $ts, $row.control, $techniqueId, $subtest, $row.outcome) -ForegroundColor $color
                 }
 
                 # Per-control summary
                 Write-Host ""
                 Write-Host ("  " + ('-' * 76)) -ForegroundColor DarkGray
-                Write-Host "  TECHNIQUE SUMMARY" -ForegroundColor White
+                Write-Host "  SUBTEST SUMMARY" -ForegroundColor White
                 $shdr = "  {0,-22} {1,-8} {2,-12} {3,-12} {4}"
                 Write-Host ($shdr -f 'Control', 'Total', 'Executed', 'Blocked', 'Not-Exploitable') -ForegroundColor White
 
@@ -1289,10 +1328,10 @@ function Show-SCTSummary {
                     Write-Host ($shdr -f $g.Name, $tot, "$exec/$tot", "$block/$tot", $noexp) -ForegroundColor White
                 }
 
-                Write-Host "  Source: $TechResultsPath" -ForegroundColor DarkGray
+                Write-Host "  Source: $TestResultsPath" -ForegroundColor DarkGray
             }
         } catch {
-            Write-Host "  Could not read $TechResultsPath : $($_.Exception.Message)" -ForegroundColor Red
+            Write-Host "  Could not read $TestResultsPath : $($_.Exception.Message)" -ForegroundColor Red
         }
     }
 
@@ -1300,7 +1339,7 @@ function Show-SCTSummary {
         Write-Host ""
         Write-Host "  No results found yet. Run some tests first." -ForegroundColor Yellow
         Write-Host "  Delivery results will appear at : $ResultsPath" -ForegroundColor DarkGray
-        Write-Host "  Technique results will appear at: $TechResultsPath" -ForegroundColor DarkGray
+        Write-Host "  Subtest results will appear at  : $TestResultsPath" -ForegroundColor DarkGray
     }
 
     Write-Host ""

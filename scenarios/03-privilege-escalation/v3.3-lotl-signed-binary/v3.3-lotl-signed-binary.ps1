@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Vector 3.3: Living-off-the-Land Signed Binary Proxy Execution (T1218)
+    Technique 3.3: Living-off-the-Land Signed Binary Proxy Execution (T1218)
 
 .DESCRIPTION
     Four sub-tests covering common Microsoft-signed binaries that proxy execution
@@ -25,18 +25,19 @@
     Nothing malicious runs. All payloads are marker-file writes only.
     All temporary payload files are created under %TEMP% and can be cleaned up.
 
-.PARAMETER Technique
+.PARAMETER Subtest
     Which sub-test to run. Use 'All' to run all four sequentially.
     Default: MshtaHTA.
 
 .EXAMPLE
-    .\v3.3-lotl-signed-binary.ps1 -Technique MshtaHTA
-    .\v3.3-lotl-signed-binary.ps1 -Technique All
+    .\v3.3-lotl-signed-binary.ps1 -Subtest MshtaHTA
+    .\v3.3-lotl-signed-binary.ps1 -Subtest All
 #>
 
 param(
     [ValidateSet('MshtaHTA','Regsvr32SCT','Rundll32Advpack','InfDefaultInstall','All')]
-    [string]$Technique = 'MshtaHTA',
+    [Alias('Technique')]
+    [string]$Subtest = 'MshtaHTA',
     [switch]$NoCleanupPrompt
 )
 
@@ -50,7 +51,7 @@ $payloadDir = Join-Path $env:TEMP "sct-v3.3-lolbin"
 function Write-Header {
     param([string]$Title, [string]$Detection)
     Write-Host ("`n" + ("="*90)) -ForegroundColor Magenta
-    Write-Host "  TECHNIQUE: $Title" -ForegroundColor Magenta
+    Write-Host "  SUBTEST: $Title" -ForegroundColor Magenta
     Write-Host "  DETECTION DIFFICULTY: $Detection" -ForegroundColor Magenta
     Write-Host ("="*90) -ForegroundColor Magenta
 }
@@ -378,10 +379,10 @@ function Write-Report {
 # MAIN
 # ==============================================================================
 
-Write-Host "`n[TEST] Living-off-the-Land Signed Binary Proxy Execution (Vector 3.3)" -ForegroundColor Cyan
+Write-Host "`n[TEST] Living-off-the-Land Signed Binary Proxy Execution (Technique 3.3)" -ForegroundColor Cyan
 Write-Host "  MITRE: T1218  |  Phase 3  |  Privilege Escalation / Defense Evasion`n"
 
-switch ($Technique) {
+switch ($Subtest) {
     'All' {
         $results = Test-All
         Write-Report -Results $results
@@ -395,12 +396,12 @@ switch ($Technique) {
     }
     default {
         Write-Host "+==============================================================================+" -ForegroundColor Cyan
-        Write-Host "|   SINGLE TECHNIQUE: $Technique" -ForegroundColor Cyan
+        Write-Host "|   SINGLE SUBTEST: $Subtest" -ForegroundColor Cyan
         Write-Host "+==============================================================================+" -ForegroundColor Cyan
         Write-Host "`n[!] Have EDR/AV console visible before proceeding." -ForegroundColor Yellow
         Read-Host "    Press Enter to start"
 
-        $success = switch ($Technique) {
+        $success = switch ($Subtest) {
             'MshtaHTA'          { Test-MshtaHTA          }
             'Regsvr32SCT'       { Test-Regsvr32SCT       }
             'Rundll32Advpack'   { Test-Rundll32Advpack   }
@@ -408,10 +409,10 @@ switch ($Technique) {
         }
 
         $color = if ($success) { 'Green' } else { 'Red' }
-        Write-Host "`n[RESULT] Technique '$Technique': $(if ($success) { 'EXECUTED' } else { 'BLOCKED' })" -ForegroundColor $color
+        Write-Host "`n[RESULT] Subtest '$Subtest': $(if ($success) { 'EXECUTED' } else { 'BLOCKED' })" -ForegroundColor $color
         if (-not $NoCleanupPrompt) {
             $c = Read-Host "Clean up now? (Y/N)"
-            if ($c -eq 'Y' -or $c -eq 'y') { Invoke-Cleanup -Names @($Technique) }
+            if ($c -eq 'Y' -or $c -eq 'y') { Invoke-Cleanup -Names @($Subtest) }
         }
     }
 }

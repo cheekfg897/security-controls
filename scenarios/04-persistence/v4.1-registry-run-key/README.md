@@ -2,7 +2,7 @@
 
 ## How to run
 
-On VM1, open PowerShell (no elevation required):
+On VM1, open PowerShell (no elevation required for the standard HKCU/startup tests):
 
 ```powershell
 # Run all 5 sub-tests in sequence (pauses between each)
@@ -14,9 +14,15 @@ On VM1, open PowerShell (no elevation required):
 .\v4.1-registry-run-key.ps1 -Technique StartupVBS
 .\v4.1-registry-run-key.ps1 -Technique StartupBAT
 .\v4.1-registry-run-key.ps1 -Technique SystemBC
+
+# Optional: verify whether this PowerShell session can write to the machine-wide HKLM Run key.
+# This creates and immediately removes one temporary registry value, so it generates telemetry.
+.\v4.1-registry-run-key.ps1 -CheckHKLMWriteAccess
 ```
 
 Have the EDR console visible before running. Each sub-test writes a marker file to `C:\Windows\Temp\art-v4.1-<SubTestName>.txt` as proof of execution. If the file is missing after the test, the technique was blocked.
+
+The normal sub-tests use `HKCU`, which does not need elevation. `HKLM` is machine-wide and normally requires an elevated PowerShell session. `-CheckHKLMWriteAccess` is an opt-in capability check only; it does not leave an autorun value behind.
 
 ---
 
