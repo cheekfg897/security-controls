@@ -1,34 +1,34 @@
-# Vector 4.3: Startup Folder / Advanced Logon Persistence (T1547.001)
+# Technique 4.3: Startup Folder / Advanced Logon Persistence (T1547.001)
 
 ## How to run
 
 On VM1, open PowerShell:
 
 ```powershell
-# Run all 5 sub-tests in sequence (pauses between each)
-.\v4.3-startup-folder.ps1 -Technique All
+# Run all 5 subtests in sequence (pauses between each)
+.\v4.3-startup-folder.ps1 -Subtest All
 
-# Run a single sub-test
-.\v4.3-startup-folder.ps1 -Technique JSEStartup
-.\v4.3-startup-folder.ps1 -Technique LNKShortcut
-.\v4.3-startup-folder.ps1 -Technique AllUsersBAT
-.\v4.3-startup-folder.ps1 -Technique ShellFolderRedirect
-.\v4.3-startup-folder.ps1 -Technique WinlogonUserinit
+# Run a single subtest
+.\v4.3-startup-folder.ps1 -Subtest JSEStartup
+.\v4.3-startup-folder.ps1 -Subtest LNKShortcut
+.\v4.3-startup-folder.ps1 -Subtest AllUsersBAT
+.\v4.3-startup-folder.ps1 -Subtest ShellFolderRedirect
+.\v4.3-startup-folder.ps1 -Subtest WinlogonUserinit
 ```
 
-> **Sub-tests 3 (AllUsersBAT) and 5 (WinlogonUserinit) require running as Administrator.**
+> **Subtests 3 (AllUsersBAT) and 5 (WinlogonUserinit) require running as Administrator.**
 
-> **Sub-test 5 modifies a critical system registry value (Winlogon Userinit). The script restores it immediately after the test. Do not terminate the script mid-run during this sub-test.**
+> **Subtest 5 modifies a critical system registry value (Winlogon Userinit). The script restores it immediately after the test. Do not terminate the script mid-run during this subtest.**
 
-Have the EDR console visible before running. Each sub-test writes a marker file to `C:\Windows\Temp\art-v4.3-<SubTestName>.txt` as proof of execution. If the file is missing after the test, the technique was blocked.
+Have the EDR console visible before running. Each subtest writes a marker file to `C:\Windows\Temp\art-v4.3-<SubtestName>.txt`. If it is missing, that subtest was blocked.
 
-This vector extends v4.1 - where v4.1 covered basic startup folder drops (VBS, BAT) and Run key writes, v4.3 covers less common variations that may evade simpler detections.
+This technique extends Technique 4.1: 4.1 covers basic startup folder drops and Run key writes, while 4.3 covers less common variations.
 
 ---
 
-## Sub-tests
+## Subtests
 
-### Sub-test 1: JSEStartup
+### Subtest 1: JSEStartup
 
 Drops a `.jse` (JScript Encoded) file into the user's startup folder and runs it via `cscript.exe`. JScript is a different scripting engine from VBScript - detections that match on plain VBScript or batch file text will not match JScript syntax. The `.jse` extension is also rare in legitimate software, making it a strong signal on its own.
 
@@ -36,7 +36,7 @@ Drops a `.jse` (JScript Encoded) file into the user's startup folder and runs it
 
 ---
 
-### Sub-test 2: LNKShortcut
+### Subtest 2: LNKShortcut
 
 Creates a `.lnk` shortcut file in the user's startup folder that points to `powershell.exe` with a Base64-encoded payload in its arguments. Unlike a script file, there is no readable text content in the folder - just a binary shortcut. A detection that looks for suspicious text inside startup folder files will miss this entirely. The EDR has to parse the binary LNK structure to see where it points.
 
@@ -44,7 +44,7 @@ Creates a `.lnk` shortcut file in the user's startup folder that points to `powe
 
 ---
 
-### Sub-test 3: AllUsersBAT *(requires Administrator)*
+### Subtest 3: AllUsersBAT *(requires Administrator)*
 
 Drops a batch file into the **AllUsers** startup folder (`C:\ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp`) rather than the current user's startup folder. The difference is scope - this fires for every user who logs into the machine, not just one. Requires admin to write to `C:\ProgramData`.
 
@@ -52,18 +52,18 @@ Drops a batch file into the **AllUsers** startup folder (`C:\ProgramData\Microso
 
 ---
 
-### Sub-test 4: ShellFolderRedirect
+### Subtest 4: ShellFolderRedirect
 
-Windows reads a registry value called **User Shell Folders - Startup** to find where the user's startup folder is. This sub-test changes that value to point at an attacker-controlled directory instead of the real startup folder. Any file placed in that new directory will run at login - without anything being written to the known `%APPDATA%\...\Startup` path that most detections watch. No elevation required. The value is restored immediately after the test.
+Windows reads a registry value called **User Shell Folders - Startup** to find where the user's startup folder is. This subtest changes that value to point at an attacker-controlled directory instead of the real startup folder. Any file placed in that new directory will run at login - without anything being written to the known `%APPDATA%\...\Startup` path that most detections watch. No elevation required. The value is restored immediately after the test.
 
 **Detection:** The `Startup` value in User Shell Folders modified to a non-standard path (Sysmon 13), execution from an unexpected directory at login.
 
 ---
 
-### Sub-test 5: WinlogonUserinit *(requires Administrator)*
+### Subtest 5: WinlogonUserinit *(requires Administrator)*
 
-The **Winlogon Userinit** registry value lists programs that Windows runs at every interactive logon. Normally it contains only `userinit.exe`. This sub-test appends a PowerShell command to that value so it runs alongside `userinit.exe` at every login. This location is less commonly monitored than Run keys, making it harder to catch with basic rules. Requires admin to modify `HKLM`. The original value is backed up and restored immediately after the test.
+The **Winlogon Userinit** registry value lists programs that Windows runs at every interactive logon. Normally it contains only `userinit.exe`. This subtest appends a PowerShell command to that value so it runs alongside `userinit.exe` at every login. This location is less commonly monitored than Run keys, making it harder to catch with basic rules. Requires admin to modify `HKLM`. The original value is backed up and restored immediately after the test.
 
-> Do not terminate the script mid-run during this sub-test - if the restore step is skipped, the Userinit value will be left in a modified state, which can break the logon process.
+> Do not terminate the script mid-run during this subtest - if the restore step is skipped, the Userinit value will be left in a modified state, which can break the logon process.
 
 **Detection:** `Winlogon\Userinit` value modified (Sysmon 13, Event 4657), any deviation from the `userinit.exe,` baseline should alert.

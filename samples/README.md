@@ -1,6 +1,6 @@
 # samples/ — Malware ZIP Archive Store
 
-This folder holds the ZIP archives used by **malware-batch** vectors (v1.1 Disk Drop, v1.2 Removable Media).
+This folder holds ZIP archives used by sample-delivery techniques, primarily Technique 1.1 Disk Drop.
 
 The launcher (`Start-SCT.ps1`) reads this folder, lists the available ZIPs, and extracts your chosen archive to `C:\Temp\SCT-Staging\<zip-name>\` before running the test.
 
@@ -26,7 +26,7 @@ recognised file it finds (`.exe .dll .com .bat .cmd .ps1 .vbs .js .hta .jar
 
 By default the launcher only **copies** each file to `C:\Temp\` — it doesn't
 run any of them. You choose whether to also execute the batch (Y/N prompt)
-each time you run the vector, so a colleague picking a ZIP from the launcher
+each time you run the technique, so a colleague picking a ZIP from the launcher
 sees that choice explicitly rather than it being decided by a file they
 haven't looked at.
 
@@ -69,12 +69,12 @@ to keep them distinct.
 1. Prepare your samples on a separate, isolated machine
 2. ZIP them together as-is
 3. Copy the ZIP into this `samples/` folder
-4. Run `Start-SCT.ps1`, choose **Malware Introduction → Vector 1.1**, and select the ZIP by number
+4. Run `Start-SCT.ps1`, choose **Malware Introduction -> Technique 1.1**, and select the ZIP by number
 
 **Option B (one sample per ZIP):**
 1. Create one ZIP per sample
 2. Copy all ZIPs into this `samples/` folder
-3. Run `Start-SCT.ps1`, choose **Malware Introduction → Vector 1.1**, and select **`[A] Combine and run ALL ZIPs`**
+3. Run `Start-SCT.ps1`, choose **Malware Introduction -> Technique 1.1**, and select **`[A] Combine and run ALL ZIPs`**
 
 ---
 

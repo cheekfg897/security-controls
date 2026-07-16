@@ -3,30 +3,30 @@
     Technique 3.3: Living-off-the-Land Signed Binary Proxy Execution (T1218)
 
 .DESCRIPTION
-    Four sub-tests covering common Microsoft-signed binaries that proxy execution
+    Four subtests covering common Microsoft-signed binaries that proxy execution
     of script or installer content. These are adapted from Atomic Red Team T1218
     families, but kept fully offline and benign for submission: the script
     generates temporary payload files locally and each payload only writes a
     marker file to C:\Windows\Temp.
 
-    Sub-test 1 (MshtaHTA)         - mshta.exe executes a local HTA containing
+    Subtest 1 (MshtaHTA)         - mshta.exe executes a local HTA containing
                                     VBScript. Atomic family: T1218.005.
 
-    Sub-test 2 (Regsvr32SCT)      - regsvr32.exe loads a local COM scriptlet
+    Subtest 2 (Regsvr32SCT)      - regsvr32.exe loads a local COM scriptlet
                                     through scrobj.dll. Atomic family: T1218.010.
 
-    Sub-test 3 (Rundll32Advpack)  - rundll32.exe calls advpack.dll,
+    Subtest 3 (Rundll32Advpack)  - rundll32.exe calls advpack.dll,
                                     LaunchINFSection against a local INF.
                                     Atomic family: T1218.011.
 
-    Sub-test 4 (InfDefaultInstall)- InfDefaultInstall.exe executes a local INF.
+    Subtest 4 (InfDefaultInstall)- InfDefaultInstall.exe executes a local INF.
                                     Atomic family: T1218.
 
     Nothing malicious runs. All payloads are marker-file writes only.
     All temporary payload files are created under %TEMP% and can be cleaned up.
 
 .PARAMETER Subtest
-    Which sub-test to run. Use 'All' to run all four sequentially.
+    Which subtest to run. Use 'All' to run all four sequentially.
     Default: MshtaHTA.
 
 .EXAMPLE
@@ -75,7 +75,7 @@ function Test-ExecutionResult {
         Write-Host "[+] SUCCESS: Signed binary proxied payload execution - $marker" -ForegroundColor Green
         return $true
     } else {
-        Write-Host "[-] FAILED: Marker file not found (payload blocked or technique unsupported)" -ForegroundColor Red
+        Write-Host "[-] FAILED: Marker file not found (payload blocked or subtest unsupported)" -ForegroundColor Red
         return $false
     }
 }
@@ -96,7 +96,7 @@ function New-MarkerCommand {
 }
 
 # ==============================================================================
-# SUB-TEST 1: mshta.exe local HTA execution
+# SUBTEST 1: mshta.exe local HTA execution
 # Atomic Red Team: T1218.005 family
 # ==============================================================================
 
@@ -154,7 +154,7 @@ self.close
 }
 
 # ==============================================================================
-# SUB-TEST 2: regsvr32.exe local COM scriptlet execution
+# SUBTEST 2: regsvr32.exe local COM scriptlet execution
 # Atomic Red Team: T1218.010 family
 # ==============================================================================
 
@@ -213,7 +213,7 @@ function Test-Regsvr32SCT {
 }
 
 # ==============================================================================
-# SUB-TEST 3: rundll32.exe advpack.dll INF execution
+# SUBTEST 3: rundll32.exe advpack.dll INF execution
 # Atomic Red Team: T1218.011 family
 # ==============================================================================
 
@@ -273,7 +273,7 @@ ShortSvcName="SCT"
 }
 
 # ==============================================================================
-# SUB-TEST 4: InfDefaultInstall.exe INF execution
+# SUBTEST 4: InfDefaultInstall.exe INF execution
 # Atomic Red Team: T1218 family
 # ==============================================================================
 
@@ -337,7 +337,7 @@ ShortSvcName="SCT"
 
 function Test-All {
     Write-Host "`n+==============================================================================+" -ForegroundColor Cyan
-    Write-Host "|   SIGNED BINARY PROXY EXECUTION - ALL TECHNIQUES                            |" -ForegroundColor Cyan
+    Write-Host "|   SIGNED BINARY PROXY EXECUTION - ALL SUBTESTS                              |" -ForegroundColor Cyan
     Write-Host "+==============================================================================+" -ForegroundColor Cyan
 
     $tests = @(
@@ -351,7 +351,7 @@ function Test-All {
     foreach ($t in $tests) {
         $results += @{ Name = $t.Name; Success = (& $t.Fn) }
         Write-Host "`n[!] Check EDR/AV console before continuing." -ForegroundColor Yellow
-        [void](Read-Host "    Press Enter for next sub-test")
+        [void](Read-Host "    Press Enter for next subtest")
     }
     return $results
 }
@@ -372,7 +372,7 @@ function Write-Report {
     }
     $ok    = ($Results | Where-Object { $_.Success }).Count
     $total = $Results.Count
-    Write-Host "`n  $ok of $total signed-binary proxy techniques executed" -ForegroundColor Cyan
+    Write-Host "`n  $ok of $total signed-binary proxy subtests executed" -ForegroundColor Cyan
 }
 
 # ==============================================================================

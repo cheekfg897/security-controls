@@ -1,92 +1,140 @@
 # Framework Design
 
-SCT is a metadata-driven PowerShell framework. The launcher discovers modules from `scenarios/*/module.json`, presents the prompts required by each vector type, runs the selected script, and writes normalized results.
+SCT is metadata-driven. The launcher discovers `scenarios/*/module.json`, validates each file, shows the module and technique menus, infers how a script must be launched, and records normalized results.
+
+## Naming hierarchy
+
+```text
+Module
+`-- Technique
+    `-- Subtest (optional)
+```
+
+- A **module** is a broad testing category such as Persistence.
+- A **technique** is one numbered scenario such as 4.2 Scheduled Task / Job.
+- A **subtest** is an optional implementation variation such as HiddenXML.
+- `attack_id` maps the technique to MITRE ATT&CK; it does not define another SCT hierarchy level.
+
+The old `vector` and overloaded `technique` terminology is no longer part of the authoring model.
 
 ## Main components
 
 | Component | Responsibility |
 |---|---|
 | `Start-SCT.ps1` | Entry point, path setup, product selection, and interactive/non-interactive mode. |
-| `core/SCT-Core.ps1` | Discovery, menus, dispatch, marker checks, cleanup coordination, and summaries. |
-| `scenarios/*/module.json` | Module and vector metadata consumed at startup. |
-| Vector scripts | Perform isolated tests and vector-specific cleanup. |
-| `results/raw/` | Store generated CSV result files. |
+| `core/SCT-Core.ps1` | Manifest validation, menus, inferred execution, marker checks, cleanup, and summaries. |
+| `scenarios/*/module.json` | Module, technique, and optional subtest metadata. |
+| Technique scripts | Perform tests and technique-specific cleanup. |
+| `scripts/New-SCTModuleJson.ps1` | Generate a new manifest through guided prompts. |
+| `scripts/Test-SCTModuleJson.ps1` | Validate every manifest and script contract. |
 
-## Execution flow
-
-1. Scan each immediate `scenarios/` subfolder for `module.json`.
-2. Validate and sort the discovered modules.
-3. Let the user select a module, vector, and—when supported—a sub-technique.
-4. Use the vector's `type` to determine its prompts and parameters.
-5. Run the selected script in the lab VM.
-6. Evaluate output or marker files, record the result, and perform cleanup.
-
-Non-interactive execution is currently supported for Module 04:
-
-```powershell
-.\Start-SCT.ps1 -Control SentinelOne -RunModule 04 -NonInteractive
-```
-
-## Module metadata
-
-Each module folder contains one `module.json` file.
+## Simplified `module.json`
 
 ### Module fields
 
 | Field | Required | Purpose |
 |---|---|---|
-| `id` | Yes | Two-digit module ID, such as `"04"`. |
-| `display_name` | Yes | Name shown in the launcher. |
-| `description` | Yes | Short module purpose. |
-| `mitre_tactics` | Yes | MITRE ATT&CK tactics covered by the module. |
-| `vectors` | Yes | Array of vector definitions. |
+| `id` | Yes | Two-digit module ID, for example `"04"`. |
+| `name` | Yes | Module name shown in the launcher. |
+| `description` | No | Short explanation shown below the module name. |
+| `techniques` | Yes | Array of technique definitions. |
 
-### Vector fields
+### Technique fields
 
 | Field | Required | Purpose |
 |---|---|---|
-| `id` | Yes | Vector ID, such as `"4.3"`. |
-| `name` | Yes | Display name. |
-| `description` | Yes | Short explanation of the test. |
-| `mitre` | Yes | MITRE ATT&CK technique ID. |
-| `script` | Yes | Script path relative to the module folder. |
-| `type` | Yes | Dispatch contract used by the launcher. |
-| `techniques` | `technique` / `fileless` | Values accepted by the script's `-Technique` parameter. |
-| `individual_techniques` | `technique` | Techniques evaluated when `All` is selected; exclude `All` itself. |
-| `marker_file` | `technique` | Marker path template containing `{technique}`. |
-| `remote_techniques` | `fileless` | Techniques that require a companion server. |
-| `default_technique` | No | Informational default shown for the vector. |
+| `id` | Yes | Number in `module.technique` form, for example `"4.2"`. |
+| `name` | Yes | Technique name shown in the launcher. |
+| `attack_id` | Yes | MITRE ATT&CK technique or sub-technique ID. |
+| `script` | Yes | PowerShell path relative to the module folder. |
+| `description` | No | Short explanation shown in the technique menu. |
+| `subtests` | No | Real selectable subtests. Do not include run-all entries. |
+| `server_subtests` | No | Subset of `subtests` that need a companion server VM. |
+| `status` | No | Use `"planned"` only while the technique is unavailable. |
 
-## Vector dispatch
-
-| Type | Input and execution model |
-|---|---|
-| `technique` | Select a technique, pass `-Technique`, and evaluate its marker file. |
-| `fileless` | Select an in-memory technique and collect server details only when needed. |
-| `malware-batch` | Select/extract ZIP content and pass a staging path. |
-| `removable-media` | Collect a drive letter and test files from that device. |
-| `client-server` | Collect the companion server's IP address and port. |
-| `simple` | Run the vector script directly. |
-| `not-implemented` | Show a placeholder without execution. |
-
-## Outcomes and marker files
-
-`technique` vectors write one marker file per completed sub-technique. SCT removes old expected markers before execution, then classifies each sub-technique:
-
-- `EXECUTED` — the new marker exists, so the technique completed.
-- `BLOCKED` — the expected marker is absent, so the endpoint control prevented completion.
-
-The metadata template must exactly match the filename written by the script:
+Minimal runnable technique:
 
 ```json
-"marker_file": "C:\\Windows\\Temp\\art-v4.3-{technique}.txt"
+{
+  "id": "4.4",
+  "name": "WMI Subscription Persistence",
+  "attack_id": "T1546.003",
+  "script": "4.4-wmi-subscription/4.4-wmi-subscription.ps1"
+}
 ```
+
+Technique with subtests:
+
+```json
+{
+  "id": "4.4",
+  "name": "WMI Subscription Persistence",
+  "description": "Tests permanent WMI event subscription persistence.",
+  "attack_id": "T1546.003",
+  "script": "4.4-wmi-subscription/4.4-wmi-subscription.ps1",
+  "subtests": ["EventFilter", "EventConsumer"]
+}
+```
+
+SCT rejects unknown metadata fields. In particular, authors do not declare execution types, supported parameters, duplicated individual-test arrays, defaults, run-all values, or marker templates.
+
+## Execution inference
+
+There is no author-facing `type` field. SCT derives the launch behavior from the technique definition and the script's parameter block, in this order:
+
+| Signal | Launcher behavior |
+|---|---|
+| `subtests` exists | Show subtests, pass `-Subtest`, check standard markers, and log one row per subtest. |
+| Script accepts `-SourcePath` | Select and extract sample ZIPs, then pass the staging folder. |
+| Script accepts `-DriveLetter` | Request removable media and pass its drive letter. |
+| Script accepts `-ServerIP` | Request the companion server address and port. |
+| None of the above | Run the script directly. |
+
+This makes the PowerShell parameter block the single source of truth for required launcher input. `server_subtests` is needed only when some subtests require a server and others do not.
+
+## Subtest contract
+
+A technique that declares `subtests` must:
+
+1. Accept `-Subtest`.
+2. Validate every declared subtest plus `All`.
+3. When applicable, accept `AllLocal` and `AllRemote` for mixed local/server subtests.
+4. Write one marker for every subtest that completes:
+
+```text
+C:\Windows\Temp\art-v<technique-id>-<subtest>.txt
+```
+
+The launcher derives the `All` choices and marker filenames. Before execution it removes only the expected markers for the selected run. After execution:
+
+- `EXECUTED` means the new marker exists.
+- `BLOCKED` means the marker is absent.
+
+Existing scripts retain `-Technique` as a backward-compatible alias, but new scripts and all SCT-facing guidance use `-Subtest`.
+
+## Validation
+
+Run this after editing any manifest or script contract:
+
+```powershell
+.\scripts\Test-SCTModuleJson.ps1
+```
+
+Validation rejects unknown/legacy fields, missing required fields, malformed or duplicate IDs, empty/duplicate/reserved subtests, invalid `server_subtests`, missing scripts, and subtest scripts without `-Subtest`.
+
+## Non-interactive Module 04 run
+
+```powershell
+.\Start-SCT.ps1 -Control SentinelOne -RunModule 04 -NonInteractive
+```
+
+Module 04 must contain only techniques with subtests. Each script must also accept `-NoPause`, `-NoReport`, and `-CleanupOnly`. SCT records all outcomes before cleaning up each technique.
 
 ## Result storage
 
 | File | Contents |
 |---|---|
-| `results/raw/technique-results.csv` | Technique and fileless outcomes, including control, vector, technique, outcome, notes, and `run_id`. |
-| `results/raw/results.csv` | Malware-delivery results produced by the relevant vector scripts. |
+| `results/raw/test-results.csv` | `timestamp`, `run_id`, `control`, `technique_id`, `technique_name`, `subtest`, `outcome`, and `notes`. |
+| `results/raw/results.csv` | Sample-delivery rows keyed by `technique_id`. |
 
-Generated results and real malware samples should remain uncommitted. Use the launcher summary (`V`) or utilities under `scripts/` to review results.
+Legacy generated CSV columns are read for compatibility, but all newly created files use the simplified names. Generated results and real malware samples should remain uncommitted.

@@ -1,44 +1,44 @@
-﻿<#
+<#
 .SYNOPSIS
     Technique 4.3: Startup Folder / Advanced Logon Persistence (T1547.001)
 
 .DESCRIPTION
-    Five sub-tests covering startup folder and advanced logon persistence techniques,
+    Five subtests covering startup folder and advanced logon persistence methods,
     complementing v4.1 (core Run Keys / basic VBS+BAT startup scripts).
 
-    Sub-test 1 (JSEStartup)          - JScript Encoded (.jse) file dropped to the user
+    Subtest 1 (JSEStartup)          - JScript Encoded (.jse) file dropped to the user
                                         startup folder and executed via cscript /E:Jscript.
                                         Different interpreter path from VBS/BAT; content-match
                                         rules that look for plain script text will miss it.
 
-    Sub-test 2 (LNKShortcut)         - .lnk shortcut created in user startup folder via
+    Subtest 2 (LNKShortcut)         - .lnk shortcut created in user startup folder via
                                         WScript.Shell COM object, pointing to powershell.exe
                                         with a Base64-encoded payload as Arguments. No script
                                         file in folder - the LNK binary is the only artifact;
                                         EDR must parse the LNK structure to identify target.
 
-    Sub-test 3 (AllUsersBAT)         - BAT file dropped to the AllUsers startup folder
+    Subtest 3 (AllUsersBAT)         - BAT file dropped to the AllUsers startup folder
                                         (C:\ProgramData\...\StartUp). Fires for every user
                                         who logs in, not just the current user.
                                         Requires local admin.
 
-    Sub-test 4 (ShellFolderRedirect) - HKCU User Shell Folders Startup value redirected to
+    Subtest 4 (ShellFolderRedirect) - HKCU User Shell Folders Startup value redirected to
                                         an attacker-controlled directory. Windows Explorer reads
                                         this key to locate startup items - payload in the new
                                         folder runs at login without touching known startup paths.
                                         No elevation required. Value restored after test.
 
-    Sub-test 5 (WinlogonUserinit)    - Payload appended to the Winlogon Userinit registry
+    Subtest 5 (WinlogonUserinit)    - Payload appended to the Winlogon Userinit registry
                                         value (HKLM). Userinit.exe runs all commands listed
                                         here at every interactive logon; less audited than
                                         Run keys. Requires local admin.
                                         Original value is backed up and restored immediately.
 
-    All sub-tests write a marker file to C:\Windows\Temp\ as proof-of-execution.
+    All subtests write a marker file to C:\Windows\Temp\ as proof-of-execution.
     Nothing malicious runs - benign file writes only.
 
 .PARAMETER Subtest
-    Which sub-test to run. Use 'All' to run all five sequentially.
+    Which subtest to run. Use 'All' to run all five sequentially.
     Default: JSEStartup.
 
 .EXAMPLE
@@ -111,7 +111,7 @@ function Invoke-Cleanup {
 }
 
 # ==============================================================================
-# SUB-TEST 1: .jse (JScript) file in user startup folder
+# SUBTEST 1: .jse (JScript) file in user startup folder
 # Atomic Red Team: T1547.001 Test #5
 # ==============================================================================
 
@@ -163,7 +163,7 @@ f.Close();
 }
 
 # ==============================================================================
-# SUB-TEST 2: .lnk shortcut in user startup folder
+# SUBTEST 2: .lnk shortcut in user startup folder
 # Atomic Red Team: T1547.001 Test #7
 # ==============================================================================
 
@@ -223,7 +223,7 @@ function Test-LNKShortcut {
 }
 
 # ==============================================================================
-# SUB-TEST 3: BAT in AllUsers startup folder
+# SUBTEST 3: BAT in AllUsers startup folder
 # Atomic Red Team: T1547.001 Test #6 (AllUsers variant)
 # Requires local admin.
 # ==============================================================================
@@ -267,7 +267,7 @@ function Test-AllUsersBAT {
 }
 
 # ==============================================================================
-# SUB-TEST 4: HKCU User Shell Folders - Startup redirect
+# SUBTEST 4: HKCU User Shell Folders - Startup redirect
 # Atomic Red Team: T1547.001 Test #11
 # ==============================================================================
 
@@ -343,7 +343,7 @@ function Test-ShellFolderRedirect {
 }
 
 # ==============================================================================
-# SUB-TEST 5: Append payload to Winlogon Userinit
+# SUBTEST 5: Append payload to Winlogon Userinit
 # Atomic Red Team: T1547.001 Test #14
 # Requires local admin.
 # ==============================================================================
@@ -429,7 +429,7 @@ function Test-WinlogonUserinit {
 
 function Test-All {
     Write-Host "`n+==============================================================================+" -ForegroundColor Cyan
-    Write-Host "|   STARTUP FOLDER / ADVANCED LOGON PERSISTENCE - ALL TECHNIQUES              |" -ForegroundColor Cyan
+    Write-Host "|   STARTUP FOLDER / ADVANCED LOGON PERSISTENCE - ALL SUBTESTS                |" -ForegroundColor Cyan
     Write-Host "+==============================================================================+" -ForegroundColor Cyan
 
     $tests = @(
@@ -445,7 +445,7 @@ function Test-All {
         $results += @{ Name = $t.Name; Success = (& $t.Fn) }
         if (-not $NoPause) {
             Write-Host "`n[!] Check EDR/AV console before continuing." -ForegroundColor Yellow
-            [void](Read-Host "    Press Enter for next sub-test")
+            [void](Read-Host "    Press Enter for next subtest")
         }
     }
     return $results
@@ -467,7 +467,7 @@ function Write-Report {
     }
     $ok    = ($Results | Where-Object { $_.Success }).Count
     $total = $Results.Count
-    Write-Host "`n  $ok of $total techniques executed successfully" -ForegroundColor Cyan
+    Write-Host "`n  $ok of $total subtests executed successfully" -ForegroundColor Cyan
 }
 
 # ==============================================================================

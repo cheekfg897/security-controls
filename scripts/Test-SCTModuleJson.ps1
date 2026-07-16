@@ -8,13 +8,17 @@
 
 [CmdletBinding()]
 param(
-    [string]$ScenariosPath = (Join-Path (Split-Path $PSScriptRoot -Parent) 'scenarios')
+    [string]$ScenariosPath
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$repoRoot = Split-Path $PSScriptRoot -Parent
+$scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$repoRoot = Split-Path $scriptRoot -Parent
+if (-not $ScenariosPath) {
+    $ScenariosPath = Join-Path $repoRoot 'scenarios'
+}
 . (Join-Path $repoRoot 'core\SCT-Core.ps1')
 
 $failed = $false

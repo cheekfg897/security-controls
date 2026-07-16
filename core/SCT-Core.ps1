@@ -69,16 +69,25 @@ function Get-SCTModuleErrors {
         $errors += "Module id '$moduleId' must contain two digits, for example '04'."
     }
 
-    $techniques = @(Get-SCTPropertyValue -InputObject $Module -Name 'techniques' -Default @())
+    # Windows PowerShell 5.1 collapses single-element JSON arrays, so values
+    # are normalized with @() instead of validating the deserialized CLR type.
+    $techniquesValue = Get-SCTPropertyValue -InputObject $Module -Name 'techniques' -Default @()
+    $techniques = @($techniquesValue)
     if ($techniques.Count -eq 0) {
         $errors += "Module '$moduleId' must define at least one technique."
     }
 
     $seenIds = @{}
     foreach ($technique in $techniques) {
+        if ($null -eq $technique) {
+            $errors += "Module '$moduleId' contains a null technique entry."
+            continue
+        }
+
+        $techniqueId = [string](Get-SCTPropertyValue -InputObject $technique -Name 'id' -Default '')
         foreach ($property in $technique.PSObject.Properties.Name) {
             if ($techniqueFields -notcontains $property) {
-                $errors += "Technique '$($technique.id)' has unknown field '$property'."
+                $errors += "Technique '$techniqueId' has unknown field '$property'."
             }
         }
 
@@ -89,9 +98,10 @@ function Get-SCTModuleErrors {
             }
         }
 
-        $techniqueId = [string](Get-SCTPropertyValue -InputObject $technique -Name 'id' -Default '')
         if ($techniqueId -and $techniqueId -notmatch '^\d+\.\d+$') {
             $errors += "Technique id '$techniqueId' must use module.technique notation, for example '4.1'."
+        } elseif ($techniqueId -and $moduleId -match '^\d{2}$' -and ([int]($techniqueId -split '\.')[0]) -ne [int]$moduleId) {
+            $errors += "Technique id '$techniqueId' does not belong to Module '$moduleId'."
         }
         if ($seenIds.ContainsKey($techniqueId)) {
             $errors += "Technique id '$techniqueId' is duplicated."
@@ -104,8 +114,15 @@ function Get-SCTModuleErrors {
             $errors += "Technique '$techniqueId' has invalid status '$status'. Omit status when ready, or use 'planned'."
         }
 
-        $subtests = @(Get-SCTPropertyValue -InputObject $technique -Name 'subtests' -Default @())
-        $serverSubtests = @(Get-SCTPropertyValue -InputObject $technique -Name 'server_subtests' -Default @())
+        $attackId = [string](Get-SCTPropertyValue -InputObject $technique -Name 'attack_id' -Default '')
+        if ($attackId -and $attackId -notmatch '^T\d{4}(\.\d{3})?$') {
+            $errors += "Technique '$techniqueId' has invalid ATT&CK id '$attackId'."
+        }
+
+        $subtestsValue = Get-SCTPropertyValue -InputObject $technique -Name 'subtests' -Default @()
+        $serverSubtestsValue = Get-SCTPropertyValue -InputObject $technique -Name 'server_subtests' -Default @()
+        $subtests = @($subtestsValue)
+        $serverSubtests = @($serverSubtestsValue)
         $seenSubtests = @{}
         foreach ($subtest in $subtests) {
             if ([string]::IsNullOrWhiteSpace([string]$subtest)) {
@@ -121,19 +138,67 @@ function Get-SCTModuleErrors {
                 $seenSubtests[[string]$subtest] = $true
             }
         }
+        $seenServerSubtests = @{}
         foreach ($subtest in $serverSubtests) {
             if ($subtests -notcontains $subtest) {
                 $errors += "Technique '$techniqueId' server_subtest '$subtest' is not listed in subtests."
             }
+            if ($seenServerSubtests.ContainsKey([string]$subtest)) {
+                $errors += "Technique '$techniqueId' contains duplicate server_subtest '$subtest'."
+            } else {
+                $seenServerSubtests[[string]$subtest] = $true
+            }
+        }
+
+        $script = [string](Get-SCTPropertyValue -InputObject $technique -Name 'script' -Default '')
+        $scriptPath = $null
+        if ($script) {
+            if ([IO.Path]::IsPathRooted($script)) {
+                $errors += "Technique '$techniqueId' script path must be relative to the module folder: $script"
+            } elseif ([IO.Path]::GetExtension($script) -ne '.ps1') {
+                $errors += "Technique '$techniqueId' script path must end in .ps1: $script"
+            } else {
+                $moduleRoot = [IO.Path]::GetFullPath($ModuleDir).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+                $scriptPath = [IO.Path]::GetFullPath((Join-Path $ModuleDir $script))
+                if (-not $scriptPath.StartsWith($moduleRoot, [StringComparison]::OrdinalIgnoreCase)) {
+                    $errors += "Technique '$techniqueId' script path escapes the module folder: $script"
+                    $scriptPath = $null
+                }
+            }
         }
 
         if ($status -ne 'planned') {
-            $script = [string](Get-SCTPropertyValue -InputObject $technique -Name 'script' -Default '')
-            $scriptPath = Join-Path $ModuleDir $script
-            if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
+            if ($scriptPath -and -not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
                 $errors += "Technique '$techniqueId' script was not found: $script"
-            } elseif ($subtests.Count -gt 0 -and -not (Test-SCTScriptSupportsParameter -ScriptPath $scriptPath -ParameterName 'Subtest')) {
-                $errors += "Technique '$techniqueId' defines subtests, but its script does not accept -Subtest."
+            } elseif ($scriptPath -and $subtests.Count -gt 0) {
+                if (-not (Test-SCTScriptSupportsParameter -ScriptPath $scriptPath -ParameterName 'Subtest')) {
+                    $errors += "Technique '$techniqueId' defines subtests, but its script does not accept -Subtest."
+                } else {
+                    $allowedSubtests = @(Get-SCTScriptValidateSetValues -ScriptPath $scriptPath -ParameterName 'Subtest')
+                    if ($allowedSubtests.Count -eq 0) {
+                        $errors += "Technique '$techniqueId' script must apply ValidateSet to -Subtest."
+                    } else {
+                        foreach ($subtest in @($subtests) + @('All')) {
+                            if ($allowedSubtests -notcontains $subtest) {
+                                $errors += "Technique '$techniqueId' script ValidateSet is missing subtest '$subtest'."
+                            }
+                        }
+                        if ($serverSubtests.Count -gt 0 -and $allowedSubtests -notcontains 'AllRemote') {
+                            $errors += "Technique '$techniqueId' script ValidateSet is missing 'AllRemote'."
+                        }
+                        $localSubtests = @($subtests | Where-Object { $serverSubtests -notcontains $_ })
+                        if ($serverSubtests.Count -gt 0 -and $localSubtests.Count -gt 0 -and $allowedSubtests -notcontains 'AllLocal') {
+                            $errors += "Technique '$techniqueId' script ValidateSet is missing 'AllLocal'."
+                        }
+                    }
+                }
+                if ($serverSubtests.Count -gt 0) {
+                    foreach ($parameter in @('ServerIP', 'Port')) {
+                        if (-not (Test-SCTScriptSupportsParameter -ScriptPath $scriptPath -ParameterName $parameter)) {
+                            $errors += "Technique '$techniqueId' has server_subtests, but its script does not accept -$parameter."
+                        }
+                    }
+                }
             }
         }
     }
@@ -282,7 +347,7 @@ function Invoke-SCTModuleMenu {
 }
 
 # =============================================================================
-# VECTOR EXECUTION DISPATCHER
+# TECHNIQUE EXECUTION DISPATCHER
 # =============================================================================
 
 function Invoke-SCTTechnique {
@@ -327,7 +392,7 @@ function Invoke-SCTTechnique {
             Invoke-SCTSubtests -Technique $Technique -ScriptPath $scriptPath -Control $Control -TestResultsPath $TestResultsPath
         }
         'sample-batch' {
-            Invoke-MalwareBatchTechnique -Technique $Technique -ScriptPath $scriptPath -Control $Control -SamplesPath $SamplesPath -ResultsPath $ResultsPath
+            Invoke-SampleBatchTechnique -Technique $Technique -ScriptPath $scriptPath -Control $Control -SamplesPath $SamplesPath -ResultsPath $ResultsPath
         }
         'removable-media' {
             Invoke-RemovableMediaTechnique -Technique $Technique -ScriptPath $scriptPath -Control $Control -ResultsPath $ResultsPath
@@ -336,7 +401,7 @@ function Invoke-SCTTechnique {
             Invoke-ClientServerTechnique -Technique $Technique -ScriptPath $scriptPath -Control $Control -ResultsPath $ResultsPath
         }
         default {
-            Invoke-SimpleTechnique -Technique $Technique -ScriptPath $scriptPath
+            Invoke-DirectTechnique -Technique $Technique -ScriptPath $scriptPath
         }
     }
 }
@@ -369,7 +434,7 @@ function Get-SCTTechniqueWorkflow {
 # script with -SourcePath and -Control. Supports -DryRun.
 # =============================================================================
 
-function Invoke-MalwareBatchTechnique {
+function Invoke-SampleBatchTechnique {
     [CmdletBinding()]
     param($Technique, [string]$ScriptPath, [string]$Control, [string]$SamplesPath, [string]$ResultsPath)
 
@@ -912,7 +977,7 @@ function Invoke-SCTModuleNonInteractive {
 # techniques that handle their own prompting (for example DLL sideloading).
 # =============================================================================
 
-function Invoke-SimpleTechnique {
+function Invoke-DirectTechnique {
     [CmdletBinding()]
     param($Technique, [string]$ScriptPath)
 
@@ -1183,6 +1248,40 @@ function Test-SCTScriptSupportsParameter {
     }
 }
 
+function Get-SCTScriptValidateSetValues {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$ScriptPath,
+        [Parameter(Mandatory)] [string]$ParameterName
+    )
+
+    try {
+        $tokens = $null
+        $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile(
+            $ScriptPath,
+            [ref]$tokens,
+            [ref]$errors
+        )
+        if ($errors.Count -gt 0 -or -not $ast.ParamBlock) { return @() }
+
+        $parameter = $ast.ParamBlock.Parameters | Where-Object {
+            $_.Name.VariablePath.UserPath -eq $ParameterName
+        } | Select-Object -First 1
+        if (-not $parameter) { return @() }
+
+        $attribute = $parameter.Attributes | Where-Object {
+            $_ -is [System.Management.Automation.Language.AttributeAst] -and
+            $_.TypeName.Name -eq 'ValidateSet'
+        } | Select-Object -First 1
+        if (-not $attribute) { return @() }
+
+        return @($attribute.PositionalArguments | ForEach-Object { [string]$_.Value })
+    } catch {
+        return @()
+    }
+}
+
 # =============================================================================
 # CALC.EXE SPAWN CHECK - proof of execution for in-memory subtests.
 # Checks Sysmon EID 1 first. If Sysmon is not installed, falls back to a
@@ -1208,7 +1307,7 @@ function Test-SCTCalcSpawned {
     } catch {
         Write-Host ""
         Write-Host "  Sysmon unavailable for automated detection." -ForegroundColor Yellow
-        Write-Host "  Did the technique execute as expected? (e.g. did Calculator open?)" -ForegroundColor White
+        Write-Host "  Did the subtest execute as expected? (e.g. did Calculator open?)" -ForegroundColor White
         Write-Host "  [E] Executed    [B] Blocked    [S] Skip (do not record)" -ForegroundColor DarkGray
         $answer = (Read-Host "  ").Trim().ToUpper()
         switch ($answer) {
@@ -1241,11 +1340,11 @@ function Show-SCTSummary {
 
     # -------------------------------------------------------------------------
     # SECTION 1: Malware delivery results (results.csv)
-    # Written by the malware-batch / removable-media / client-server scripts.
+    # Written by the sample-batch / removable-media / client-server workflows.
     # -------------------------------------------------------------------------
     if (Test-Path $ResultsPath) {
         try {
-            $data = Import-Csv -Path $ResultsPath -Encoding UTF8 -ErrorAction Stop
+            $data = @(Import-Csv -Path $ResultsPath -Encoding UTF8 -ErrorAction Stop)
             if ($data) {
                 $anyData = $true
                 Write-Host ""
@@ -1259,8 +1358,8 @@ function Show-SCTSummary {
                 $groups = $data | Group-Object -Property control, $idProperty | Sort-Object Name
                 foreach ($g in $groups) {
                     $tot  = $g.Count
-                    $del  = ($g.Group | Where-Object { $_.delivery_success   -eq 'True' }).Count
-                    $sys  = ($g.Group | Where-Object { $_.sysmon_event_found -eq 'True' }).Count
+                    $del  = @($g.Group | Where-Object { $_.delivery_success   -eq 'True' }).Count
+                    $sys  = @($g.Group | Where-Object { $_.sysmon_event_found -eq 'True' }).Count
                     $techniqueId = $g.Group[0].$idProperty
                     Write-Host ($hdr -f $g.Group[0].control, $techniqueId, $tot,
                         "$del/$tot ($([math]::Round(100*$del/$tot,0))%)",
@@ -1269,8 +1368,8 @@ function Show-SCTSummary {
                 }
 
                 $tot = $data.Count
-                $del = ($data | Where-Object { $_.delivery_success   -eq 'True' }).Count
-                $sys = ($data | Where-Object { $_.sysmon_event_found -eq 'True' }).Count
+                $del = @($data | Where-Object { $_.delivery_success   -eq 'True' }).Count
+                $sys = @($data | Where-Object { $_.sysmon_event_found -eq 'True' }).Count
                 Write-Host ("  " + ('-' * 76)) -ForegroundColor DarkGray
                 Write-Host ($hdr -f 'ALL', 'ALL', $tot,
                     "$del/$tot ($([math]::Round(100*$del/$tot,0))%)",
@@ -1289,7 +1388,7 @@ function Show-SCTSummary {
     # -------------------------------------------------------------------------
     if (Test-Path $TestResultsPath) {
         try {
-            $tdata = Import-Csv -Path $TestResultsPath -Encoding UTF8 -ErrorAction Stop
+            $tdata = @(Import-Csv -Path $TestResultsPath -Encoding UTF8 -ErrorAction Stop)
             if ($tdata) {
                 $anyData = $true
                 Write-Host ""
@@ -1322,9 +1421,9 @@ function Show-SCTSummary {
                 $tgroups = $tdata | Group-Object -Property control | Sort-Object Name
                 foreach ($g in $tgroups) {
                     $tot   = $g.Count
-                    $exec  = ($g.Group | Where-Object { $_.outcome -eq 'EXECUTED'        }).Count
-                    $block = ($g.Group | Where-Object { $_.outcome -eq 'BLOCKED'         }).Count
-                    $noexp = ($g.Group | Where-Object { $_.outcome -eq 'NOT-EXPLOITABLE' }).Count
+                    $exec  = @($g.Group | Where-Object { $_.outcome -eq 'EXECUTED'        }).Count
+                    $block = @($g.Group | Where-Object { $_.outcome -eq 'BLOCKED'         }).Count
+                    $noexp = @($g.Group | Where-Object { $_.outcome -eq 'NOT-EXPLOITABLE' }).Count
                     Write-Host ($shdr -f $g.Name, $tot, "$exec/$tot", "$block/$tot", $noexp) -ForegroundColor White
                 }
 

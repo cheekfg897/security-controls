@@ -108,7 +108,7 @@ if ($modules.Count -eq 0) {
     Write-Host ""
     Write-Host "  [!] No modules found in: $scenariosPath" -ForegroundColor Red
     Write-Host "  [!] Each module folder needs a module.json file." -ForegroundColor Red
-    Write-Host "  [!] See README.md -> 'Adding a New Module' for the schema." -ForegroundColor Red
+    Write-Host "  [!] See docs/project-structure.md -> 'Adding a module'." -ForegroundColor Red
     Write-Host ""
     exit 1
 }

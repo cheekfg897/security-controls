@@ -3,42 +3,42 @@
     Technique 3.2: UAC Bypass (T1548.002)
 
 .DESCRIPTION
-    Four sub-tests covering different UAC bypass mechanisms, all requiring only
+    Four subtests covering different UAC bypass mechanisms, all requiring only
     standard user rights to attempt (UAC bypass by definition does not require
     existing elevation).
 
-    Sub-test 1 (Fodhelper)        - ms-settings HKCU registry key hijack.
+    Subtest 1 (Fodhelper)        - ms-settings HKCU registry key hijack.
                                      fodhelper.exe is auto-elevate; before launching
                                      it reads HKCU\Software\Classes\ms-settings\shell\open\command.
                                      Writing a payload there causes fodhelper to ShellExecute
                                      it at high integrity with no UAC prompt.
 
-    Sub-test 2 (Eventvwr)         - mscfile HKCU registry key hijack.
+    Subtest 2 (Eventvwr)         - mscfile HKCU registry key hijack.
                                      eventvwr.exe auto-elevates and opens eventvwr.msc; it
                                      checks HKCU\Software\Classes\mscfile\shell\open\command
                                      before HKLM. Payload there runs at high integrity.
                                      Tests whether rules key on the binary name (fodhelper)
-                                     or the technique class.
+                                     or the bypass class.
 
-    Sub-test 3 (ComputerDefaults) - Same ms-settings key as Fodhelper but via
+    Subtest 3 (ComputerDefaults) - Same ms-settings key as Fodhelper but via
                                      ComputerDefaults.exe. Tests whether detection rules
                                      alert on the binary name or the registry key pattern.
 
-    Sub-test 4 (SilentCleanup)   - DiskCleanup scheduled task + %%windir%% env-var
+    Subtest 4 (SilentCleanup)   - DiskCleanup scheduled task + %%windir%% env-var
                                      injection. The SilentCleanup task runs elevated for
                                      the current user. It executes %%windir%%\system32\
                                      cleanmgr.exe; overriding %%windir%% in the process
                                      environment redirects that to our payload.
                                      No registry keys written - different detection surface.
 
-    All sub-tests write a marker file to C:\Windows\Temp\ as proof-of-execution.
+    All subtests write a marker file to C:\Windows\Temp\ as proof-of-execution.
     Writing to C:\Windows\Temp requires admin rights; a successful bypass means the
     marker appears, a blocked bypass means it does not.
     Nothing malicious runs - benign file writes only.
-    All registry / environment changes are restored after each sub-test.
+    All registry / environment changes are restored after each subtest.
 
 .PARAMETER Subtest
-    Which sub-test to run. Use 'All' to run all four sequentially.
+    Which subtest to run. Use 'All' to run all four sequentially.
     Default: Fodhelper.
 
 .EXAMPLE
@@ -99,7 +99,7 @@ function Invoke-Cleanup {
 }
 
 # ==============================================================================
-# SUB-TEST 1: fodhelper.exe + ms-settings registry hijack
+# SUBTEST 1: fodhelper.exe + ms-settings registry hijack
 # Atomic Red Team: T1548.002 Test #1
 # ==============================================================================
 
@@ -157,7 +157,7 @@ function Test-Fodhelper {
 }
 
 # ==============================================================================
-# SUB-TEST 2: eventvwr.exe + mscfile registry hijack
+# SUBTEST 2: eventvwr.exe + mscfile registry hijack
 # Atomic Red Team: T1548.002 Test #2
 # ==============================================================================
 
@@ -169,7 +169,7 @@ function Test-Eventvwr {
     Write-Host "           HKCU\Software\Classes\mscfile\shell\open\command  (checked first)"
     Write-Host "           HKCR\mscfile\shell\open\command                   (fallback)"
     Write-Host "         Placing a payload in the HKCU key intercepts the lookup before HKLM."
-    Write-Host "         No DelegateExecute value needed for this technique."
+    Write-Host "         No DelegateExecute value needed for this subtest."
     Write-Host "`nDetection:"
     Write-Host "  Sysmon 13  - RegistryEvent (Value Set): mscfile\shell\open\command written by user process"
     Write-Host "  Sysmon 1   - eventvwr.exe spawning unexpected child (expected child: mmc.exe)"
@@ -214,7 +214,7 @@ function Test-Eventvwr {
 }
 
 # ==============================================================================
-# SUB-TEST 3: ComputerDefaults.exe + ms-settings registry hijack
+# SUBTEST 3: ComputerDefaults.exe + ms-settings registry hijack
 # Atomic Red Team: T1548.002 Test #3
 # ==============================================================================
 
@@ -223,9 +223,9 @@ function Test-ComputerDefaults {
     Write-Host "`nBinary : C:\Windows\System32\ComputerDefaults.exe"
     Write-Host "Method : ComputerDefaults.exe is a second auto-elevate binary that reads the"
     Write-Host "         same HKCU ms-settings\shell\open\command key as fodhelper.exe."
-    Write-Host "         This sub-test checks whether EDR/SIEM rules are keyed specifically"
+    Write-Host "         This subtest checks whether EDR/SIEM rules are keyed specifically"
     Write-Host "         on 'fodhelper.exe' as the parent, or on the registry key pattern."
-    Write-Host "         If sub-test 1 fires an alert but this does not, the rule is too narrow."
+    Write-Host "         If subtest 1 fires an alert but this does not, the rule is too narrow."
     Write-Host "`nDetection:"
     Write-Host "  Sysmon 13  - RegistryEvent (Value Set): ms-settings\shell\open\command written"
     Write-Host "  Sysmon 1   - ComputerDefaults.exe spawning unexpected child process"
@@ -272,7 +272,7 @@ function Test-ComputerDefaults {
 }
 
 # ==============================================================================
-# SUB-TEST 4: SilentCleanup scheduled task + %windir% environment variable abuse
+# SUBTEST 4: SilentCleanup scheduled task + %windir% environment variable abuse
 # Atomic Red Team: T1548.002 Test #9
 # ==============================================================================
 
@@ -335,7 +335,7 @@ function Test-SilentCleanup {
 
 function Test-All {
     Write-Host "`n+==============================================================================+" -ForegroundColor Cyan
-    Write-Host "|   UAC BYPASS - ALL TECHNIQUES                                               |" -ForegroundColor Cyan
+    Write-Host "|   UAC BYPASS - ALL SUBTESTS                                                 |" -ForegroundColor Cyan
     Write-Host "+==============================================================================+" -ForegroundColor Cyan
 
     $tests = @(
@@ -349,7 +349,7 @@ function Test-All {
     foreach ($t in $tests) {
         $results += @{ Name = $t.Name; Success = (& $t.Fn) }
         Write-Host "`n[!] Check EDR/AV console before continuing." -ForegroundColor Yellow
-        [void](Read-Host "    Press Enter for next sub-test")
+        [void](Read-Host "    Press Enter for next subtest")
     }
     return $results
 }
@@ -370,7 +370,7 @@ function Write-Report {
     }
     $ok    = ($Results | Where-Object { $_.Success }).Count
     $total = $Results.Count
-    Write-Host "`n  $ok of $total UAC bypass techniques succeeded" -ForegroundColor Cyan
+    Write-Host "`n  $ok of $total UAC bypass subtests succeeded" -ForegroundColor Cyan
 }
 
 # ==============================================================================

@@ -1,38 +1,38 @@
-﻿<#
+<#
 .SYNOPSIS
     Technique 4.2: Scheduled Task/Job Persistence (T1053.005)
 
 .DESCRIPTION
-    Five sub-tests covering scheduled task persistence techniques.
+    Five subtests covering scheduled task persistence methods.
 
-    Sub-test 1 (SchtasksOnLogon) - schtasks.exe /create /sc ONLOGON writes a user-level
+    Subtest 1 (SchtasksOnLogon) - schtasks.exe /create /sc ONLOGON writes a user-level
                                     task carrying a Base64-encoded PowerShell payload. Classic,
                                     noisy; produces strong telemetry via schtasks.exe CLI args.
 
-    Sub-test 2 (PwshCmdlet)      - Native PS cmdlets (New-ScheduledTaskAction,
+    Subtest 2 (PwshCmdlet)      - Native PS cmdlets (New-ScheduledTaskAction,
                                     Register-ScheduledTask) register an at-logon task.
                                     Avoids schtasks.exe entirely; uses WMI (PS_ScheduledTask)
                                     under the hood, producing different telemetry.
 
-    Sub-test 3 (B64Registry)     - Mirrors Qakbot: a Base64-encoded payload is stored in a
+    Subtest 3 (B64Registry)     - Mirrors Qakbot: a Base64-encoded payload is stored in a
                                     registry key; a scheduled task runs a loader script that
                                     decodes and executes it at runtime via IEX + Get-ItemProperty.
 
-    Sub-test 4 (SystemTask)      - schtasks.exe /create /sc ONSTART /ru SYSTEM creates a
+    Subtest 4 (SystemTask)      - schtasks.exe /create /sc ONSTART /ru SYSTEM creates a
                                     startup task running as NT AUTHORITY\SYSTEM. Effective
                                     privilege escalation. Requires local admin.
 
-    Sub-test 5 (HiddenXML)       - Registers a task via Invoke-CimMethod (WMI class
+    Subtest 5 (HiddenXML)       - Registers a task via Invoke-CimMethod (WMI class
                                     PS_ScheduledTask.RegisterByXml) from inline XML with
                                     Hidden=true - mirrors TrickBot/Industroyer2 persistence;
                                     task is invisible to schtasks /query and Task Scheduler GUI.
                                     Requires local admin.
 
-    All sub-tests write a marker file to C:\Windows\Temp\ as proof-of-execution.
+    All subtests write a marker file to C:\Windows\Temp\ as proof-of-execution.
     Nothing malicious runs - benign file writes only.
 
 .PARAMETER Subtest
-    Which sub-test to run. Use 'All' to run all five sequentially.
+    Which subtest to run. Use 'All' to run all five sequentially.
     Default: SchtasksOnLogon.
 
 .EXAMPLE
@@ -103,7 +103,7 @@ function Invoke-Cleanup {
 }
 
 # ==============================================================================
-# SUB-TEST 1: schtasks.exe ONLOGON task
+# SUBTEST 1: schtasks.exe ONLOGON task
 # Atomic Red Team: T1053.005 Test #1
 # ==============================================================================
 
@@ -153,7 +153,7 @@ function Test-SchtasksOnLogon {
 }
 
 # ==============================================================================
-# SUB-TEST 2: PowerShell cmdlet - Register-ScheduledTask
+# SUBTEST 2: PowerShell cmdlet - Register-ScheduledTask
 # Atomic Red Team: T1053.005 Test #4
 # ==============================================================================
 
@@ -212,7 +212,7 @@ function Test-PwshCmdlet {
 }
 
 # ==============================================================================
-# SUB-TEST 3: Base64 registry payload + loader script (Qakbot pattern)
+# SUBTEST 3: Base64 registry payload + loader script (Qakbot pattern)
 # Atomic Red Team: T1053.005 Test #7
 # ==============================================================================
 
@@ -297,7 +297,7 @@ IEX([System.Text.Encoding]::ASCII.GetString([System.Convert]::FromBase64String(`
 }
 
 # ==============================================================================
-# SUB-TEST 4: SYSTEM-context startup task via schtasks /ru SYSTEM
+# SUBTEST 4: SYSTEM-context startup task via schtasks /ru SYSTEM
 # Atomic Red Team: T1053.005 Test #1 (SYSTEM variant)
 # Requires local admin.
 # ==============================================================================
@@ -349,7 +349,7 @@ function Test-SystemTask {
 }
 
 # ==============================================================================
-# SUB-TEST 5: Hidden task via Invoke-CimMethod (WMI PS_ScheduledTask.RegisterByXml)
+# SUBTEST 5: Hidden task via Invoke-CimMethod (WMI PS_ScheduledTask.RegisterByXml)
 # Atomic Red Team: T1053.005 Test #8 - TrickBot / Industroyer2 pattern
 # Requires local admin.
 # ==============================================================================
@@ -480,7 +480,7 @@ function Test-HiddenXML {
 
 function Test-All {
     Write-Host "`n+==============================================================================+" -ForegroundColor Cyan
-    Write-Host "|   SCHEDULED TASK PERSISTENCE - ALL TECHNIQUES                               |" -ForegroundColor Cyan
+    Write-Host "|   SCHEDULED TASK PERSISTENCE - ALL SUBTESTS                                 |" -ForegroundColor Cyan
     Write-Host "+==============================================================================+" -ForegroundColor Cyan
 
     $tests = @(
@@ -496,7 +496,7 @@ function Test-All {
         $results += @{ Name = $t.Name; Success = (& $t.Fn) }
         if (-not $NoPause) {
             Write-Host "`n[!] Check EDR/AV console before continuing." -ForegroundColor Yellow
-            [void](Read-Host "    Press Enter for next sub-test")
+            [void](Read-Host "    Press Enter for next subtest")
         }
     }
     return $results
@@ -518,7 +518,7 @@ function Write-Report {
     }
     $ok    = ($Results | Where-Object { $_.Success }).Count
     $total = $Results.Count
-    Write-Host "`n  $ok of $total techniques executed successfully" -ForegroundColor Cyan
+    Write-Host "`n  $ok of $total subtests executed successfully" -ForegroundColor Cyan
 }
 
 # ==============================================================================

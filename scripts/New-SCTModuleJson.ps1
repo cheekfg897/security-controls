@@ -112,20 +112,35 @@ if (-not $OutputPath) {
 }
 
 $techniques = @()
+$usedTechniqueIds = @{}
 $index = 1
 do {
     Write-Host ''
     Write-Host "Technique $index" -ForegroundColor Cyan
 
     $techniqueId = Read-Required -Prompt 'Technique id' -Default "$moduleNumber.$index" `
-        -Validate { param($value) $value -match '^\d+\.\d+$' } `
-        -ValidationMessage 'Use module.technique notation, for example 5.1.'
+        -Validate {
+            param($value)
+            $value -match ("^{0}\.\d+$" -f $moduleNumber) -and
+            -not $usedTechniqueIds.ContainsKey($value)
+        } `
+        -ValidationMessage "Use a unique ID from Module $moduleId, for example $moduleNumber.$index."
+    $usedTechniqueIds[$techniqueId] = $true
     $name = Read-Required -Prompt 'Technique name'
     $description = Read-Optional -Prompt 'Technique description (optional)'
-    $attackId = Read-Required -Prompt 'MITRE ATT&CK id' -Default 'T0000'
+    $attackId = Read-Required -Prompt 'MITRE ATT&CK id (for example T1547.001)' `
+        -Validate { param($value) $value -match '^T\d{4}(\.\d{3})?$' } `
+        -ValidationMessage 'Use an ATT&CK ID such as T1059 or T1059.001.'
     $slug = ConvertTo-Slug $name
     $script = Read-Required -Prompt 'Script path, relative to the module folder' `
-        -Default ("{0}-{1}/{0}-{1}.ps1" -f $techniqueId, $slug)
+        -Default ("{0}-{1}/{0}-{1}.ps1" -f $techniqueId, $slug) `
+        -Validate {
+            param($value)
+            -not [IO.Path]::IsPathRooted($value) -and
+            [IO.Path]::GetExtension($value) -eq '.ps1' -and
+            $value -notmatch '(^|[\\/])\.\.([\\/]|$)'
+        } `
+        -ValidationMessage 'Use a relative .ps1 path that stays inside the module folder.'
 
     $technique = [ordered]@{
         id = $techniqueId
@@ -138,13 +153,31 @@ do {
     if (Read-YesNo -Prompt 'Is this technique still planned?' -Default $false) {
         $technique['status'] = 'planned'
     } else {
-        $subtests = @(Read-List -Prompt 'Subtests, comma-separated (leave blank for none)')
+        while ($true) {
+            $subtests = @(Read-List -Prompt 'Subtests, comma-separated (leave blank for none)')
+            $reserved = @($subtests | Where-Object { $_ -in @('All', 'AllLocal', 'AllRemote') })
+            $duplicates = @($subtests | Group-Object | Where-Object Count -gt 1 | ForEach-Object Name)
+            if ($reserved.Count -eq 0 -and $duplicates.Count -eq 0) { break }
+            if ($reserved.Count -gt 0) {
+                Write-Host "  Do not enter run-all choices; SCT adds them: $($reserved -join ', ')" -ForegroundColor Yellow
+            }
+            if ($duplicates.Count -gt 0) {
+                Write-Host "  Remove duplicate subtests: $($duplicates -join ', ')" -ForegroundColor Yellow
+            }
+        }
         if ($subtests.Count -gt 0) {
             $technique['subtests'] = $subtests
-            $serverSubtests = @(Read-List -Prompt 'Subtests that need a server VM (leave blank for none)')
-            $invalid = @($serverSubtests | Where-Object { $subtests -notcontains $_ })
-            if ($invalid.Count -gt 0) {
-                throw "Server subtests must also appear in subtests: $($invalid -join ', ')"
+            while ($true) {
+                $serverSubtests = @(Read-List -Prompt 'Subtests that need a server VM (leave blank for none)')
+                $invalid = @($serverSubtests | Where-Object { $subtests -notcontains $_ })
+                $duplicates = @($serverSubtests | Group-Object | Where-Object Count -gt 1 | ForEach-Object Name)
+                if ($invalid.Count -eq 0 -and $duplicates.Count -eq 0) { break }
+                if ($invalid.Count -gt 0) {
+                    Write-Host "  Server subtests must also appear in subtests: $($invalid -join ', ')" -ForegroundColor Yellow
+                }
+                if ($duplicates.Count -gt 0) {
+                    Write-Host "  Remove duplicate server subtests: $($duplicates -join ', ')" -ForegroundColor Yellow
+                }
             }
             Add-IfPresent -Target $technique -Name 'server_subtests' -Value $serverSubtests
         }

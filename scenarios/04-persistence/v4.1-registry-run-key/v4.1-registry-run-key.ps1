@@ -3,29 +3,29 @@
     Technique 4.1: Registry Run Keys / Startup Folder Persistence (T1547.001)
 
 .DESCRIPTION
-    Five sub-tests covering the most common autostart persistence locations.
+    Five subtests covering the most common autostart persistence locations.
 
-    Sub-test 1 (HKCURunKey)  - reg.exe writes a Base64-encoded PowerShell command to the
+    Subtest 1 (HKCURunKey)  - reg.exe writes a Base64-encoded PowerShell command to the
                                 HKCU Run key. Most common persistence method; no elevation needed.
 
-    Sub-test 2 (HKCURunOnce) - Set-ItemProperty writes a command to HKCU RunOnce.
+    Subtest 2 (HKCURunOnce) - Set-ItemProperty writes a command to HKCU RunOnce.
                                 Executes once after next login; uses native PS cmdlet instead
                                 of reg.exe, producing different telemetry.
 
-    Sub-test 3 (StartupVBS)  - VBS file dropped to the user startup folder and executed
+    Subtest 3 (StartupVBS)  - VBS file dropped to the user startup folder and executed
                                 immediately via cscript.exe. Simulates a script dropper.
 
-    Sub-test 4 (StartupBAT)  - BAT file dropped to the user startup folder and executed
+    Subtest 4 (StartupBAT)  - BAT file dropped to the user startup folder and executed
                                 immediately via cmd.exe. Simulates batch-based persistence.
 
-    Sub-test 5 (SystemBC)    - Mirrors the SystemBC malware-as-a-service pattern:
+    Subtest 5 (SystemBC)    - Mirrors the SystemBC malware-as-a-service pattern:
                                 a hidden-window PowerShell -File command written to HKCU Run.
 
-    All sub-tests write a marker file to C:\Windows\Temp\ as proof-of-execution.
+    All subtests write a marker file to C:\Windows\Temp\ as proof-of-execution.
     Nothing malicious runs - benign file writes only.
 
 .PARAMETER Subtest
-    Which sub-test to run. Use 'All' to run all five sequentially.
+    Which subtest to run. Use 'All' to run all five sequentially.
     Default: HKCURunKey.
 
 .PARAMETER CheckHKLMWriteAccess
@@ -128,7 +128,7 @@ function Test-HKLMRunWriteAccess {
 }
 
 # ==============================================================================
-# SUB-TEST 1: HKCU Run Key via reg.exe
+# SUBTEST 1: HKCU Run Key via reg.exe
 # Atomic Red Team: T1547.001 Test #1
 # ==============================================================================
 
@@ -179,7 +179,7 @@ function Test-HKCURunKey {
 }
 
 # ==============================================================================
-# SUB-TEST 2: HKCU RunOnce via PowerShell Set-ItemProperty
+# SUBTEST 2: HKCU RunOnce via PowerShell Set-ItemProperty
 # Atomic Red Team: T1547.001 Test #3 (HKCU variant, no elevation)
 # ==============================================================================
 
@@ -232,7 +232,7 @@ function Test-HKCURunOnce {
 }
 
 # ==============================================================================
-# SUB-TEST 3: Startup Folder - VBS file
+# SUBTEST 3: Startup Folder - VBS file
 # Atomic Red Team: T1547.001 Test #4
 # ==============================================================================
 
@@ -279,7 +279,7 @@ f.Close
 }
 
 # ==============================================================================
-# SUB-TEST 4: Startup Folder - BAT file
+# SUBTEST 4: Startup Folder - BAT file
 # Atomic Red Team: T1547.001 Test #6
 # ==============================================================================
 
@@ -321,7 +321,7 @@ function Test-StartupBAT {
 }
 
 # ==============================================================================
-# SUB-TEST 5: SystemBC-pattern - hidden PowerShell in HKCU Run Key
+# SUBTEST 5: SystemBC-pattern - hidden PowerShell in HKCU Run Key
 # Atomic Red Team: T1547.001 Test #9
 # ==============================================================================
 
@@ -392,7 +392,7 @@ function Test-SystemBC {
 
 function Test-All {
     Write-Host "`n+==============================================================================+" -ForegroundColor Cyan
-    Write-Host "|   REGISTRY RUN KEYS / STARTUP FOLDER - ALL TECHNIQUES                       |" -ForegroundColor Cyan
+    Write-Host "|   REGISTRY RUN KEYS / STARTUP FOLDER - ALL SUBTESTS                         |" -ForegroundColor Cyan
     Write-Host "+==============================================================================+" -ForegroundColor Cyan
 
     $tests = @(
@@ -408,7 +408,7 @@ function Test-All {
         $results += @{ Name = $t.Name; Success = (& $t.Fn) }
         if (-not $NoPause) {
             Write-Host "`n[!] Check EDR/AV console before continuing." -ForegroundColor Yellow
-            [void](Read-Host "    Press Enter for next sub-test")
+            [void](Read-Host "    Press Enter for next subtest")
         }
     }
     return $results
@@ -430,7 +430,7 @@ function Write-Report {
     }
     $ok    = ($Results | Where-Object { $_.Success }).Count
     $total = $Results.Count
-    Write-Host "`n  $ok of $total techniques executed successfully" -ForegroundColor Cyan
+    Write-Host "`n  $ok of $total subtests executed successfully" -ForegroundColor Cyan
 }
 
 # ==============================================================================
