@@ -16,7 +16,7 @@ security-controls/
 |-- samples/
 |-- sanity_checks/
 |-- scenarios/
-|   |-- 01-malware-introduction/
+|   |-- 01-malware-delivery/
 |   |-- 02-exploitation/
 |   |-- 03-privilege-escalation/
 |   `-- 04-persistence/

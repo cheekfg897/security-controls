@@ -4,12 +4,12 @@ This matrix reflects the current `module.json` definitions. "Available" means SC
 
 | Module | Technique | ATT&CK | Subtests | Status |
 |---|---|---|---:|---|
-| Malware Introduction | 1.1 Known Malware - Disk Drop | T1105 | - | Available |
-| Malware Introduction | 1.2 Removable Media (USB) | T1091 | - | Available; environment validation pending |
-| Malware Introduction | 1.3 Download from Internet (HTTP) | T1105 | - | Available |
-| Malware Introduction | 1.4 Trojanised COTS Application | T1036.005 | - | Available |
-| Malware Introduction | 1.5 Fileless PowerShell | T1059.001 | 9 | Available |
-| Malware Introduction | 1.6 DLL Sideloading | T1574.002 | - | Available |
+| Malware Delivery | 1.1 Known Malware - Disk Drop | T1105 | - | Available |
+| Malware Delivery | 1.2 Removable Media (USB) | T1091 | - | Available; environment validation pending |
+| Malware Delivery | 1.3 Download from Internet (HTTP) | T1105 | - | Available |
+| Malware Delivery | 1.4 Trojanised COTS Application | T1036.005 | - | Available |
+| Malware Delivery | 1.5 Fileless PowerShell | T1059.001 | 9 | Available |
+| Malware Delivery | 1.6 DLL Sideloading | T1574.002 | - | Available |
 | Exploitation | 2.1 Malicious Macro (Office VBA) | T1566.001 | - | Planned |
 | Exploitation | 2.2 CVE Simulation | T1203 | - | Available |
 | Privilege Escalation | 3.1 Process Hollowing | T1055.012 | - | Planned |

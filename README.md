@@ -76,7 +76,7 @@ This runs all 15 persistence subtests, records one row per subtest with a shared
 
 | # | Module | Status | Techniques |
 |---|---|---|---|
-| 1 | Malware Introduction | Active | 1.1 Disk Drop; 1.2 Removable Media; 1.3 Internet Download; 1.4 Trojanised COTS; 1.5 Fileless PowerShell; 1.6 DLL Sideloading |
+| 1 | Malware Delivery | Active | 1.1 Disk Drop; 1.2 Removable Media; 1.3 Internet Download; 1.4 Trojanised COTS; 1.5 Fileless PowerShell; 1.6 DLL Sideloading |
 | 2 | Exploitation | Partial | 2.1 Malicious Macro *(planned)*; 2.2 CVE Simulation |
 | 3 | Privilege Escalation | Partial | 3.1 Process Hollowing *(planned)*; 3.2 UAC Bypass; 3.3 LOLBin Signed Binary |
 | 4 | Persistence | Active | 4.1 Registry Run Keys; 4.2 Scheduled Tasks; 4.3 Advanced Startup Folder |

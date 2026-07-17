@@ -69,12 +69,12 @@ to keep them distinct.
 1. Prepare your samples on a separate, isolated machine
 2. ZIP them together as-is
 3. Copy the ZIP into this `samples/` folder
-4. Run `Start-SCT.ps1`, choose **Malware Introduction -> Technique 1.1**, and select the ZIP by number
+4. Run `Start-SCT.ps1`, choose **Malware Delivery -> Technique 1.1**, and select the ZIP by number
 
 **Option B (one sample per ZIP):**
 1. Create one ZIP per sample
 2. Copy all ZIPs into this `samples/` folder
-3. Run `Start-SCT.ps1`, choose **Malware Introduction -> Technique 1.1**, and select **`[A] Combine and run ALL ZIPs`**
+3. Run `Start-SCT.ps1`, choose **Malware Delivery -> Technique 1.1**, and select **`[A] Combine and run ALL ZIPs`**
 
 ---
 

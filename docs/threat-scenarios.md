@@ -2,18 +2,18 @@
 
 SCT groups techniques into modules by security objective. Use the launcher to select a module, technique, and optional subtest.
 
-## Module 01 - Malware Introduction
+## Module 01 - Malware Delivery
 
 Tests common ways malware reaches or executes on an endpoint.
 
 | Technique | Purpose | Preparation |
 |---|---|---|
-| 1.1 Disk Drop | Copy samples to disk and optionally execute them. | Put ZIPs in `samples/`; see the [technique guide](../scenarios/01-malware-introduction/v1.1-known-malware/README.md). |
-| 1.2 Removable Media | Deliver samples from USB media. | Use an authorised endpoint with physical USB passthrough; see the [technique guide](../scenarios/01-malware-introduction/v1.2-removable-media/README.md). |
-| 1.3 Internet Download | Download samples over HTTP. | Start the companion server on a second VM; see the [two-VM guide](../scenarios/01-malware-introduction/v1.3-download-internet/README.md). |
-| 1.4 Trojanised COTS | Exercise a decoy application and hidden payload chain. | Self-contained; see the [technique guide](../scenarios/01-malware-introduction/v1.4-trojanised-cots/README.md). |
+| 1.1 Disk Drop | Copy samples to disk and optionally execute them. | Put ZIPs in `samples/`; see the [technique guide](../scenarios/01-malware-delivery/v1.1-known-malware/README.md). |
+| 1.2 Removable Media | Deliver samples from USB media. | Use an authorised endpoint with physical USB passthrough; see the [technique guide](../scenarios/01-malware-delivery/v1.2-removable-media/README.md). |
+| 1.3 Internet Download | Download samples over HTTP. | Start the companion server on a second VM; see the [two-VM guide](../scenarios/01-malware-delivery/v1.3-download-internet/README.md). |
+| 1.4 Trojanised COTS | Exercise a decoy application and hidden payload chain. | Self-contained; see the [technique guide](../scenarios/01-malware-delivery/v1.4-trojanised-cots/README.md). |
 | 1.5 Fileless PowerShell | Exercise local or remotely fetched in-memory subtests. | Sysmon is required for result collection; remote subtests need a second VM. |
-| 1.6 DLL Sideloading | Load an unsigned DLL through a trusted process. | Self-contained; see the [technique guide](../scenarios/01-malware-introduction/v1.6-dll-sideloading/README.md). |
+| 1.6 DLL Sideloading | Load an unsigned DLL through a trusted process. | Self-contained; see the [technique guide](../scenarios/01-malware-delivery/v1.6-dll-sideloading/README.md). |
 
 > Technique 1.2 has not been validated in the current environment. A virtual disk can exercise file-copy detection, but it does not validate USB device-control monitoring.
 
