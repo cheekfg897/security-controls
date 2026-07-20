@@ -6,10 +6,10 @@
     {
       "id": "4.1",
       "name": "Registry Run Keys / Startup Folder",
-      "description": "Tests run keys, RunOnce, startup scripts, and a hidden PowerShell pattern.",
+      "description": "Tests user- and machine-wide Run keys, RunOnce, startup scripts, and a hidden PowerShell pattern.",
       "attack_id": "T1547.001",
       "script": "v4.1-registry-run-key/v4.1-registry-run-key.ps1",
-      "subtests": ["HKCURunKey", "HKCURunOnce", "StartupVBS", "StartupBAT", "SystemBC"]
+      "subtests": ["HKCURunKey", "HKCURunOnce", "HKLMRunKey", "HKLMRunOnce", "StartupVBS", "StartupBAT", "SystemBC"]
     },
     {
       "id": "4.2",

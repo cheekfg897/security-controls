@@ -263,6 +263,13 @@ param(
     Assert-True ($realModules.Count -eq 4) 'All four repository modules must load.'
     Assert-True (@($realModules | ForEach-Object { $_.techniques }).Count -eq 14) 'All 14 repository techniques must load.'
 
+    $module4 = @($realModules | Where-Object { $_.id -eq '04' })[0]
+    $technique41 = @($module4.techniques | Where-Object { $_.id -eq '4.1' })[0]
+    foreach ($registrySubtest in @('HKCURunKey','HKCURunOnce','HKLMRunKey','HKLMRunOnce')) {
+        Assert-True ($technique41.subtests -contains $registrySubtest) "Technique 4.1 must include $registrySubtest."
+    }
+    Assert-True (@($module4.techniques | ForEach-Object { $_.subtests }).Count -eq 17) 'Module 04 must expose all 17 persistence subtests.'
+
     Write-Host "Passed $script:Assertions schema assertions." -ForegroundColor Green
 } finally {
     if (Test-Path -LiteralPath $tempRoot) {

@@ -3,7 +3,8 @@
     Technique 4.1: Registry Run Keys / Startup Folder Persistence (T1547.001)
 
 .DESCRIPTION
-    Five subtests covering the most common autostart persistence locations.
+    Seven subtests covering the most common user- and machine-wide autostart
+    persistence locations.
 
     Subtest 1 (HKCURunKey)  - reg.exe writes a Base64-encoded PowerShell command to the
                                 HKCU Run key. Most common persistence method; no elevation needed.
@@ -12,20 +13,27 @@
                                 Executes once after next login; uses native PS cmdlet instead
                                 of reg.exe, producing different telemetry.
 
-    Subtest 3 (StartupVBS)  - VBS file dropped to the user startup folder and executed
+    Subtest 3 (HKLMRunKey)  - reg.exe writes the same benign command to the machine-wide
+                                HKLM Run key. Requires an elevated PowerShell session.
+
+    Subtest 4 (HKLMRunOnce) - Set-ItemProperty writes a command to machine-wide HKLM
+                                RunOnce. Requires an elevated PowerShell session.
+
+    Subtest 5 (StartupVBS)  - VBS file dropped to the user startup folder and executed
                                 immediately via cscript.exe. Simulates a script dropper.
 
-    Subtest 4 (StartupBAT)  - BAT file dropped to the user startup folder and executed
+    Subtest 6 (StartupBAT)  - BAT file dropped to the user startup folder and executed
                                 immediately via cmd.exe. Simulates batch-based persistence.
 
-    Subtest 5 (SystemBC)    - Mirrors the SystemBC malware-as-a-service pattern:
+    Subtest 7 (SystemBC)    - Mirrors the SystemBC malware-as-a-service pattern:
                                 a hidden-window PowerShell -File command written to HKCU Run.
 
     All subtests write a marker file to C:\Windows\Temp\ as proof-of-execution.
     Nothing malicious runs - benign file writes only.
 
 .PARAMETER Subtest
-    Which subtest to run. Use 'All' to run all five sequentially.
+    Which subtest to run. Use 'All' to run all seven sequentially. HKLM subtests
+    require an elevated PowerShell session.
     Default: HKCURunKey.
 
 .PARAMETER CheckHKLMWriteAccess
@@ -38,7 +46,7 @@
 #>
 
 param(
-    [ValidateSet('HKCURunKey','HKCURunOnce','StartupVBS','StartupBAT','SystemBC','All')]
+    [ValidateSet('HKCURunKey','HKCURunOnce','HKLMRunKey','HKLMRunOnce','StartupVBS','StartupBAT','SystemBC','All')]
     [Alias('Technique')]
     [string]$Subtest = 'HKCURunKey',
     [switch]$NoCleanupPrompt,
@@ -81,13 +89,19 @@ function Invoke-Cleanup {
     param([string[]]$Names)
     foreach ($n in $Names) {
         Remove-Item "$tempDir\art-v4.1-$n.txt" -Force -ErrorAction Ignore
+        switch ($n) {
+            'HKCURunKey'  { Remove-ItemProperty "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"     -Name $valueName         -Force -ErrorAction Ignore }
+            'HKCURunOnce' { Remove-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce" -Name $valueName         -Force -ErrorAction Ignore }
+            'HKLMRunKey'  { Remove-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"     -Name $valueName         -Force -ErrorAction Ignore }
+            'HKLMRunOnce' { Remove-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\RunOnce" -Name $valueName         -Force -ErrorAction Ignore }
+            'StartupVBS'  { Remove-Item "$startupDir\sct-vbs-test.vbs"      -Force -ErrorAction Ignore }
+            'StartupBAT'  { Remove-Item "$startupDir\sct-bat-test.bat"      -Force -ErrorAction Ignore }
+            'SystemBC' {
+                Remove-ItemProperty "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name "socks5_powershell" -Force -ErrorAction Ignore
+                Remove-Item "$tempDir\sct-systembc-payload.ps1" -Force -ErrorAction Ignore
+            }
+        }
     }
-    Remove-ItemProperty "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"     -Name $valueName         -Force -ErrorAction Ignore
-    Remove-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce" -Name $valueName         -Force -ErrorAction Ignore
-    Remove-ItemProperty "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"     -Name "socks5_powershell" -Force -ErrorAction Ignore
-    Remove-Item "$startupDir\sct-vbs-test.vbs"        -Force -ErrorAction Ignore
-    Remove-Item "$startupDir\sct-bat-test.bat"        -Force -ErrorAction Ignore
-    Remove-Item "$tempDir\sct-systembc-payload.ps1"   -Force -ErrorAction Ignore
     Write-Host "[+] Cleanup complete" -ForegroundColor Green
 }
 
@@ -232,7 +246,112 @@ function Test-HKCURunOnce {
 }
 
 # ==============================================================================
-# SUBTEST 3: Startup Folder - VBS file
+# SUBTEST 3: HKLM Run Key via reg.exe
+# Machine-wide variant; requires elevation
+# ==============================================================================
+
+function Test-HKLMRunKey {
+    Write-Header "HKLM Run Key via reg.exe (machine-wide variant)" "HIGH"
+    Write-Host "`nPath   : HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
+    Write-Host "Method : reg.exe adds a machine-wide value containing a Base64-encoded PS command."
+    Write-Host "         The value applies to every user and requires Administrator rights to create."
+    Write-Host "`nDetection:"
+    Write-Host "  Sysmon 13  - RegistryEvent (Value Set) on the machine-wide Run key"
+    Write-Host "  Sysmon 1   - elevated reg.exe followed by hidden powershell.exe"
+    Write-Host "  EDR alert  - HKLM autorun modification has system-wide persistence impact"
+    Write-Host "  SIEM rule  - HKLM Run modification followed by encoded PowerShell execution"
+
+    $marker  = "$tempDir\art-v4.1-HKLMRunKey.txt"
+    $command = "Set-Content -Path '$marker' -Value ('[' + (Get-Date) + '] HKLMRunKey executed')"
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
+    $runVal  = "powershell.exe -NoProfile -WindowStyle Hidden -EncodedCommand $encoded"
+    $runPath = "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
+
+    Write-Host "`n[*] Writing machine-wide Run value via reg.exe..." -ForegroundColor Yellow
+    Write-Host "    Key  : $runPath" -ForegroundColor DarkGray
+    Write-Host "    Value: $valueName" -ForegroundColor DarkGray
+    Write-Host "    Data : powershell.exe -NoProfile -WindowStyle Hidden -EncodedCommand [base64]" -ForegroundColor DarkGray
+    Write-Host "    [Detection: Sysmon 13 - RegistryEvent (Value Set)]" -ForegroundColor DarkGray
+
+    $regOut = reg add $runPath /V $valueName /t REG_SZ /F /D "$runVal" 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "  RESULT: HKLM registry write blocked, failed, or was not elevated - $regOut" -ForegroundColor Green
+        return $false
+    }
+    Write-Host "    Write succeeded." -ForegroundColor Green
+
+    Write-Host "`n[*] Verifying key was written..." -ForegroundColor Yellow
+    reg query $runPath /V $valueName | Out-Host
+
+    Write-Host "`n[*] Executing payload now (simulates next-login trigger)..." -ForegroundColor Yellow
+    Write-Host "    [Detection: Sysmon 1 - powershell.exe with -EncodedCommand and -WindowStyle Hidden]" -ForegroundColor DarkGray
+    try {
+        Start-Process powershell.exe -ArgumentList @(
+            "-NoProfile", "-WindowStyle", "Hidden", "-EncodedCommand", $encoded
+        ) -Wait -ErrorAction Stop
+    } catch {
+        Write-Host "  Execution blocked: $($_.Exception.Message)" -ForegroundColor Green
+        return $false
+    }
+
+    return (Test-ExecutionResult -Name "HKLMRunKey")
+}
+
+# ==============================================================================
+# SUBTEST 4: HKLM RunOnce via PowerShell Set-ItemProperty
+# Machine-wide variant; requires elevation
+# ==============================================================================
+
+function Test-HKLMRunOnce {
+    Write-Header "HKLM RunOnce via Set-ItemProperty (machine-wide variant)" "HIGH"
+    Write-Host "`nPath   : HKLM:\Software\Microsoft\Windows\CurrentVersion\RunOnce"
+    Write-Host "Method : Set-ItemProperty writes a machine-wide one-time logon command."
+    Write-Host "         The value applies to every user and requires Administrator rights to create."
+    Write-Host "`nDetection:"
+    Write-Host "  Sysmon 13     - RegistryEvent (Value Set) on machine-wide RunOnce"
+    Write-Host "  Event 4104    - Script Block Logging: Set-ItemProperty on an HKLM persistence path"
+    Write-Host "  EDR alert     - machine-wide RunOnce modification is a high-confidence event"
+    Write-Host "  Process chain - elevated powershell.exe -> hidden powershell.exe"
+
+    $marker      = "$tempDir\art-v4.1-HKLMRunOnce.txt"
+    $runOncePath = "HKLM:\Software\Microsoft\Windows\CurrentVersion\RunOnce"
+    $command     = "Set-Content -Path '$marker' -Value ('[' + (Get-Date) + '] HKLMRunOnce executed')"
+    $encoded     = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
+    $runVal      = "powershell.exe -NoProfile -WindowStyle Hidden -EncodedCommand $encoded"
+
+    Write-Host "`n[*] Writing machine-wide RunOnce value via Set-ItemProperty..." -ForegroundColor Yellow
+    Write-Host "    Path : $runOncePath" -ForegroundColor DarkGray
+    Write-Host "    Name : $valueName" -ForegroundColor DarkGray
+    Write-Host "    Value: powershell.exe -NoProfile -WindowStyle Hidden -EncodedCommand [base64]" -ForegroundColor DarkGray
+    Write-Host "    [Detection: Sysmon 13 - RegistryEvent (Value Set)]" -ForegroundColor DarkGray
+
+    try {
+        Set-ItemProperty -Path $runOncePath -Name $valueName -Value $runVal -ErrorAction Stop
+        Write-Host "    Write succeeded." -ForegroundColor Green
+    } catch {
+        Write-Host "  RESULT: HKLM registry write blocked, failed, or was not elevated - $($_.Exception.Message)" -ForegroundColor Green
+        return $false
+    }
+
+    Write-Host "`n[*] Verifying key was written..." -ForegroundColor Yellow
+    Get-ItemProperty -Path $runOncePath -Name $valueName -ErrorAction Ignore | Select-Object $valueName
+
+    Write-Host "`n[*] Executing payload now (simulates next-login RunOnce trigger)..." -ForegroundColor Yellow
+    Write-Host "    [Detection: Sysmon 1 - powershell.exe with -EncodedCommand and -WindowStyle Hidden]" -ForegroundColor DarkGray
+    try {
+        Start-Process powershell.exe -ArgumentList @(
+            "-NoProfile", "-WindowStyle", "Hidden", "-EncodedCommand", $encoded
+        ) -Wait -ErrorAction Stop
+    } catch {
+        Write-Host "  Execution blocked: $($_.Exception.Message)" -ForegroundColor Green
+        return $false
+    }
+
+    return (Test-ExecutionResult -Name "HKLMRunOnce")
+}
+
+# ==============================================================================
+# SUBTEST 5: Startup Folder - VBS file
 # Atomic Red Team: T1547.001 Test #4
 # ==============================================================================
 
@@ -279,7 +398,7 @@ f.Close
 }
 
 # ==============================================================================
-# SUBTEST 4: Startup Folder - BAT file
+# SUBTEST 6: Startup Folder - BAT file
 # Atomic Red Team: T1547.001 Test #6
 # ==============================================================================
 
@@ -321,7 +440,7 @@ function Test-StartupBAT {
 }
 
 # ==============================================================================
-# SUBTEST 5: SystemBC-pattern - hidden PowerShell in HKCU Run Key
+# SUBTEST 7: SystemBC-pattern - hidden PowerShell in HKCU Run Key
 # Atomic Red Team: T1547.001 Test #9
 # ==============================================================================
 
@@ -398,6 +517,8 @@ function Test-All {
     $tests = @(
         @{ Name = 'HKCURunKey';  Fn = ${function:Test-HKCURunKey}  },
         @{ Name = 'HKCURunOnce'; Fn = ${function:Test-HKCURunOnce} },
+        @{ Name = 'HKLMRunKey';  Fn = ${function:Test-HKLMRunKey}  },
+        @{ Name = 'HKLMRunOnce'; Fn = ${function:Test-HKLMRunOnce} },
         @{ Name = 'StartupVBS';  Fn = ${function:Test-StartupVBS}  },
         @{ Name = 'StartupBAT';  Fn = ${function:Test-StartupBAT}  },
         @{ Name = 'SystemBC';    Fn = ${function:Test-SystemBC}     }
@@ -438,7 +559,7 @@ function Write-Report {
 # ==============================================================================
 
 if ($CleanupOnly) {
-    Invoke-Cleanup -Names @('HKCURunKey','HKCURunOnce','StartupVBS','StartupBAT','SystemBC')
+    Invoke-Cleanup -Names @('HKCURunKey','HKCURunOnce','HKLMRunKey','HKLMRunOnce','StartupVBS','StartupBAT','SystemBC')
     exit 0
 }
 
@@ -460,7 +581,7 @@ switch ($Subtest) {
         if (-not $NoCleanupPrompt) {
             $c = Read-Host "Clean up now? (Y/N)"
             if ($c -eq 'Y' -or $c -eq 'y') {
-                Invoke-Cleanup -Names @('HKCURunKey','HKCURunOnce','StartupVBS','StartupBAT','SystemBC')
+                Invoke-Cleanup -Names @('HKCURunKey','HKCURunOnce','HKLMRunKey','HKLMRunOnce','StartupVBS','StartupBAT','SystemBC')
             }
         }
     }
@@ -474,6 +595,8 @@ switch ($Subtest) {
         $success = switch ($Subtest) {
             'HKCURunKey'  { Test-HKCURunKey  }
             'HKCURunOnce' { Test-HKCURunOnce }
+            'HKLMRunKey'  { Test-HKLMRunKey  }
+            'HKLMRunOnce' { Test-HKLMRunOnce }
             'StartupVBS'  { Test-StartupVBS  }
             'StartupBAT'  { Test-StartupBAT  }
             'SystemBC'    { Test-SystemBC     }

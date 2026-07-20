@@ -15,7 +15,7 @@ This matrix reflects the current `module.json` definitions. "Available" means SC
 | Privilege Escalation | 3.1 Process Hollowing | T1055.012 | - | Planned |
 | Privilege Escalation | 3.2 UAC Bypass | T1548.002 | 4 | Available |
 | Privilege Escalation | 3.3 LOLBin Signed Binary | T1218 | 4 | Available |
-| Persistence | 4.1 Registry Run Keys / Startup Folder | T1547.001 | 5 | Available |
+| Persistence | 4.1 Registry Run Keys / Startup Folder | T1547.001 | 7 | Available; HKLM subtests require Administrator |
 | Persistence | 4.2 Scheduled Task / Job | T1053.005 | 5 | Available |
 | Persistence | 4.3 Startup Folder (Advanced) | T1547.001 | 5 | Available |
 

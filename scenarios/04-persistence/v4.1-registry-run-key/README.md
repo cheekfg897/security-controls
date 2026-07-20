@@ -2,15 +2,17 @@
 
 ## How to run
 
-On VM1, open PowerShell (no elevation required for the standard HKCU/startup tests):
+For complete coverage of both HKCU and HKLM, open PowerShell as Administrator on VM1. The HKCU and user-startup subtests do not require elevation, but the two HKLM subtests do.
 
 ```powershell
-# Run all 5 subtests in sequence (pauses between each)
+# Run all 7 subtests in sequence (pauses between each)
 .\v4.1-registry-run-key.ps1 -Subtest All
 
 # Run a single subtest
 .\v4.1-registry-run-key.ps1 -Subtest HKCURunKey
 .\v4.1-registry-run-key.ps1 -Subtest HKCURunOnce
+.\v4.1-registry-run-key.ps1 -Subtest HKLMRunKey
+.\v4.1-registry-run-key.ps1 -Subtest HKLMRunOnce
 .\v4.1-registry-run-key.ps1 -Subtest StartupVBS
 .\v4.1-registry-run-key.ps1 -Subtest StartupBAT
 .\v4.1-registry-run-key.ps1 -Subtest SystemBC
@@ -20,9 +22,11 @@ On VM1, open PowerShell (no elevation required for the standard HKCU/startup tes
 .\v4.1-registry-run-key.ps1 -CheckHKLMWriteAccess
 ```
 
-Have the EDR console visible before running. Each subtest writes a marker file to `C:\Windows\Temp\art-v4.1-<SubtestName>.txt`. If it is missing, that subtest was blocked.
+Have the EDR console visible before running. Each subtest writes a marker file to `C:\Windows\Temp\art-v4.1-<SubtestName>.txt`. If it is missing, that subtest was blocked or could not run with the current permissions.
 
-The normal subtests use `HKCU`, which does not need elevation. `HKLM` is machine-wide and normally requires an elevated PowerShell session. `-CheckHKLMWriteAccess` is an opt-in capability check only; it does not leave an autorun value behind.
+The Run and RunOnce subtests execute their benign payload immediately to simulate the next-login trigger; SCT does not log out or reboot the VM. Choose cleanup when prompted to remove the test values. The complete non-interactive Module 4 run performs this cleanup automatically.
+
+`-CheckHKLMWriteAccess` remains available as a quick permission check. It creates and immediately removes a temporary probe value without running a payload.
 
 ---
 
@@ -44,7 +48,23 @@ Same start-on-login idea as subtest 1, but uses a different location called **Ru
 
 ---
 
-### Subtest 3: StartupVBS
+### Subtest 3: HKLMRunKey
+
+This is the machine-wide version of subtest 1. It uses `reg.exe` to write a benign encoded PowerShell command to `HKLM\Software\Microsoft\Windows\CurrentVersion\Run`, then executes the command immediately to simulate its next-login behavior. Because HKLM applies to every user, this subtest requires Administrator rights.
+
+**Detection:** Elevated `reg.exe` writing to the HKLM Run key (Sysmon 13), followed by hidden encoded PowerShell execution (Sysmon 1).
+
+---
+
+### Subtest 4: HKLMRunOnce
+
+This is the machine-wide version of subtest 2. It uses `Set-ItemProperty` to write a one-time benign PowerShell command to `HKLM\Software\Microsoft\Windows\CurrentVersion\RunOnce`, then executes it immediately to simulate the next-login trigger. This subtest requires Administrator rights.
+
+**Detection:** PowerShell writing to HKLM RunOnce (Sysmon 13 and Event 4104), followed by a hidden child PowerShell process.
+
+---
+
+### Subtest 5: StartupVBS
 
 Windows has a Startup folder - any file placed there runs automatically when the user logs in. This subtest drops a `.vbs` (Visual Basic Script) file into that folder and immediately runs it via `cscript.exe` to simulate the login trigger. No registry changes at all.
 
@@ -52,15 +72,15 @@ Windows has a Startup folder - any file placed there runs automatically when the
 
 ---
 
-### Subtest 4: StartupBAT
+### Subtest 6: StartupBAT
 
-Same Startup folder behavior as subtest 3, but uses a `.bat` (batch file) instead of `.vbs`, and runs it with `cmd.exe`. Different file type and launcher produce different telemetry - this checks whether controls catch both script types.
+Same Startup folder behavior as subtest 5, but uses a `.bat` (batch file) instead of `.vbs`, and runs it with `cmd.exe`. Different file type and launcher produce different telemetry - this checks whether controls catch both script types.
 
 **Detection:** BAT file created in the startup folder (Sysmon 11), and `cmd.exe` running from that location (Sysmon 1).
 
 ---
 
-### Subtest 5: SystemBC
+### Subtest 7: SystemBC
 
 This mimics a real malware family called **SystemBC**, which is sold as a service to criminals. SystemBC's known signature is writing a hidden PowerShell command to the Run key under a specific value name: `socks5_powershell`. This subtest reproduces that exact pattern - same registry key, same value name, same hidden window flags - so you can verify whether your EDR has a rule for this specific known-bad indicator.
 

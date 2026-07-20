@@ -4,6 +4,20 @@ SCT is a PowerShell lab framework for checking whether EDR and antivirus product
 
 > **Lab VMs only - never run SCT on a production or connected business system.**
 
+## Table of contents
+
+- [One naming model](#one-naming-model)
+- [Getting started](#getting-started)
+  - [Lab requirements](#lab-requirements)
+  - [Install](#install)
+  - [Run SCT normally](#run-sct-normally)
+  - [Malware samples](#malware-samples)
+  - [Run Module 4 non-interactively](#run-module-4-non-interactively)
+- [Built-in modules](#built-in-modules)
+- [Project structure](#project-structure)
+- [Adding a technique](#adding-a-technique)
+- [Documentation](#documentation)
+
 ## One naming model
 
 SCT uses the same three terms in metadata, menus, scripts, results, and documentation:
@@ -18,7 +32,7 @@ SCT uses the same three terms in metadata, menus, scripts, results, and document
 
 ## Getting started
 
-### Requirements
+### Lab requirements
 
 - An isolated Windows 10/11 VM with a snapshot.
 - PowerShell 5.1 or later.
@@ -26,19 +40,28 @@ SCT uses the same three terms in metadata, menus, scripts, results, and document
 - [Sysmon](https://learn.microsoft.com/sysinternals/downloads/sysmon) is recommended and is required for fileless-test result collection.
 - Most techniques use one VM. Techniques 1.3 and remote subtests in 1.5 require a second Windows VM on the same isolated lab network.
 
-### Install and run
+### Install
 
 ```powershell
 git clone https://github.com/cheekfg897/security-controls.git
 Set-Location security-controls
+```
+
+### Run SCT normally
+
+On the isolated lab VM, open PowerShell 5.1 or later. From the repository directory, run:
+
+```powershell
 .\Start-SCT.ps1
 ```
 
-To skip the product-name prompt:
+SCT asks for the security product name, then displays the module and technique menus. To provide the product name at launch instead of being prompted:
 
 ```powershell
 .\Start-SCT.ps1 -Control SentinelOne
 ```
+
+> Start with a standard PowerShell session unless the selected technique says it requires Administrator rights. Do not run Technique 3.2 (UAC Bypass) from an already elevated session because existing elevation invalidates the test.
 
 Choose a module, then a technique, then a subtest when the technique provides them. `EXECUTED` means the subtest completed without being blocked; `BLOCKED` means the expected marker was not created. Press `V` in the main menu to view the result summary.
 
@@ -70,7 +93,7 @@ From an Administrator PowerShell session:
 .\Start-SCT.ps1 -Control SentinelOne -RunModule 04 -NonInteractive
 ```
 
-This runs all 15 persistence subtests, records one row per subtest with a shared `run_id`, and performs cleanup after each technique.
+This runs all 17 persistence subtests, including the HKCU and HKLM Run/RunOnce cases, records one row per subtest with a shared `run_id`, and performs cleanup after each technique.
 
 ## Built-in modules
 
@@ -79,7 +102,7 @@ This runs all 15 persistence subtests, records one row per subtest with a shared
 | 1 | Malware Delivery | Active | 1.1 Disk Drop; 1.2 Removable Media; 1.3 Internet Download; 1.4 Trojanised COTS; 1.5 Fileless PowerShell; 1.6 DLL Sideloading |
 | 2 | Exploitation | Partial | 2.1 Malicious Macro *(planned)*; 2.2 CVE Simulation |
 | 3 | Privilege Escalation | Partial | 3.1 Process Hollowing *(planned)*; 3.2 UAC Bypass; 3.3 LOLBin Signed Binary |
-| 4 | Persistence | Active | 4.1 Registry Run Keys; 4.2 Scheduled Tasks; 4.3 Advanced Startup Folder |
+| 4 | Persistence | Active | 4.1 Registry Run Keys (HKCU/HKLM); 4.2 Scheduled Tasks; 4.3 Advanced Startup Folder |
 
 See the [control matrix](docs/control-matrix.md) for implementation status and ATT&CK mappings.
 
@@ -97,8 +120,11 @@ security-controls/
 |   `-- <module>/
 |       |-- module.json
 |       `-- <technique>/
-`-- scripts/            # Scaffolding and validation utilities
+|-- scripts/            # Scaffolding and validation utilities
+`-- tests/              # Developer regression tests for SCT schema and framework behavior
 ```
+
+The `tests/` folder verifies SCT's internal schema and framework behavior after code changes; it does not run security techniques or test an endpoint product.
 
 ## Adding a technique
 

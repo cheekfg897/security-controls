@@ -42,11 +42,11 @@ Tests mechanisms that can survive logon, reboot, or credential changes.
 
 | Technique | Purpose | Guide |
 |---|---|---|
-| 4.1 Registry Run Keys / Startup Folder | Run key, RunOnce, VBS/BAT startup, and hidden PowerShell patterns. | [Technique 4.1](../scenarios/04-persistence/v4.1-registry-run-key/README.md) |
+| 4.1 Registry Run Keys / Startup Folder | HKCU/HKLM Run and RunOnce, VBS/BAT startup, and hidden PowerShell patterns. | [Technique 4.1](../scenarios/04-persistence/v4.1-registry-run-key/README.md) |
 | 4.2 Scheduled Task / Job | User, cmdlet, registry-loader, SYSTEM, and hidden XML task patterns. | [Technique 4.2](../scenarios/04-persistence/v4.2-scheduled-task/README.md) |
 | 4.3 Startup Folder (Advanced) | JSE, LNK, all-users BAT, shell-folder redirect, and Winlogon patterns. | [Technique 4.3](../scenarios/04-persistence/v4.3-startup-folder/README.md) |
 
-Module 04 can run all 15 subtests without prompts:
+Module 04 can run all 17 subtests without prompts from an Administrator PowerShell session:
 
 ```powershell
 .\Start-SCT.ps1 -Control SentinelOne -RunModule 04 -NonInteractive
