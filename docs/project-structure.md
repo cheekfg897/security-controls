@@ -50,7 +50,8 @@ scenarios/04-persistence/
 |   |-- README.md
 |   `-- v4.1-registry-run-key.ps1
 |-- v4.2-scheduled-task/
-`-- v4.3-startup-folder/
+|-- v4.3-startup-folder/
+`-- v4.4-wmi-event-subscription/
 ```
 
 Folder and script names can retain existing `v` prefixes; the SCT hierarchy comes from `module.json`, where these entries are techniques.
@@ -66,10 +67,10 @@ Minimal entry:
 
 ```json
 {
-  "id": "4.4",
-  "name": "WMI Subscription Persistence",
-  "attack_id": "T1546.003",
-  "script": "4.4-wmi-subscription/4.4-wmi-subscription.ps1"
+  "id": "4.5",
+  "name": "Windows Service Persistence",
+  "attack_id": "T1543.003",
+  "script": "v4.5-windows-service/v4.5-windows-service.ps1"
 }
 ```
 
@@ -77,20 +78,20 @@ If the technique has selectable variations, add one `subtests` array:
 
 ```json
 {
-  "id": "4.4",
-  "name": "WMI Subscription Persistence",
-  "description": "Tests permanent WMI event subscription persistence.",
-  "attack_id": "T1546.003",
-  "script": "4.4-wmi-subscription/4.4-wmi-subscription.ps1",
-  "subtests": ["EventFilter", "EventConsumer"]
+  "id": "4.5",
+  "name": "Windows Service Persistence",
+  "description": "Tests Windows service creation through native tools.",
+  "attack_id": "T1543.003",
+  "script": "v4.5-windows-service/v4.5-windows-service.ps1",
+  "subtests": ["ScExeCreate", "PowerShellCreate"]
 }
 ```
 
 Do not list `All`; SCT adds it automatically. The script accepts `-Subtest`, validates both names plus `All`, and writes successful markers as:
 
 ```text
-C:\Windows\Temp\art-v4.4-EventFilter.txt
-C:\Windows\Temp\art-v4.4-EventConsumer.txt
+C:\Windows\Temp\art-v4.5-ScExeCreate.txt
+C:\Windows\Temp\art-v4.5-PowerShellCreate.txt
 ```
 
 If only some subtests need a server VM, list those names once more in `server_subtests`. They must also exist in `subtests`.

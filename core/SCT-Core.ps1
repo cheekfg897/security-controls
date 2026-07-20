@@ -726,11 +726,16 @@ function Invoke-SCTSubtests {
         $selected = $choices[$idx - 1]
     }
 
-    $toCheck = switch ($selected) {
+    $toCheck = @(switch ($selected) {
         'All'       { @($subtests) }
         'AllRemote' { @($serverSubtests) }
         'AllLocal'  { @($subtests | Where-Object { $serverSubtests -notcontains $_ }) }
         default     { @($selected) }
+    })
+    if (-not $RunId) {
+        $techniqueToken = $Technique.id -replace '[^0-9A-Za-z]', ''
+        $RunId = "I$techniqueToken-" + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + `
+            ([guid]::NewGuid().ToString('N').Substring(0, 6))
     }
     $runResults = @()
     $needsServer = @($toCheck | Where-Object { $serverSubtests -contains $_ }).Count -gt 0
@@ -821,6 +826,7 @@ function Invoke-SCTSubtests {
 
         Write-Host ""
         Write-Host "  $executedCount of $($toCheck.Count) subtests executed this run" -ForegroundColor Cyan
+        Write-Host "  Results appended to: $TestResultsPath" -ForegroundColor DarkGray
         Write-Host "  [i] [!] Red = executed (not blocked by control)" -ForegroundColor DarkGray
         Write-Host "  [i] [+] Green = blocked by control" -ForegroundColor DarkGray
     }

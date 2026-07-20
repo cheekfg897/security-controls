@@ -70,6 +70,8 @@ Results are written to:
 - `results/raw/test-results.csv` for subtest outcomes.
 - `results/raw/results.csv` for sample-delivery outcomes.
 
+Interactive subtest selections append to `test-results.csv` after the technique script returns. Running a technique script directly produces its console output and markers but does not invoke the central CSV writer.
+
 Before testing, confirm the security product is active with a check from [`sanity_checks/`](sanity_checks/README.md).
 
 ### Malware samples
@@ -93,7 +95,7 @@ From an Administrator PowerShell session:
 .\Start-SCT.ps1 -Control SentinelOne -RunModule 04 -NonInteractive
 ```
 
-This runs all 17 persistence subtests, including the HKCU and HKLM Run/RunOnce cases, records one row per subtest with a shared `run_id`, and performs cleanup after each technique.
+This runs all 19 persistence subtests, including the HKCU and HKLM Run/RunOnce and permanent WMI consumer cases, records one row per subtest with a shared `run_id`, and performs cleanup after each technique.
 
 ## Built-in modules
 
@@ -102,7 +104,7 @@ This runs all 17 persistence subtests, including the HKCU and HKLM Run/RunOnce c
 | 1 | Malware Delivery | Active | 1.1 Disk Drop; 1.2 Removable Media; 1.3 Internet Download; 1.4 Trojanised COTS; 1.5 Fileless PowerShell; 1.6 DLL Sideloading |
 | 2 | Exploitation | Partial | 2.1 Malicious Macro *(planned)*; 2.2 CVE Simulation |
 | 3 | Privilege Escalation | Partial | 3.1 Process Hollowing *(planned)*; 3.2 UAC Bypass; 3.3 LOLBin Signed Binary |
-| 4 | Persistence | Active | 4.1 Registry Run Keys (HKCU/HKLM); 4.2 Scheduled Tasks; 4.3 Advanced Startup Folder |
+| 4 | Persistence | Active | 4.1 Registry Run Keys (HKCU/HKLM); 4.2 Scheduled Tasks; 4.3 Advanced Startup Folder; 4.4 WMI Event Subscription |
 
 See the [control matrix](docs/control-matrix.md) for implementation status and ATT&CK mappings.
 
@@ -132,10 +134,10 @@ Add one object to the module's `techniques` array. A technique with no subtests 
 
 ```json
 {
-  "id": "4.4",
-  "name": "WMI Subscription Persistence",
-  "attack_id": "T1546.003",
-  "script": "4.4-wmi-subscription/4.4-wmi-subscription.ps1"
+  "id": "4.5",
+  "name": "Windows Service Persistence",
+  "attack_id": "T1543.003",
+  "script": "v4.5-windows-service/v4.5-windows-service.ps1"
 }
 ```
 
@@ -143,11 +145,11 @@ Add `subtests` only when the user should choose between named variations:
 
 ```json
 {
-  "id": "4.4",
-  "name": "WMI Subscription Persistence",
-  "attack_id": "T1546.003",
-  "script": "4.4-wmi-subscription/4.4-wmi-subscription.ps1",
-  "subtests": ["EventFilter", "EventConsumer"]
+  "id": "4.5",
+  "name": "Windows Service Persistence",
+  "attack_id": "T1543.003",
+  "script": "v4.5-windows-service/v4.5-windows-service.ps1",
+  "subtests": ["ScExeCreate", "PowerShellCreate"]
 }
 ```
 

@@ -26,6 +26,14 @@
       "attack_id": "T1547.001",
       "script": "v4.3-startup-folder/v4.3-startup-folder.ps1",
       "subtests": ["JSEStartup", "LNKShortcut", "AllUsersBAT", "ShellFolderRedirect", "WinlogonUserinit"]
+    },
+    {
+      "id": "4.4",
+      "name": "WMI Event Subscription",
+      "description": "Tests permanent WMI event subscriptions using command-line and active-script consumers.",
+      "attack_id": "T1546.003",
+      "script": "v4.4-wmi-event-subscription/v4.4-wmi-event-subscription.ps1",
+      "subtests": ["CommandLineConsumer", "ActiveScriptConsumer"]
     }
   ]
 }

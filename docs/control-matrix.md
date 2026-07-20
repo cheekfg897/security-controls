@@ -18,5 +18,6 @@ This matrix reflects the current `module.json` definitions. "Available" means SC
 | Persistence | 4.1 Registry Run Keys / Startup Folder | T1547.001 | 7 | Available; HKLM subtests require Administrator |
 | Persistence | 4.2 Scheduled Task / Job | T1053.005 | 5 | Available |
 | Persistence | 4.3 Startup Folder (Advanced) | T1547.001 | 5 | Available |
+| Persistence | 4.4 WMI Event Subscription | T1546.003 | 2 | Available; requires Administrator |
 
 See [Framework Design](framework-design.md#execution-inference) for how launch behavior is inferred without a metadata type field, and [Threat Scenarios](threat-scenarios.md) for preparation requirements.

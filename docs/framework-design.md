@@ -56,10 +56,10 @@ Minimal runnable technique:
 
 ```json
 {
-  "id": "4.4",
-  "name": "WMI Subscription Persistence",
-  "attack_id": "T1546.003",
-  "script": "4.4-wmi-subscription/4.4-wmi-subscription.ps1"
+  "id": "4.5",
+  "name": "Windows Service Persistence",
+  "attack_id": "T1543.003",
+  "script": "v4.5-windows-service/v4.5-windows-service.ps1"
 }
 ```
 
@@ -67,12 +67,12 @@ Technique with subtests:
 
 ```json
 {
-  "id": "4.4",
-  "name": "WMI Subscription Persistence",
-  "description": "Tests permanent WMI event subscription persistence.",
-  "attack_id": "T1546.003",
-  "script": "4.4-wmi-subscription/4.4-wmi-subscription.ps1",
-  "subtests": ["EventFilter", "EventConsumer"]
+  "id": "4.5",
+  "name": "Windows Service Persistence",
+  "description": "Tests Windows service creation through native tools.",
+  "attack_id": "T1543.003",
+  "script": "v4.5-windows-service/v4.5-windows-service.ps1",
+  "subtests": ["ScExeCreate", "PowerShellCreate"]
 }
 ```
 
@@ -138,3 +138,5 @@ Module 04 must contain only techniques with subtests. Each script must also acce
 | `results/raw/results.csv` | Sample-delivery rows keyed by `technique_id`. |
 
 Legacy generated CSV columns are read for compatibility, but all newly created files use the simplified names. Generated results and real malware samples should remain uncommitted.
+
+Each interactive subtest selection receives an `I<technique>-...` run ID. A non-interactive Module 04 run uses one shared `M04-...` run ID for all of its technique rows.

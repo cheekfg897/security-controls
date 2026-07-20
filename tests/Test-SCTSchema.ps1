@@ -261,14 +261,81 @@ param(
     $scenariosPath = Join-Path $repoRoot 'scenarios'
     $realModules = @(Get-SCTModules -ScenariosPath $scenariosPath)
     Assert-True ($realModules.Count -eq 4) 'All four repository modules must load.'
-    Assert-True (@($realModules | ForEach-Object { $_.techniques }).Count -eq 14) 'All 14 repository techniques must load.'
+    Assert-True (@($realModules | ForEach-Object { $_.techniques }).Count -eq 15) 'All 15 repository techniques must load.'
 
     $module4 = @($realModules | Where-Object { $_.id -eq '04' })[0]
     $technique41 = @($module4.techniques | Where-Object { $_.id -eq '4.1' })[0]
     foreach ($registrySubtest in @('HKCURunKey','HKCURunOnce','HKLMRunKey','HKLMRunOnce')) {
         Assert-True ($technique41.subtests -contains $registrySubtest) "Technique 4.1 must include $registrySubtest."
     }
-    Assert-True (@($module4.techniques | ForEach-Object { $_.subtests }).Count -eq 17) 'Module 04 must expose all 17 persistence subtests.'
+    $technique44 = @($module4.techniques | Where-Object { $_.id -eq '4.4' })[0]
+    foreach ($wmiSubtest in @('CommandLineConsumer','ActiveScriptConsumer')) {
+        Assert-True ($technique44.subtests -contains $wmiSubtest) "Technique 4.4 must include $wmiSubtest."
+    }
+    $technique44Path = Join-Path $module4.ScriptDir $technique44.script
+    foreach ($requiredParameter in @('Subtest','NoPause','NoReport','CleanupOnly','NoCleanupPrompt')) {
+        Assert-True (Test-SCTScriptSupportsParameter -ScriptPath $technique44Path -ParameterName $requiredParameter) `
+            "Technique 4.4 must accept -$requiredParameter."
+    }
+    Assert-True (@($module4.techniques | ForEach-Object { $_.subtests }).Count -eq 19) 'Module 04 must expose all 19 persistence subtests.'
+
+    # Exercise the interactive subtest-to-CSV path without launching a technique.
+    $interactiveScript = Write-FixtureScript -Directory $tempRoot -Name 'interactive.ps1' -Content @'
+param(
+    [ValidateSet('One','All')]
+    [string]$Subtest,
+    [switch]$NoCleanupPrompt,
+    [switch]$NoReport
+)
+'@
+    $interactiveCsv = Join-Path $tempRoot 'interactive-results.csv'
+    $originalSystemRoot = $env:SystemRoot
+    try {
+        $env:SystemRoot = $tempRoot
+        $script:ReadResponses = New-Object 'System.Collections.Generic.Queue[string]'
+        $script:ReadResponses.Enqueue('1')
+        $script:ReadResponses.Enqueue('')
+        $script:ReadResponses.Enqueue('')
+
+        function Read-Host {
+            param([string]$Prompt)
+            if ($script:ReadResponses.Count -gt 0) { return $script:ReadResponses.Dequeue() }
+            return ''
+        }
+
+        function Start-Process {
+            param(
+                [string]$FilePath,
+                [object[]]$ArgumentList,
+                [switch]$Wait,
+                [switch]$NoNewWindow
+            )
+        }
+
+        function Test-SCTMarkerFile {
+            param([string]$Path)
+            return $false
+        }
+
+        $interactiveTechnique = [pscustomobject]@{
+            id = '4.99'
+            name = 'Interactive CSV Fixture'
+            subtests = @('One')
+        }
+        Invoke-SCTSubtests -Technique $interactiveTechnique -ScriptPath $interactiveScript `
+            -Control 'FixtureControl' -TestResultsPath $interactiveCsv
+
+        Assert-True (Test-Path -LiteralPath $interactiveCsv -PathType Leaf) `
+            'Interactive subtest execution must create test-results.csv.'
+        $interactiveRows = @(Import-Csv -LiteralPath $interactiveCsv)
+        Assert-True ($interactiveRows.Count -eq 1) 'Interactive subtest execution must write one row.'
+        Assert-True ($interactiveRows[0].technique_id -eq '4.99') 'Interactive CSV must identify the technique.'
+        Assert-True ($interactiveRows[0].subtest -eq 'One') 'Interactive CSV must identify the subtest.'
+        Assert-True (-not [string]::IsNullOrWhiteSpace($interactiveRows[0].run_id)) `
+            'Interactive CSV rows must have a run_id.'
+    } finally {
+        $env:SystemRoot = $originalSystemRoot
+    }
 
     Write-Host "Passed $script:Assertions schema assertions." -ForegroundColor Green
 } finally {

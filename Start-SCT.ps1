@@ -88,16 +88,17 @@ if (-not $Control) {
         throw "-Control is required with -NonInteractive so CSV rows identify the product under test."
     }
     Write-Host "  Before we start, identify the security product under test." -ForegroundColor White
-    Write-Host "  This label tags every result row in results.csv." -ForegroundColor DarkGray
+    Write-Host "  This label tags every row in the sample and subtest result CSVs." -ForegroundColor DarkGray
     Write-Host "  Examples: SentinelOne, CarbonBlack, Morphisec, Baseline-NoAV" -ForegroundColor DarkGray
     $Control = (Read-Host "`n  Security product name").Trim()
     if (-not $Control) { $Control = 'Unnamed-Control' }
 }
 
 Write-Host ""
-Write-Host "  Control  : $Control" -ForegroundColor Green
-Write-Host "  Results  : $resultsPath" -ForegroundColor DarkGray
-Write-Host "  Samples  : $SamplesPath" -ForegroundColor DarkGray
+Write-Host "  Control       : $Control" -ForegroundColor Green
+Write-Host "  Sample CSV    : $resultsPath" -ForegroundColor DarkGray
+Write-Host "  Subtest CSV   : $testResultsPath" -ForegroundColor DarkGray
+Write-Host "  Samples       : $SamplesPath" -ForegroundColor DarkGray
 
 # ---------------------------------------------------------------------------
 # Discover modules from scenarios/*/module.json
@@ -149,7 +150,8 @@ while ($true) {
         'Q' {
             Write-Host ""
             Write-Host "  Exiting. Review your results at:" -ForegroundColor Gray
-            Write-Host "  $resultsPath" -ForegroundColor DarkGray
+            Write-Host "  Samples : $resultsPath" -ForegroundColor DarkGray
+            Write-Host "  Subtests: $testResultsPath" -ForegroundColor DarkGray
             Write-Host ""
             exit 0
         }
