@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-    Validates every SCT module.json file and its script contract.
+    Checks every SCT module.json file and its script contract.
 
 .EXAMPLE
-    .\scripts\Test-SCTModuleJson.ps1
+    .\scripts\Check-SCTModules.ps1
 #>
 
 [CmdletBinding()]

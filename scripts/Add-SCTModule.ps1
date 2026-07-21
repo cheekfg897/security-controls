@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Creates a simplified SCT module.json file.
+    Adds the module.json definition for a new SCT module.
 
 .DESCRIPTION
     Guides an author through the module -> techniques -> subtests hierarchy.
@@ -8,19 +8,20 @@
     and are intentionally not stored in module.json.
 
 .EXAMPLE
-    .\scripts\New-SCTModuleJson.ps1
+    .\scripts\Add-SCTModule.ps1
 
 .EXAMPLE
-    .\scripts\New-SCTModuleJson.ps1 -OutputPath .\scenarios\05-lateral-movement\module.json
+    .\scripts\Add-SCTModule.ps1 -OutputPath .\scenarios\05-lateral-movement\module.json
 
 .EXAMPLE
-    .\scripts\New-SCTModuleJson.ps1 -NoWrite
+    .\scripts\Add-SCTModule.ps1 -NoWrite
 #>
 
 [CmdletBinding()]
 param(
     [string]$OutputPath,
-    [switch]$NoWrite
+    [switch]$NoWrite,
+    [switch]$SkipTestDescriptions
 )
 
 Set-StrictMode -Version Latest
@@ -219,3 +220,11 @@ if ((Test-Path -LiteralPath $resolvedPath) -and
 Set-Content -LiteralPath $resolvedPath -Value $json -Encoding UTF8
 Write-Host ''
 Write-Host "Wrote $resolvedPath" -ForegroundColor Green
+if ($SkipTestDescriptions) {
+    Write-Host 'Test descriptions were skipped. Add them later with:' -ForegroundColor Yellow
+    Write-Host ".\scripts\Describe-SCTModuleTests.ps1 -ModulePath `"$resolvedPath`"" -ForegroundColor White
+} else {
+    Write-Host ''
+    Write-Host 'Now describe the tests in this module.' -ForegroundColor Cyan
+    & (Join-Path $PSScriptRoot 'Describe-SCTModuleTests.ps1') -ModulePath $resolvedPath
+}

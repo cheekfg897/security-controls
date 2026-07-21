@@ -24,9 +24,11 @@ The old `vector` and overloaded `technique` terminology is no longer part of the
 | `Start-SCT.ps1` | Entry point, path setup, product selection, and interactive/non-interactive mode. |
 | `core/SCT-Core.ps1` | Manifest validation, menus, inferred execution, marker checks, cleanup, and summaries. |
 | `scenarios/*/module.json` | Module, technique, and optional subtest metadata. |
+| `scenarios/*/test-catalog.csv` | Human-readable objective, behavior, and success indicator for every test/subtest. |
 | Technique scripts | Perform tests and technique-specific cleanup. |
-| `scripts/New-SCTModuleJson.ps1` | Generate a new manifest through guided prompts. |
-| `scripts/Test-SCTModuleJson.ps1` | Validate every manifest and script contract. |
+| `scripts/Add-SCTModule.ps1` | Add a module definition and its test descriptions through guided prompts. |
+| `scripts/Prepare-SCTResultsForReview.ps1` | Join raw observations to control identity and test metadata for human review. |
+| `scripts/Check-SCTModules.ps1` | Check every manifest and script contract. |
 
 ## Simplified `module.json`
 
@@ -110,6 +112,8 @@ The launcher derives the `All` choices and marker filenames. Before execution it
 - `EXECUTED` means the new marker exists.
 - `BLOCKED` means the marker is absent.
 
+These are marker observations, not final security-control verdicts. In particular, `EXECUTED` does not mean `not_detected` or `not_blocked`: a control may detect the activity without preventing it, or allow initial execution and block a later step.
+
 Existing scripts retain `-Technique` as a backward-compatible alias, but new scripts and all SCT-facing guidance use `-Subtest`.
 
 ## Validation
@@ -117,7 +121,8 @@ Existing scripts retain `-Technique` as a backward-compatible alias, but new scr
 Run this after editing any manifest or script contract:
 
 ```powershell
-.\scripts\Test-SCTModuleJson.ps1
+.\scripts\Check-SCTModules.ps1
+.\scripts\Check-SCTTestDescriptions.ps1
 ```
 
 Validation rejects unknown/legacy fields, missing required fields, malformed or duplicate IDs, empty/duplicate/reserved subtests, invalid `server_subtests`, missing scripts, and subtest scripts without `-Subtest`.
@@ -136,7 +141,16 @@ Module 04 must contain only techniques with subtests. Each script must also acce
 |---|---|
 | `results/raw/test-results.csv` | `timestamp`, `run_id`, `control`, `technique_id`, `technique_name`, `subtest`, `outcome`, and `notes`. |
 | `results/raw/results.csv` | Sample-delivery rows keyed by `technique_id`. |
+| `results/analysis/results-for-review.csv` | Stable, Excel-ready rows with blank `detection_status` and `action_status`. |
+| `results/analysis/test-catalog.csv` | Combined test descriptions generated from all module catalogues. |
 
 Legacy generated CSV columns are read for compatibility, but all newly created files use the simplified names. Generated results and real malware samples should remain uncommitted.
 
 Each interactive subtest selection receives an `I<technique>-...` run ID. A non-interactive Module 04 run uses one shared `M04-...` run ID for all of its technique rows.
+
+`Prepare-SCTResultsForReview.ps1` does not modify either raw CSV. It derives only the execution observation, attaches the exact technique script and sample identity/hash when the source captured them, and leaves the control verdict to a reviewer. The reviewer enters:
+
+- `detection_status`: `detected` or `not_detected`.
+- `action_status`: `blocked_before_execution`, `blocked_after_execution`, or `not_blocked`.
+
+The completed copy is conventionally named `reviewed-results.csv` and can be checked with `Check-SCTReviewedResults.ps1`. Keeping execution, detection, and action separate avoids inferring control behavior from a marker or process-launch result.

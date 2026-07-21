@@ -803,12 +803,13 @@ function Invoke-SCTSubtests {
             $markerPath = Get-SCTMarkerPath -TechniqueId $Technique.id -Subtest $subtest
             $executed   = Test-SCTMarkerFile -Path $markerPath
             $outcome    = if ($executed) { 'EXECUTED' } else { 'BLOCKED' }
+            $displayOutcome = if ($executed) { 'EXECUTED' } else { 'NOT EXECUTED' }
             $notes      = if ($executed) { "marker found: $markerPath" } else { "marker absent after test: $markerPath" }
-            $icon       = if ($executed) { '[!]' } else { '[+]' }
-            $color      = if ($executed) { 'Red' } else { 'Green' }
+            $icon       = if ($executed) { '[!]' } else { '[?]' }
+            $color      = if ($executed) { 'Yellow' } else { 'Gray' }
 
             if ($executed) { $executedCount++ }
-            Write-Host ("  {0}  {1,-28}  {2}" -f $icon, $subtest, $outcome) -ForegroundColor $color
+            Write-Host ("  {0}  {1,-28}  {2}" -f $icon, $subtest, $displayOutcome) -ForegroundColor $color
 
             Write-SCTResult -Path $TestResultsPath -Timestamp $startTime -Control $Control `
                 -TechniqueId $Technique.id -TechniqueName $Technique.name -Subtest $subtest `
@@ -827,8 +828,9 @@ function Invoke-SCTSubtests {
         Write-Host ""
         Write-Host "  $executedCount of $($toCheck.Count) subtests executed this run" -ForegroundColor Cyan
         Write-Host "  Results appended to: $TestResultsPath" -ForegroundColor DarkGray
-        Write-Host "  [i] [!] Red = executed (not blocked by control)" -ForegroundColor DarkGray
-        Write-Host "  [i] [+] Green = blocked by control" -ForegroundColor DarkGray
+        Write-Host "  [i] [!] Marker found: execution observed" -ForegroundColor DarkGray
+        Write-Host "  [i] [?] Marker absent: execution not observed; this alone does not prove a control block" -ForegroundColor DarkGray
+        Write-Host "  [i] Review detection and action separately in results-for-review.csv" -ForegroundColor DarkGray
     }
 
     if ($NonInteractive) {
@@ -887,20 +889,20 @@ function Show-SCTModuleRunSummary {
 
     $total    = $Results.Count
     $executed = @($Results | Where-Object { $_.outcome -eq 'EXECUTED' }).Count
-    $blocked  = @($Results | Where-Object { $_.outcome -eq 'BLOCKED' }).Count
+    $markerAbsent = @($Results | Where-Object { $_.outcome -eq 'BLOCKED' }).Count
 
     Write-Host ""
     Write-Host "  ============================================================================" -ForegroundColor Cyan
     Write-Host "  MODULE 04 RUN COMPLETE" -ForegroundColor Cyan
     Write-Host "  ============================================================================" -ForegroundColor Cyan
     Write-Host "  Run ID   : $RunId" -ForegroundColor White
-    Write-Host "  Results  : $total total | $executed executed | $blocked blocked" -ForegroundColor White
+    Write-Host "  Results  : $total total | $executed marker found | $markerAbsent marker absent" -ForegroundColor White
     Write-Host "  CSV      : $TestResultsPath" -ForegroundColor DarkGray
 
     foreach ($group in ($Results | Group-Object technique_id | Sort-Object Name)) {
         $groupExecuted = @($group.Group | Where-Object { $_.outcome -eq 'EXECUTED' }).Count
-        $groupBlocked  = @($group.Group | Where-Object { $_.outcome -eq 'BLOCKED' }).Count
-        Write-Host ("  Technique {0}: {1} total | {2} executed | {3} blocked" -f $group.Name, $group.Count, $groupExecuted, $groupBlocked) -ForegroundColor White
+        $groupMarkerAbsent = @($group.Group | Where-Object { $_.outcome -eq 'BLOCKED' }).Count
+        Write-Host ("  Technique {0}: {1} total | {2} marker found | {3} marker absent" -f $group.Name, $group.Count, $groupExecuted, $groupMarkerAbsent) -ForegroundColor White
     }
 }
 
@@ -1407,8 +1409,8 @@ function Show-SCTSummary {
                 foreach ($row in $tdata) {
                     $ts    = try { ([datetime]$row.timestamp).ToString('HH:mm:ss') } catch { '?' }
                     $color = switch ($row.outcome) {
-                        'EXECUTED'        { 'Red'    }
-                        'BLOCKED'         { 'Green'  }
+                        'EXECUTED'        { 'Yellow' }
+                        'BLOCKED'         { 'Gray'   }
                         'NOT-EXPLOITABLE' { 'Yellow' }
                         default           { 'Gray'   }
                     }
@@ -1421,8 +1423,8 @@ function Show-SCTSummary {
                 Write-Host ""
                 Write-Host ("  " + ('-' * 76)) -ForegroundColor DarkGray
                 Write-Host "  SUBTEST SUMMARY" -ForegroundColor White
-                $shdr = "  {0,-22} {1,-8} {2,-12} {3,-12} {4}"
-                Write-Host ($shdr -f 'Control', 'Total', 'Executed', 'Blocked', 'Not-Exploitable') -ForegroundColor White
+                $shdr = "  {0,-22} {1,-8} {2,-12} {3,-14} {4}"
+                Write-Host ($shdr -f 'Control', 'Total', 'MarkerFound', 'MarkerAbsent', 'Not-Exploitable') -ForegroundColor White
 
                 $tgroups = $tdata | Group-Object -Property control | Sort-Object Name
                 foreach ($g in $tgroups) {

@@ -1,0 +1,38 @@
+{
+  "schema_version": "1.0",
+  "control": {
+    "id": "example-control",
+    "display_name": "Example Security Control",
+    "vendor": "Example Vendor",
+    "product": "Example XDR",
+    "product_version": "1.0",
+    "agent_version": "1.0"
+  },
+  "policy": {
+    "name": "Evaluation Policy",
+    "default_mode": "detect_only",
+    "settings": [
+      {
+        "name": "Behavioural Protection",
+        "value": "enabled",
+        "scope": "global",
+        "notes": "Example vendor-specific setting"
+      },
+      {
+        "name": "Scheduled Task Monitoring",
+        "value": "detect_only",
+        "scope": "technique:4.2",
+        "notes": "Example technique-specific override"
+      }
+    ],
+    "exclusions": []
+  },
+  "local_logs": [
+    {
+      "name": "Example agent activity log",
+      "path": "C:\\ProgramData\\Vendor\\Agent\\events.log",
+      "format": "text"
+    }
+  ],
+  "notes": "Replace the example values with the configuration used during the evaluation. Do not store secrets in this file."
+}

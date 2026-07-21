@@ -1,0 +1,61 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SCT control profile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "control", "policy"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "control": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "display_name", "vendor", "product", "product_version", "agent_version"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$" },
+        "display_name": { "type": "string", "minLength": 1 },
+        "vendor": { "type": "string", "minLength": 1 },
+        "product": { "type": "string", "minLength": 1 },
+        "product_version": { "type": "string", "minLength": 1 },
+        "agent_version": { "type": "string", "minLength": 1 }
+      }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "default_mode"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "default_mode": { "enum": ["detect_only", "detect_and_block", "custom"] },
+        "settings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "value", "scope"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "value": {},
+              "scope": { "type": "string", "minLength": 1 },
+              "notes": { "type": "string" }
+            }
+          }
+        },
+        "exclusions": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "local_logs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "path", "format"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "path": { "type": "string", "minLength": 1 },
+          "format": { "enum": ["text", "csv", "json", "jsonl", "xml", "evtx"] }
+        }
+      }
+    },
+    "notes": { "type": "string" }
+  }
+}

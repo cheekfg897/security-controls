@@ -10,9 +10,11 @@ SCT is a PowerShell lab framework for checking whether EDR and antivirus product
 - [Getting started](#getting-started)
   - [Lab requirements](#lab-requirements)
   - [Install](#install)
+  - [Which script do I run?](#which-script-do-i-run)
   - [Run SCT normally](#run-sct-normally)
   - [Malware samples](#malware-samples)
   - [Run Module 4 non-interactively](#run-module-4-non-interactively)
+  - [Prepare one VM's results for review](#prepare-one-vms-results-for-review)
 - [Built-in modules](#built-in-modules)
 - [Project structure](#project-structure)
 - [Adding a technique](#adding-a-technique)
@@ -47,6 +49,20 @@ git clone https://github.com/cheekfg897/security-controls.git
 Set-Location security-controls
 ```
 
+### Which script do I run?
+
+| I want to... | Run this |
+|---|---|
+| Run the security tests | `.\Start-SCT.ps1` |
+| Describe the control installed in this VM | `.\scripts\Setup-SCTControl.ps1` |
+| Prepare finished test results for Excel review | `.\scripts\Prepare-SCTResultsForReview.ps1` |
+| Fill detection and action status | No script: edit `results-for-review.csv` in Excel |
+| Check the completed Excel CSV | `.\scripts\Check-SCTReviewedResults.ps1` |
+| Add a new test module | `.\scripts\Add-SCTModule.ps1` |
+| Check module files after editing them | `.\scripts\Check-SCTModules.ps1` |
+
+The remaining utilities are listed by purpose in [`scripts/README.md`](scripts/README.md).
+
 ### Run SCT normally
 
 On the isolated lab VM, open PowerShell 5.1 or later. From the repository directory, run:
@@ -63,7 +79,7 @@ SCT asks for the security product name, then displays the module and technique m
 
 > Start with a standard PowerShell session unless the selected technique says it requires Administrator rights. Do not run Technique 3.2 (UAC Bypass) from an already elevated session because existing elevation invalidates the test.
 
-Choose a module, then a technique, then a subtest when the technique provides them. `EXECUTED` means the subtest completed without being blocked; `BLOCKED` means the expected marker was not created. Press `V` in the main menu to view the result summary.
+Choose a module, then a technique, then a subtest when the technique provides them. `EXECUTED` means the expected execution marker was created; `BLOCKED` means it was not created. These labels describe the test observation only. They do not prove whether the security control detected the activity, blocked it before execution, or blocked it after execution. Press `V` in the main menu to view the result summary.
 
 Results are written to:
 
@@ -97,6 +113,48 @@ From an Administrator PowerShell session:
 
 This runs all 19 persistence subtests, including the HKCU and HKLM Run/RunOnce and permanent WMI consumer cases, records one row per subtest with a shared `run_id`, and performs cleanup after each technique.
 
+### Prepare one VM's results for review
+
+Run this workflow inside each test VM after its SCT tests finish. It uses PowerShell only; Python, Docker, and an AI model are not required.
+
+First create a JSON profile describing the exact control, product versions, policy mode, product-specific settings, exclusions, and optional local log locations used during the test:
+
+```powershell
+.\scripts\Setup-SCTControl.ps1
+```
+
+The setup command validates the profile before saving it. You can also copy [`config/control-profile.example.json`](config/control-profile.example.json) and edit it directly; after a manual edit, check it with `.\scripts\Check-SCTControlProfile.ps1 -Path .\config\control-profile.local.json`. Do not store passwords, API tokens, or other secrets in the profile.
+
+Then join the raw results to the standard test descriptions:
+
+```powershell
+.\scripts\Prepare-SCTResultsForReview.ps1 `
+    -ControlProfilePath .\config\control-profile.local.json
+```
+
+This leaves both raw CSV files unchanged and creates:
+
+- `results/analysis/results-for-review.csv` — Excel-ready result rows with the technique script, sample name/hash when available, execution observation, and two blank human-review fields.
+- `results/analysis/test-catalog.csv` — one combined description of every test and subtest, including its objective, behavior, and success indicator.
+
+Open `results-for-review.csv` in Excel and fill only these fields:
+
+| Field | Allowed values |
+|---|---|
+| `detection_status` | `detected`, `not_detected` |
+| `action_status` | `blocked_before_execution`, `blocked_after_execution`, `not_blocked` |
+
+`execution_status` is derived separately as `executed` or `not_executed`; it never determines the two review fields. A test may execute and then be detected, execute and later be blocked, or execute without detection. Timestamps remain in the output so a reviewer can correlate each row with the product console or local logs.
+
+Save the reviewed copy as `reviewed-results.csv`, then validate it:
+
+```powershell
+.\scripts\Check-SCTReviewedResults.ps1 `
+    -Path .\results\analysis\reviewed-results.csv
+```
+
+For an eventual comparison, copy the profile, reviewed result CSV, and generated test catalogue from Control A's VM into one folder, and do the same for Control B. AI comparison is deliberately outside this first workflow.
+
 ## Built-in modules
 
 | # | Module | Status | Techniques |
@@ -113,6 +171,7 @@ See the [control matrix](docs/control-matrix.md) for implementation status and A
 ```text
 security-controls/
 |-- Start-SCT.ps1       # Main launcher
+|-- config/             # Control-profile example and JSON schema
 |-- core/               # Discovery, execution, markers, and results
 |-- docs/               # Detailed documentation
 |-- results/            # Generated result files
@@ -121,6 +180,7 @@ security-controls/
 |-- scenarios/          # Module metadata and technique scripts
 |   `-- <module>/
 |       |-- module.json
+|       |-- test-catalog.csv
 |       `-- <technique>/
 |-- scripts/            # Scaffolding and validation utilities
 `-- tests/              # Developer regression tests for SCT schema and framework behavior
@@ -163,12 +223,15 @@ C:\Windows\Temp\art-v<technique-id>-<subtest>.txt
 
 For a planned technique, add only `"status": "planned"`; remove that field when the script is ready.
 
-Use the guided generator and validator:
+Use the guided module command and checks:
 
 ```powershell
-.\scripts\New-SCTModuleJson.ps1
-.\scripts\Test-SCTModuleJson.ps1
+.\scripts\Add-SCTModule.ps1
+.\scripts\Check-SCTModules.ps1
+.\scripts\Check-SCTTestDescriptions.ps1
 ```
+
+`Add-SCTModule.ps1` creates `module.json` and then asks for each test's descriptions. Every new technique/subtest needs one `test-catalog.csv` row. Different modules may continue producing different raw CSV shapes; the preparation command is the boundary that maps supported raw rows into the stable review columns. Catalogue validation fails with a precise missing-row message instead of silently omitting a new test.
 
 See [Project Structure](docs/project-structure.md) for the full authoring workflow and [Framework Design](docs/framework-design.md) for how SCT infers execution behavior without a metadata type field.
 
