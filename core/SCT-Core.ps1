@@ -4,6 +4,8 @@
 
 Set-StrictMode -Version Latest
 
+. (Join-Path $PSScriptRoot 'SCT-Results.ps1')
+
 # =============================================================================
 # BANNER
 # =============================================================================
@@ -270,7 +272,7 @@ function Show-SCTMainMenu {
     }
     Write-Host "  +----------------------------------------------------------------------------+" -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "  What would you like to test today?" -ForegroundColor White
+    Write-Host "  What would you like to do?" -ForegroundColor White
     Write-Host ""
 
     for ($i = 0; $i -lt $Modules.Count; $i++) {
@@ -284,9 +286,290 @@ function Show-SCTMainMenu {
         Write-Host ""
     }
 
+    Write-Host "  [C]   Select Control Workspace" -ForegroundColor Yellow
+    Write-Host "  [M]   Manage SCT" -ForegroundColor Yellow
     Write-Host "  [V]   View Results Summary" -ForegroundColor Yellow
     Write-Host "  [Q]   Quit" -ForegroundColor Yellow
     Write-Host ""
+}
+
+function Get-SCTControlProfilePaths {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)] [string]$ResultsRoot)
+
+    if (-not (Test-Path -LiteralPath $ResultsRoot -PathType Container)) { return @() }
+    return @(
+        Get-ChildItem -LiteralPath $ResultsRoot -Directory |
+            ForEach-Object { Join-Path $_.FullName 'control-profile.json' } |
+            Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } |
+            Sort-Object
+    )
+}
+
+function Get-SCTControlWorkspace {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$RepoRoot,
+        [Parameter(Mandatory)] [string]$ProfilePath
+    )
+
+    $resolvedProfilePath = (Resolve-Path -LiteralPath $ProfilePath -ErrorAction Stop).Path
+    try {
+        $profile = Get-Content -LiteralPath $resolvedProfilePath -Raw -Encoding UTF8 | ConvertFrom-Json
+    } catch {
+        throw "Could not read control profile '$resolvedProfilePath': $($_.Exception.Message)"
+    }
+
+    $control = Get-SCTPropertyValue -InputObject $profile -Name 'control'
+    if ($null -eq $control) {
+        throw "Control profile '$resolvedProfilePath' is missing its control object."
+    }
+    $controlId = [string](Get-SCTPropertyValue -InputObject $control -Name 'id' -Default '')
+    $controlName = [string](Get-SCTPropertyValue -InputObject $control -Name 'display_name' -Default '')
+    if ($controlId -notmatch '^[a-z0-9][a-z0-9._-]*$' -or -not $controlName) {
+        throw "Control profile '$resolvedProfilePath' is missing a valid control id or display name."
+    }
+
+    $resultsRoot = [IO.Path]::GetFullPath((Join-Path $RepoRoot 'results'))
+    $expectedProfilePath = [IO.Path]::GetFullPath(
+        (Join-Path (Join-Path $resultsRoot $controlId) 'control-profile.json')
+    )
+    if (-not $resolvedProfilePath.Equals($expectedProfilePath, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Control profile '$resolvedProfilePath' must be stored at '$expectedProfilePath'."
+    }
+
+    $workspaceRoot = Split-Path $resolvedProfilePath -Parent
+    return [pscustomobject]@{
+        ControlId       = $controlId
+        ControlName     = $controlName
+        ProfilePath     = $resolvedProfilePath
+        WorkspaceRoot   = $workspaceRoot
+        ResultsPath     = Join-Path $workspaceRoot 'results.csv'
+        CatalogPath     = Join-Path $workspaceRoot 'test-catalog.csv'
+    }
+}
+
+function Select-SCTControlProfilePath {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)] [string]$ResultsRoot)
+
+    $profilePaths = @(Get-SCTControlProfilePaths -ResultsRoot $ResultsRoot)
+    if ($profilePaths.Count -eq 0) {
+        Write-Host ""
+        Write-Host "  No control workspaces exist yet." -ForegroundColor Yellow
+        Write-Host "  Use [M] Manage SCT -> [3] Create a new control workspace." -ForegroundColor DarkGray
+        return $null
+    }
+
+    if ($profilePaths.Count -eq 1) { return $profilePaths[0] }
+
+    Write-Host ""
+    Write-Host "  Select a control workspace:" -ForegroundColor White
+    for ($index = 0; $index -lt $profilePaths.Count; $index++) {
+        $label = Split-Path (Split-Path $profilePaths[$index] -Parent) -Leaf
+        try {
+            $profile = Get-Content -LiteralPath $profilePaths[$index] -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($profile.control.display_name) { $label = "$($profile.control.display_name) [$label]" }
+        } catch {
+            $label = "$label (invalid profile)"
+        }
+        Write-Host ("  [{0}]  {1}" -f ($index + 1), $label) -ForegroundColor White
+    }
+    Write-Host "  [0]  Cancel" -ForegroundColor Yellow
+
+    $choice = (Read-Host "`n  Control workspace").Trim()
+    if (-not $choice -or $choice -eq '0') { return $null }
+    $selectedIndex = $choice -as [int]
+    if ($selectedIndex -ge 1 -and $selectedIndex -le $profilePaths.Count) {
+        return $profilePaths[$selectedIndex - 1]
+    }
+
+    Write-Host "  Invalid control workspace selection." -ForegroundColor Yellow
+    return $null
+}
+
+function Get-SCTRepositoryToolPath {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$RepoRoot,
+        [Parameter(Mandatory)]
+        [ValidateSet(
+            'AddModule', 'DescribeModuleTests', 'SetupControl', 'BuildPackage',
+            'CheckControlProfile', 'CheckModules', 'CheckResults', 'CheckTestDescriptions'
+        )]
+        [string]$Tool
+    )
+
+    $relativePath = switch ($Tool) {
+        'AddModule'             { 'scripts\authoring\Add-SCTModule.ps1' }
+        'DescribeModuleTests'   { 'scripts\authoring\Describe-SCTModuleTests.ps1' }
+        'SetupControl'          { 'scripts\review\Setup-SCTControl.ps1' }
+        'BuildPackage'          { 'scripts\review\Build-SCTComparisonPackage.ps1' }
+        'CheckControlProfile'   { 'scripts\validation\Check-SCTControlProfile.ps1' }
+        'CheckModules'          { 'scripts\validation\Check-SCTModules.ps1' }
+        'CheckResults'          { 'scripts\validation\Check-SCTResults.ps1' }
+        'CheckTestDescriptions' { 'scripts\validation\Check-SCTTestDescriptions.ps1' }
+    }
+
+    return Join-Path $RepoRoot $relativePath
+}
+
+function Invoke-SCTRepositoryTool {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$RepoRoot,
+        [Parameter(Mandatory)] [string]$Tool,
+        [object[]]$Arguments = @()
+    )
+
+    $scriptPath = Get-SCTRepositoryToolPath -RepoRoot $RepoRoot -Tool $Tool
+    if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
+        throw "SCT tool is missing: $scriptPath"
+    }
+
+    $hostExecutable = (Get-Process -Id $PID).Path
+    Push-Location -LiteralPath $RepoRoot
+    try {
+        & $hostExecutable -NoProfile -ExecutionPolicy Bypass -File $scriptPath @Arguments
+        $exitCode = $LASTEXITCODE
+    } finally {
+        Pop-Location
+    }
+    if ($exitCode -ne 0) {
+        throw "SCT tool '$Tool' exited with code $exitCode."
+    }
+}
+
+function Select-SCTModulePath {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)] [string]$ScenariosPath)
+
+    $moduleFiles = @(Get-ChildItem -LiteralPath $ScenariosPath -Filter 'module.json' -File -Recurse | Sort-Object FullName)
+    if ($moduleFiles.Count -eq 0) {
+        Write-Host "  No module.json files found under $ScenariosPath." -ForegroundColor Yellow
+        return $null
+    }
+
+    Write-Host ""
+    for ($index = 0; $index -lt $moduleFiles.Count; $index++) {
+        $moduleFile = $moduleFiles[$index]
+        $label = $moduleFile.Directory.Name
+        try {
+            $metadata = Get-Content -LiteralPath $moduleFile.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($metadata.name) { $label = "$($metadata.id) $($metadata.name)" }
+        } catch {
+            $label = "$label (invalid JSON)"
+        }
+        Write-Host ("  [{0}]  {1}" -f ($index + 1), $label) -ForegroundColor White
+    }
+    Write-Host "  [0]  Cancel" -ForegroundColor Yellow
+
+    $choice = (Read-Host "`n  Module").Trim()
+    if (-not $choice -or $choice -eq '0') { return $null }
+    $selectedIndex = $choice -as [int]
+    if ($selectedIndex -ge 1 -and $selectedIndex -le $moduleFiles.Count) {
+        return $moduleFiles[$selectedIndex - 1].FullName
+    }
+
+    Write-Host "  Invalid module selection." -ForegroundColor Yellow
+    return $null
+}
+
+function Invoke-SCTManagementMenu {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)] [string]$RepoRoot)
+
+    $scenariosPath = Join-Path $RepoRoot 'scenarios'
+    $resultsRoot = Join-Path $RepoRoot 'results'
+
+    while ($true) {
+        Write-Host ""
+        Write-Host "  +----------------------------------------------------------------------------+" -ForegroundColor Magenta
+        Write-Host "  |  MANAGE SCT                                                                |" -ForegroundColor Magenta
+        Write-Host "  +----------------------------------------------------------------------------+" -ForegroundColor Magenta
+        Write-Host ""
+        Write-Host "  Authoring" -ForegroundColor DarkGray
+        Write-Host "  [1]  Add a new SCT module" -ForegroundColor White
+        Write-Host "  [2]  Add or repair a module's test descriptions" -ForegroundColor White
+        Write-Host ""
+        Write-Host "  Product workflow" -ForegroundColor DarkGray
+        Write-Host "  [3]  Create or update a control workspace" -ForegroundColor White
+        Write-Host "  [4]  Check completed results.csv" -ForegroundColor White
+        Write-Host "  [5]  Build comparison ZIP" -ForegroundColor White
+        Write-Host ""
+        Write-Host "  Repository validation" -ForegroundColor DarkGray
+        Write-Host "  [6]  Check modules and test descriptions" -ForegroundColor White
+        Write-Host "  [7]  Check a control profile" -ForegroundColor White
+        Write-Host ""
+        Write-Host "  [0]  Back to Main Menu" -ForegroundColor Yellow
+        Write-Host ""
+
+        $choice = (Read-Host "  Selection").Trim()
+        if (-not $choice -or $choice -eq '0') { return }
+
+        $ranTool = $false
+        try {
+            switch ($choice) {
+                '1' {
+                    Invoke-SCTRepositoryTool -RepoRoot $RepoRoot -Tool 'AddModule'
+                    $ranTool = $true
+                }
+                '2' {
+                    $modulePath = Select-SCTModulePath -ScenariosPath $scenariosPath
+                    if ($modulePath) {
+                        Invoke-SCTRepositoryTool -RepoRoot $RepoRoot -Tool 'DescribeModuleTests' `
+                            -Arguments @('-ModulePath', $modulePath)
+                        $ranTool = $true
+                    }
+                }
+                '3' {
+                    Invoke-SCTRepositoryTool -RepoRoot $RepoRoot -Tool 'SetupControl'
+                    $ranTool = $true
+                }
+                '4' {
+                    $profilePath = Select-SCTControlProfilePath -ResultsRoot $resultsRoot
+                    if ($profilePath) {
+                        $resultsPath = Join-Path (Split-Path $profilePath -Parent) 'results.csv'
+                        Invoke-SCTRepositoryTool -RepoRoot $RepoRoot -Tool 'CheckResults' `
+                            -Arguments @('-Path', $resultsPath)
+                        $ranTool = $true
+                    }
+                }
+                '5' {
+                    $profilePath = Select-SCTControlProfilePath -ResultsRoot $resultsRoot
+                    if ($profilePath) {
+                        Invoke-SCTRepositoryTool -RepoRoot $RepoRoot -Tool 'BuildPackage' `
+                            -Arguments @('-ControlProfilePath', $profilePath, '-Force')
+                        $ranTool = $true
+                    }
+                }
+                '6' {
+                    Invoke-SCTRepositoryTool -RepoRoot $RepoRoot -Tool 'CheckModules'
+                    Invoke-SCTRepositoryTool -RepoRoot $RepoRoot -Tool 'CheckTestDescriptions'
+                    $ranTool = $true
+                }
+                '7' {
+                    $profilePath = Select-SCTControlProfilePath -ResultsRoot $resultsRoot
+                    if ($profilePath) {
+                        Invoke-SCTRepositoryTool -RepoRoot $RepoRoot -Tool 'CheckControlProfile' `
+                            -Arguments @('-Path', $profilePath)
+                        $ranTool = $true
+                    }
+                }
+                default {
+                    Write-Host "  Invalid selection. Enter 0-7." -ForegroundColor Yellow
+                }
+            }
+        } catch {
+            Write-Host ""
+            Write-Host "  [!] $($_.Exception.Message)" -ForegroundColor Red
+            $ranTool = $true
+        }
+
+        if ($ranTool) {
+            [void](Read-Host "`n  Press Enter to return to Manage SCT")
+        }
+    }
 }
 
 # =============================================================================
@@ -300,8 +583,7 @@ function Invoke-SCTModuleMenu {
         [Parameter(Mandatory)] [string]$Control,
         [Parameter(Mandatory)] [string]$SamplesPath,
         [Parameter(Mandatory)] [string]$ScenarioRoot,
-        [Parameter(Mandatory)] [string]$ResultsPath,
-        [Parameter(Mandatory)] [string]$TestResultsPath
+        [Parameter(Mandatory)] [string]$ResultsPath
     )
 
     while ($true) {
@@ -338,8 +620,7 @@ function Invoke-SCTModuleMenu {
                 -ModuleScriptDir $Module.ScriptDir `
                 -Control $Control `
                 -SamplesPath $SamplesPath `
-                -ResultsPath $ResultsPath `
-                -TestResultsPath $TestResultsPath
+                -ResultsPath $ResultsPath
         } else {
             Write-Host "  Invalid selection." -ForegroundColor Yellow
         }
@@ -357,8 +638,7 @@ function Invoke-SCTTechnique {
         [Parameter(Mandatory)] [string]$ModuleScriptDir,
         [Parameter(Mandatory)] [string]$Control,
         [Parameter(Mandatory)] [string]$SamplesPath,
-        [Parameter(Mandatory)] [string]$ResultsPath,
-        [Parameter(Mandatory)] [string]$TestResultsPath
+        [Parameter(Mandatory)] [string]$ResultsPath
     )
 
     $scriptPath = Join-Path $ModuleScriptDir $Technique.script
@@ -389,7 +669,7 @@ function Invoke-SCTTechnique {
 
     switch (Get-SCTTechniqueWorkflow -Technique $Technique -ScriptPath $scriptPath) {
         'subtests' {
-            Invoke-SCTSubtests -Technique $Technique -ScriptPath $scriptPath -Control $Control -TestResultsPath $TestResultsPath
+            Invoke-SCTSubtests -Technique $Technique -ScriptPath $scriptPath -Control $Control -ResultsPath $ResultsPath
         }
         'sample-batch' {
             Invoke-SampleBatchTechnique -Technique $Technique -ScriptPath $scriptPath -Control $Control -SamplesPath $SamplesPath -ResultsPath $ResultsPath
@@ -673,7 +953,7 @@ function Invoke-SCTSubtests {
         $Technique,
         [string]$ScriptPath,
         [string]$Control,
-        [string]$TestResultsPath,
+        [string]$ResultsPath,
         [switch]$NonInteractive,
         [string]$RunId
     )
@@ -793,7 +1073,7 @@ function Invoke-SCTSubtests {
     $startTime = Get-Date
     Start-Process -FilePath 'powershell.exe' -ArgumentList $scriptArgs -Wait -NoNewWindow
 
-    if ($TestResultsPath) {
+    if ($ResultsPath) {
         Write-Host ""
         Write-Host "  [*] Checking results..." -ForegroundColor Cyan
         Write-Host ""
@@ -811,9 +1091,9 @@ function Invoke-SCTSubtests {
             if ($executed) { $executedCount++ }
             Write-Host ("  {0}  {1,-28}  {2}" -f $icon, $subtest, $displayOutcome) -ForegroundColor $color
 
-            Write-SCTResult -Path $TestResultsPath -Timestamp $startTime -Control $Control `
+            Write-SCTResult -Path $ResultsPath -Timestamp $startTime `
                 -TechniqueId $Technique.id -TechniqueName $Technique.name -Subtest $subtest `
-                -Outcome $outcome -Notes $notes -RunId $RunId
+                -TestScript ([string]$Technique.script) -Outcome $outcome -Notes $notes -RunId $RunId
 
             $runResults += [pscustomobject]@{
                 run_id      = $RunId
@@ -827,10 +1107,10 @@ function Invoke-SCTSubtests {
 
         Write-Host ""
         Write-Host "  $executedCount of $($toCheck.Count) subtests executed this run" -ForegroundColor Cyan
-        Write-Host "  Results appended to: $TestResultsPath" -ForegroundColor DarkGray
+        Write-Host "  Results appended to: $ResultsPath" -ForegroundColor DarkGray
         Write-Host "  [i] [!] Marker found: execution observed" -ForegroundColor DarkGray
         Write-Host "  [i] [?] Marker absent: execution not observed; this alone does not prove a control block" -ForegroundColor DarkGray
-        Write-Host "  [i] Review detection and action separately in results-for-review.csv" -ForegroundColor DarkGray
+        Write-Host "  [i] Review detection and action directly in results.csv" -ForegroundColor DarkGray
     }
 
     if ($NonInteractive) {
@@ -884,7 +1164,7 @@ function Show-SCTModuleRunSummary {
     param(
         [Parameter(Mandatory)] [array]$Results,
         [Parameter(Mandatory)] [string]$RunId,
-        [Parameter(Mandatory)] [string]$TestResultsPath
+        [Parameter(Mandatory)] [string]$ResultsPath
     )
 
     $total    = $Results.Count
@@ -897,7 +1177,7 @@ function Show-SCTModuleRunSummary {
     Write-Host "  ============================================================================" -ForegroundColor Cyan
     Write-Host "  Run ID   : $RunId" -ForegroundColor White
     Write-Host "  Results  : $total total | $executed marker found | $markerAbsent marker absent" -ForegroundColor White
-    Write-Host "  CSV      : $TestResultsPath" -ForegroundColor DarkGray
+    Write-Host "  CSV      : $ResultsPath" -ForegroundColor DarkGray
 
     foreach ($group in ($Results | Group-Object technique_id | Sort-Object Name)) {
         $groupExecuted = @($group.Group | Where-Object { $_.outcome -eq 'EXECUTED' }).Count
@@ -911,7 +1191,7 @@ function Invoke-SCTModuleNonInteractive {
     param(
         [Parameter(Mandatory)] $Module,
         [Parameter(Mandatory)] [string]$Control,
-        [Parameter(Mandatory)] [string]$TestResultsPath,
+        [Parameter(Mandatory)] [string]$ResultsPath,
         [ValidateRange(0, 300)] [int]$StartDelaySeconds = 10,
         [ValidateRange(0, 300)] [int]$InterTechniqueDelaySeconds = 3
     )
@@ -962,7 +1242,7 @@ function Invoke-SCTModuleNonInteractive {
         Write-Host "  [>] Technique $($technique.id): $($technique.name)" -ForegroundColor Cyan
         try {
             $techniqueResults = @(Invoke-SCTSubtests -Technique $technique -ScriptPath $scriptPath -Control $Control `
-                -TestResultsPath $TestResultsPath -NonInteractive -RunId $runId)
+                -ResultsPath $ResultsPath -NonInteractive -RunId $runId)
             $runResults += $techniqueResults
         } finally {
             Write-Host "  [*] Cleaning up Technique $($technique.id)..." -ForegroundColor DarkGray
@@ -975,7 +1255,7 @@ function Invoke-SCTModuleNonInteractive {
         }
     }
 
-    Show-SCTModuleRunSummary -Results $runResults -RunId $runId -TestResultsPath $TestResultsPath
+    Show-SCTModuleRunSummary -Results $runResults -RunId $runId -ResultsPath $ResultsPath
     return $runResults
 }
 
@@ -1131,7 +1411,7 @@ function Merge-StagingFromZips {
 }
 
 # =============================================================================
-# RESULT WRITER - writes one row per subtest to test-results.csv.
+# RESULT WRITER - writes one canonical row per subtest to results.csv.
 # =============================================================================
 
 function Write-SCTResult {
@@ -1140,72 +1420,24 @@ function Write-SCTResult {
         [Parameter(Mandatory)] [string]$Path,
         [Parameter(Mandatory)] [datetime]$Timestamp,
         [string]$RunId = '',
-        [Parameter(Mandatory)] [string]$Control,
         [Parameter(Mandatory)] [string]$TechniqueId,
         [Parameter(Mandatory)] [string]$TechniqueName,
         [Parameter(Mandatory)] [string]$Subtest,
+        [string]$TestScript = '',
         [Parameter(Mandatory)] [ValidateSet('EXECUTED','BLOCKED','NOT-EXPLOITABLE','ERROR')]
         [string]$Outcome,
         [string]$Notes = ''
     )
 
-    $dir = Split-Path $Path -Parent
-    if ($dir -and -not (Test-Path $dir)) {
-        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    $executionStatus = switch ($Outcome) {
+        'EXECUTED' { 'executed' }
+        'BLOCKED'  { 'not_executed' }
+        default    { '' }
     }
-
-    Update-SCTTestResultsSchema -Path $Path
-
-    [pscustomobject][ordered]@{
-        timestamp      = $Timestamp.ToString('o')
-        run_id         = $RunId
-        control        = $Control
-        technique_id   = $TechniqueId
-        technique_name = $TechniqueName
-        subtest        = $Subtest
-        outcome        = $Outcome
-        notes          = $Notes
-    } | Export-Csv -Path $Path -Append -NoTypeInformation -Encoding UTF8
-}
-
-function Update-SCTTestResultsSchema {
-    [CmdletBinding()]
-    param([Parameter(Mandatory)] [string]$Path)
-
-    if (-not (Test-Path -LiteralPath $Path)) { return }
-
-    $header = Get-Content -LiteralPath $Path -TotalCount 1 -ErrorAction Stop
-    if ($header -match '(^|,)"?run_id"?(,|$)' -and
-        $header -match '(^|,)"?technique_id"?(,|$)' -and
-        $header -match '(^|,)"?subtest"?(,|$)') { return }
-
-    $dir      = Split-Path -Path $Path -Parent
-    $tempPath = Join-Path $dir (".{0}.{1}.tmp" -f (Split-Path -Path $Path -Leaf), [guid]::NewGuid())
-    $existing = @(Import-Csv -LiteralPath $Path -Encoding UTF8)
-
-    if ($existing.Count -gt 0) {
-        $existing | ForEach-Object {
-            $oldRunId = if ($_.PSObject.Properties['run_id']) { $_.run_id } else { '' }
-            $techniqueId = if ($_.PSObject.Properties['technique_id']) { $_.technique_id } else { $_.vector_id }
-            $techniqueName = if ($_.PSObject.Properties['technique_name']) { $_.technique_name } else { $_.vector_name }
-            $subtest = if ($_.PSObject.Properties['subtest']) { $_.subtest } else { $_.technique }
-            [pscustomobject][ordered]@{
-                timestamp      = $_.timestamp
-                run_id         = $oldRunId
-                control        = $_.control
-                technique_id   = $techniqueId
-                technique_name = $techniqueName
-                subtest        = $subtest
-                outcome        = $_.outcome
-                notes          = $_.notes
-            }
-        } | Export-Csv -LiteralPath $tempPath -NoTypeInformation -Encoding UTF8
-    } else {
-        '"timestamp","run_id","control","technique_id","technique_name","subtest","outcome","notes"' |
-            Set-Content -LiteralPath $tempPath -Encoding UTF8
-    }
-
-    Move-Item -LiteralPath $tempPath -Destination $Path -Force
+    Write-SCTResultRow -Path $Path -Timestamp $Timestamp -RunId $RunId `
+        -TechniqueId $TechniqueId -TechniqueName $TechniqueName -Subtest $Subtest `
+        -TestScript $TestScript -TestStage 'execution' -SourceResult $Outcome `
+        -ExecutionStatus $executionStatus -Notes $Notes
 }
 
 # =============================================================================
@@ -1328,125 +1560,47 @@ function Test-SCTCalcSpawned {
 
 # =============================================================================
 # RESULTS SUMMARY
-# Reads both results.csv (malware delivery) and test-results.csv
-# and displays a combined aggregated view.
+# Reads the active control workspace's canonical results.csv.
 # =============================================================================
 
 function Show-SCTSummary {
     [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)] [string]$ResultsPath,
-        [Parameter(Mandatory)] [string]$TestResultsPath
-    )
+    param([Parameter(Mandatory)] [string]$ResultsPath)
 
     Write-Host ""
     Write-Host "  ============================================================================" -ForegroundColor Cyan
     Write-Host "  AGGREGATED TEST RESULTS" -ForegroundColor Cyan
     Write-Host "  ============================================================================" -ForegroundColor Cyan
 
-    $anyData = $false
-
-    # -------------------------------------------------------------------------
-    # SECTION 1: Malware delivery results (results.csv)
-    # Written by the sample-batch / removable-media / client-server workflows.
-    # -------------------------------------------------------------------------
-    if (Test-Path $ResultsPath) {
-        try {
-            $data = @(Import-Csv -Path $ResultsPath -Encoding UTF8 -ErrorAction Stop)
-            if ($data) {
-                $anyData = $true
-                Write-Host ""
-                Write-Host "  MALWARE DELIVERY" -ForegroundColor White
-                Write-Host ("  " + ('-' * 76)) -ForegroundColor DarkGray
-
-                $hdr = "  {0,-22} {1,-8} {2,-8} {3,-20} {4}"
-                Write-Host ($hdr -f 'Control', 'Technique', 'Samples', 'Delivered', 'Sysmon Hit') -ForegroundColor White
-
-                $idProperty = if ($data[0].PSObject.Properties['technique_id']) { 'technique_id' } else { 'vector' }
-                $groups = $data | Group-Object -Property control, $idProperty | Sort-Object Name
-                foreach ($g in $groups) {
-                    $tot  = $g.Count
-                    $del  = @($g.Group | Where-Object { $_.delivery_success   -eq 'True' }).Count
-                    $sys  = @($g.Group | Where-Object { $_.sysmon_event_found -eq 'True' }).Count
-                    $techniqueId = $g.Group[0].$idProperty
-                    Write-Host ($hdr -f $g.Group[0].control, $techniqueId, $tot,
-                        "$del/$tot ($([math]::Round(100*$del/$tot,0))%)",
-                        "$sys/$tot ($([math]::Round(100*$sys/$tot,0))%)"
-                    ) -ForegroundColor White
-                }
-
-                $tot = $data.Count
-                $del = @($data | Where-Object { $_.delivery_success   -eq 'True' }).Count
-                $sys = @($data | Where-Object { $_.sysmon_event_found -eq 'True' }).Count
-                Write-Host ("  " + ('-' * 76)) -ForegroundColor DarkGray
-                Write-Host ($hdr -f 'ALL', 'ALL', $tot,
-                    "$del/$tot ($([math]::Round(100*$del/$tot,0))%)",
-                    "$sys/$tot ($([math]::Round(100*$sys/$tot,0))%)"
-                ) -ForegroundColor Cyan
-                Write-Host "  Source: $ResultsPath" -ForegroundColor DarkGray
-            }
-        } catch {
-            Write-Host "  Could not read $ResultsPath : $($_.Exception.Message)" -ForegroundColor Red
-        }
-    }
-
-    # -------------------------------------------------------------------------
-    # SECTION 2: Per-subtest results (test-results.csv)
-    # Written by Invoke-SCTSubtests above.
-    # -------------------------------------------------------------------------
-    if (Test-Path $TestResultsPath) {
-        try {
-            $tdata = @(Import-Csv -Path $TestResultsPath -Encoding UTF8 -ErrorAction Stop)
-            if ($tdata) {
-                $anyData = $true
-                Write-Host ""
-                Write-Host "  SUBTEST RESULTS" -ForegroundColor White
-                Write-Host ("  " + ('-' * 76)) -ForegroundColor DarkGray
-
-                $thdr = "  {0,-10} {1,-20} {2,-8} {3,-26} {4}"
-                Write-Host ($thdr -f 'Time', 'Control', 'Technique', 'Subtest', 'Outcome') -ForegroundColor White
-
-                foreach ($row in $tdata) {
-                    $ts    = try { ([datetime]$row.timestamp).ToString('HH:mm:ss') } catch { '?' }
-                    $color = switch ($row.outcome) {
-                        'EXECUTED'        { 'Yellow' }
-                        'BLOCKED'         { 'Gray'   }
-                        'NOT-EXPLOITABLE' { 'Yellow' }
-                        default           { 'Gray'   }
-                    }
-                    $techniqueId = if ($row.PSObject.Properties['technique_id']) { $row.technique_id } else { $row.vector_id }
-                    $subtest = if ($row.PSObject.Properties['subtest']) { $row.subtest } else { $row.technique }
-                    Write-Host ($thdr -f $ts, $row.control, $techniqueId, $subtest, $row.outcome) -ForegroundColor $color
-                }
-
-                # Per-control summary
-                Write-Host ""
-                Write-Host ("  " + ('-' * 76)) -ForegroundColor DarkGray
-                Write-Host "  SUBTEST SUMMARY" -ForegroundColor White
-                $shdr = "  {0,-22} {1,-8} {2,-12} {3,-14} {4}"
-                Write-Host ($shdr -f 'Control', 'Total', 'MarkerFound', 'MarkerAbsent', 'Not-Exploitable') -ForegroundColor White
-
-                $tgroups = $tdata | Group-Object -Property control | Sort-Object Name
-                foreach ($g in $tgroups) {
-                    $tot   = $g.Count
-                    $exec  = @($g.Group | Where-Object { $_.outcome -eq 'EXECUTED'        }).Count
-                    $block = @($g.Group | Where-Object { $_.outcome -eq 'BLOCKED'         }).Count
-                    $noexp = @($g.Group | Where-Object { $_.outcome -eq 'NOT-EXPLOITABLE' }).Count
-                    Write-Host ($shdr -f $g.Name, $tot, "$exec/$tot", "$block/$tot", $noexp) -ForegroundColor White
-                }
-
-                Write-Host "  Source: $TestResultsPath" -ForegroundColor DarkGray
-            }
-        } catch {
-            Write-Host "  Could not read $TestResultsPath : $($_.Exception.Message)" -ForegroundColor Red
-        }
-    }
-
-    if (-not $anyData) {
+    if (-not (Test-Path -LiteralPath $ResultsPath -PathType Leaf)) {
         Write-Host ""
         Write-Host "  No results found yet. Run some tests first." -ForegroundColor Yellow
-        Write-Host "  Delivery results will appear at : $ResultsPath" -ForegroundColor DarkGray
-        Write-Host "  Subtest results will appear at  : $TestResultsPath" -ForegroundColor DarkGray
+        Write-Host "  Results will appear at: $ResultsPath" -ForegroundColor DarkGray
+        Write-Host ""
+        Read-Host "  Press Enter to return"
+        return
+    }
+
+    try {
+        Assert-SCTResultFileSchema -Path $ResultsPath
+        $data = @(Import-Csv -LiteralPath $ResultsPath -Encoding UTF8 -ErrorAction Stop)
+        if ($data.Count -eq 0) { throw 'The results file has no rows.' }
+
+        Write-Host ""
+        $header = "  {0,-12} {1,-8} {2,-10} {3,-12} {4}"
+        Write-Host ($header -f 'Technique', 'Rows', 'Executed', 'Not executed', 'Reviewed') -ForegroundColor White
+        foreach ($group in ($data | Group-Object technique_id | Sort-Object Name)) {
+            $executed = @($group.Group | Where-Object { $_.execution_status -eq 'executed' }).Count
+            $notExecuted = @($group.Group | Where-Object { $_.execution_status -eq 'not_executed' }).Count
+            $reviewed = @($group.Group | Where-Object { $_.detection_status -and $_.action_status }).Count
+            Write-Host ($header -f $group.Name, $group.Count, $executed, $notExecuted, $reviewed) -ForegroundColor White
+        }
+        Write-Host ("  " + ('-' * 64)) -ForegroundColor DarkGray
+        $reviewedTotal = @($data | Where-Object { $_.detection_status -and $_.action_status }).Count
+        Write-Host "  $($data.Count) rows total; $reviewedTotal reviewed." -ForegroundColor Cyan
+        Write-Host "  Source: $ResultsPath" -ForegroundColor DarkGray
+    } catch {
+        Write-Host "  Could not read $ResultsPath : $($_.Exception.Message)" -ForegroundColor Red
     }
 
     Write-Host ""

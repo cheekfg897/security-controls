@@ -1,15 +1,15 @@
 <#
 .SYNOPSIS
-    Checks a completed SCT results-review CSV.
+    Checks a completed canonical SCT results CSV.
 
 .DESCRIPTION
-    Use this after filling detection_status and action_status in Excel. The
-    validator checks the allowed values and rejects combinations that conflict
-    with the observed execution status.
+    Use this after filling detection_status, action_status, and optional
+    reviewer_notes directly in results.csv. Generated observation fields must
+    remain present and valid.
 
 .EXAMPLE
-    .\scripts\Check-SCTReviewedResults.ps1 `
-        -Path .\results\analysis\reviewed-results.csv
+    .\scripts\validation\Check-SCTResults.ps1 `
+        -Path .\results\sentinelone\results.csv
 #>
 
 [CmdletBinding()]
@@ -20,13 +20,18 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+$repoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+. (Join-Path $repoRoot 'core\SCT-Results.ps1')
+
 $resolvedPath = (Resolve-Path -LiteralPath $Path -ErrorAction Stop).Path
+Assert-SCTResultFileSchema -Path $resolvedPath
 $rows = @(Import-Csv -LiteralPath $resolvedPath -Encoding UTF8)
-if ($rows.Count -eq 0) { throw "The reviewed-results CSV contains no result rows: $resolvedPath" }
+if ($rows.Count -eq 0) { throw "The results CSV contains no result rows: $resolvedPath" }
 
 $requiredColumns = @(
-    'timestamp', 'control_id', 'technique_id', 'test_script', 'test_stage',
-    'execution_status', 'detection_status', 'action_status'
+    'timestamp', 'run_id', 'technique_id', 'technique_name', 'test_script',
+    'test_stage', 'source_result', 'execution_status', 'detection_status',
+    'action_status', 'reviewer_notes'
 )
 $columns = @($rows[0].PSObject.Properties.Name)
 $errors = @()
@@ -47,6 +52,12 @@ for ($index = 0; $index -lt $rows.Count; $index++) {
     $execution = [string]$row.execution_status
     $detection = [string]$row.detection_status
     $action = [string]$row.action_status
+
+    foreach ($generatedField in @('timestamp', 'run_id', 'technique_id', 'technique_name', 'test_script', 'test_stage')) {
+        if ([string]::IsNullOrWhiteSpace([string]$row.$generatedField)) {
+            $errors += "CSV line $csvLine is missing generated field '$generatedField'."
+        }
+    }
 
     if ($execution -notin $allowedExecution) {
         $errors += "CSV line $csvLine has invalid execution_status '$execution'."
@@ -69,7 +80,7 @@ for ($index = 0; $index -lt $rows.Count; $index++) {
 }
 
 if ($errors.Count -gt 0) {
-    throw "Invalid reviewed-results CSV:`n$($errors -join "`n")"
+    throw "Invalid results CSV:`n$($errors -join "`n")"
 }
 
-Write-Host "Checked $($rows.Count) reviewed result rows." -ForegroundColor Green
+Write-Host "Checked $($rows.Count) completed result rows." -ForegroundColor Green

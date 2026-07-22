@@ -11,11 +11,18 @@ security-controls/
 |   |-- control-profile.example.json
 |   `-- control-profile.schema.json
 |-- core/
-|   `-- SCT-Core.ps1
+|   |-- SCT-Core.ps1
+|   `-- SCT-Results.ps1
 |-- docs/
+|   |-- README.md
+|   |-- architecture/
+|   |-- guides/
+|   `-- reference/
 |-- results/
-|   |-- raw/
-|   `-- analysis/
+|   `-- <control-id>/
+|       |-- control-profile.json
+|       |-- results.csv
+|       `-- test-catalog.csv
 |-- samples/
 |-- sanity_checks/
 |-- scenarios/
@@ -23,15 +30,17 @@ security-controls/
 |   |-- 02-exploitation/
 |   |-- 03-privilege-escalation/
 |   `-- 04-persistence/
-`-- scripts/
-    |-- Add-SCTModule.ps1
-    |-- Check-SCTControlProfile.ps1
-    |-- Check-SCTModules.ps1
-    |-- Check-SCTReviewedResults.ps1
-    |-- Check-SCTTestDescriptions.ps1
-    |-- Describe-SCTModuleTests.ps1
-    |-- Prepare-SCTResultsForReview.ps1
-    `-- Setup-SCTControl.ps1
+|-- scripts/
+|   |-- authoring/
+|   |-- common/
+|   |-- review/
+|   `-- validation/
+|-- submissions/
+|   `-- <control-id>.zip
+`-- tests/
+    |-- framework/
+    |-- workflows/
+    `-- Run-Tests.ps1
 ```
 
 | Content | Location |
@@ -43,9 +52,13 @@ security-controls/
 | Technique scripts and local guidance | Inside the relevant module folder |
 | Local malware archives | `samples/` |
 | Pre-test control checks | `sanity_checks/` |
-| Generated CSV files | `results/raw/` |
-| Architecture and operator guidance | `docs/` |
-| Profile, catalogue, manifest, and review-CSV utilities | `scripts/` |
+| Product configuration and generated outputs | `results/<control-id>/` |
+| Architecture, contributor guides, and reference material | `docs/` |
+| Module and catalogue authoring utilities | `scripts/authoring/` |
+| Control-workspace setup and comparison packaging | `scripts/review/` |
+| Profile, module, catalogue, and result validators | `scripts/validation/` |
+| Shared script implementation | `scripts/common/` |
+| Dependency-free framework and workflow regression tests | `tests/` |
 
 Real malware samples and generated results should not be committed.
 
@@ -72,7 +85,7 @@ Folder and script names can retain existing `v` prefixes; the SCT hierarchy come
 1. Add the PowerShell script and, if setup is non-trivial, a nearby `README.md`.
 2. Add one object to the module's `techniques` array.
 3. Add one `test-catalog.csv` row for the technique, or one row per subtest.
-4. Run `scripts/Check-SCTModules.ps1` and `scripts/Check-SCTTestDescriptions.ps1`.
+4. Run `scripts/validation/Check-SCTModules.ps1` and `scripts/validation/Check-SCTTestDescriptions.ps1`.
 5. Restart `Start-SCT.ps1` and confirm the technique appears.
 
 Minimal entry:
@@ -106,7 +119,7 @@ C:\Windows\Temp\art-v4.5-ScExeCreate.txt
 C:\Windows\Temp\art-v4.5-PowerShellCreate.txt
 ```
 
-If only some subtests need a server VM, list those names once more in `server_subtests`. They must also exist in `subtests`.
+When the technique has subtests, the authoring generator asks whether every subtest needs a companion server VM. If yes, it records all subtests in `server_subtests`. If only some need a server, enter those exact subtest names as a comma-separated list; leave it blank when none need one. The names must also exist in `subtests`.
 
 Use `"status": "planned"` for an unavailable technique. The script path may be reserved before the file exists; remove `status` when implementation is ready.
 
@@ -115,7 +128,7 @@ Use `"status": "planned"` for an unavailable technique. The script path may be r
 Run the guided generator from the repository root:
 
 ```powershell
-.\scripts\Add-SCTModule.ps1
+.\scripts\authoring\Add-SCTModule.ps1
 ```
 
 Use `-NoWrite` to preview the JSON. The command asks for module details, technique details, optional subtests, optional server-dependent subtests, and then the descriptions for those tests.
@@ -123,11 +136,11 @@ Use `-NoWrite` to preview the JSON. The command asks for module details, techniq
 After adding scripts, validate everything:
 
 ```powershell
-.\scripts\Check-SCTModules.ps1
-.\scripts\Check-SCTTestDescriptions.ps1
+.\scripts\validation\Check-SCTModules.ps1
+.\scripts\validation\Check-SCTTestDescriptions.ps1
 ```
 
-When adding techniques to an existing module, run `Describe-SCTModuleTests.ps1` to add their descriptions. It preserves existing rows and prompts only for a new or incomplete technique/subtest's objective, what it does, and success indicator. SCT discovers valid modules automatically; no central module list needs updating.
+When adding techniques to an existing module, run `scripts/authoring/Describe-SCTModuleTests.ps1` to add their descriptions. It preserves existing rows and prompts only for a new or incomplete technique/subtest's objective, what it does, and success indicator. SCT discovers valid modules automatically; no central module list needs updating.
 
 ## Test catalogue
 
@@ -139,16 +152,18 @@ technique_id,subtest,objective,what_it_does,success_indicator
 
 A technique without subtests has one row with an empty `subtest`. A technique with subtests has one row per named subtest. This keeps detailed explanations out of result rows while giving a human or later AI system an exact join through `technique_id` and `subtest`.
 
-Raw result formats may differ between modules. New raw formats do not require changing existing CSVs or catalogues, but `Prepare-SCTResultsForReview.ps1` must know how to map that format before it can be included in the stable review CSV.
+Framework-managed writers append the canonical schema defined in `core/SCT-Results.ps1` to the active workspace's `results.csv`. New writers must use `Write-SCTResultRow` so every test remains compatible with direct review, validation, and packaging.
 
-## Per-VM control profile and review files
+## Per-product result workspace
 
-`config/control-profile.local.json` records the exact control configuration used in one VM. It is JSON because settings, exclusions, and local log sources are nested and product-specific. The generated result remains CSV so it can be reviewed in Excel.
+`results/<control-id>/control-profile.json` records the exact control configuration used for that product's test series. `results.csv` contains both generated observations and the reviewer's final statuses, while `test-catalog.csv` describes every test. Keeping these three files together prevents one product profile from being applied to another product's rows.
 
-The local profile and everything under `results/analysis/` are gitignored. Keep one copy with each VM's reviewed results rather than committing environment-specific configuration or potentially sensitive data.
+After reviewing `results.csv`, validate it and generate `submissions/<control-id>.zip`. Each archive contains exactly those three workspace files. Repeat for the second product to produce the two inputs required by the comparison system.
+
+Everything under each generated control workspace is gitignored. The reusable example and JSON schema remain in `config/`; environment-specific profiles belong with their result evidence under `results/`.
 
 ## Adding samples
 
 Put malware archives in `samples/` only for Technique 1.1. Technique 1.2 reads removable media, Technique 1.3 uses a companion server directory, and the remaining Module 01 techniques are self-contained or in-memory.
 
-See the [Sample Guide](../samples/README.md) for ZIP layouts and handling precautions.
+See the [Sample Guide](../../samples/README.md) for ZIP layouts and handling precautions.

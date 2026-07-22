@@ -20,4 +20,4 @@ This matrix reflects the current `module.json` definitions. "Available" means SC
 | Persistence | 4.3 Startup Folder (Advanced) | T1547.001 | 5 | Available |
 | Persistence | 4.4 WMI Event Subscription | T1546.003 | 2 | Available; requires Administrator |
 
-See [Framework Design](framework-design.md#execution-inference) for how launch behavior is inferred without a metadata type field, and [Threat Scenarios](threat-scenarios.md) for preparation requirements.
+See [Framework Design](../architecture/framework-design.md#execution-inference) for how launch behavior is inferred without a metadata type field, and [Threat Scenarios](threat-scenarios.md) for preparation requirements.

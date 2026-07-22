@@ -4,7 +4,7 @@ This technique creates real permanent WMI event subscriptions in `root\subscript
 
 > Run this technique from an Administrator PowerShell session on an isolated Windows 10/11 lab VM.
 
-Use `Start-SCT.ps1` when the outcome should be appended to `results/raw/test-results.csv`. The direct commands below are useful for focused testing, but they only produce console output and marker files.
+Use `Start-SCT.ps1` when the outcome should be appended to the active product's `results/<control-id>/results.csv`. The direct commands below are useful for focused testing, but they only produce console output and marker files.
 
 ## How to run
 

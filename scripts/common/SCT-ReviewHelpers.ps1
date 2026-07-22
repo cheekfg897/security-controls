@@ -1,5 +1,5 @@
 # Internal shared helpers for the CSV-first SCT result-review workflow.
-# Dot-source this file from scripts; do not run it directly.
+# Dot-source this file from review and validation scripts; do not run it directly.
 
 Set-StrictMode -Version Latest
 

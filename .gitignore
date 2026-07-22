@@ -1,5 +1,7 @@
-# Raw test results & logs (may contain sensitive data)
-results/raw/
+# Per-control test workspaces (may contain sensitive data)
+results/*
+!results/README.md
+submissions/*.zip
 *.log
 *.evtx
 
@@ -40,10 +42,5 @@ samples/*.tar.gz
 
 # Sensitive config (API keys, credentials, IPs)
 config.local.*
-config/control-profile.local.json
 secrets.*
 *.env
-
-# Generated human-review files
-results/analysis/*
-!results/analysis/.gitkeep

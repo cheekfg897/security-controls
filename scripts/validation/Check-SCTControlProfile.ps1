@@ -3,7 +3,8 @@
     Checks an SCT control-profile JSON file.
 
 .EXAMPLE
-    .\scripts\Check-SCTControlProfile.ps1 -Path .\config\control-profile.local.json
+    .\scripts\validation\Check-SCTControlProfile.ps1 `
+        -Path .\results\sentinelone\control-profile.json
 #>
 
 [CmdletBinding()]
@@ -11,7 +12,7 @@ param([Parameter(Mandatory)] [string]$Path)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-. (Join-Path $PSScriptRoot '_SCT-ReviewHelpers.ps1')
+. (Join-Path $PSScriptRoot '..\common\SCT-ReviewHelpers.ps1')
 
 try {
     $resolvedPath = (Resolve-Path -LiteralPath $Path -ErrorAction Stop).Path

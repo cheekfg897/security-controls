@@ -23,12 +23,14 @@ The old `vector` and overloaded `technique` terminology is no longer part of the
 |---|---|
 | `Start-SCT.ps1` | Entry point, path setup, product selection, and interactive/non-interactive mode. |
 | `core/SCT-Core.ps1` | Manifest validation, menus, inferred execution, marker checks, cleanup, and summaries. |
+| `core/SCT-Results.ps1` | Canonical result columns, schema checking, and append-only result writing. |
 | `scenarios/*/module.json` | Module, technique, and optional subtest metadata. |
 | `scenarios/*/test-catalog.csv` | Human-readable objective, behavior, and success indicator for every test/subtest. |
 | Technique scripts | Perform tests and technique-specific cleanup. |
-| `scripts/Add-SCTModule.ps1` | Add a module definition and its test descriptions through guided prompts. |
-| `scripts/Prepare-SCTResultsForReview.ps1` | Join raw observations to control identity and test metadata for human review. |
-| `scripts/Check-SCTModules.ps1` | Check every manifest and script contract. |
+| `scripts/authoring/Add-SCTModule.ps1` | Add a module definition and its test descriptions through guided prompts. |
+| `scripts/review/Setup-SCTControl.ps1` | Create a product workspace, control profile, and combined test catalogue. |
+| `scripts/review/Build-SCTComparisonPackage.ps1` | Validate and package one product's three comparison files. |
+| `scripts/validation/Check-SCTModules.ps1` | Check every manifest and script contract. |
 
 ## Simplified `module.json`
 
@@ -121,8 +123,8 @@ Existing scripts retain `-Technique` as a backward-compatible alias, but new scr
 Run this after editing any manifest or script contract:
 
 ```powershell
-.\scripts\Check-SCTModules.ps1
-.\scripts\Check-SCTTestDescriptions.ps1
+.\scripts\validation\Check-SCTModules.ps1
+.\scripts\validation\Check-SCTTestDescriptions.ps1
 ```
 
 Validation rejects unknown/legacy fields, missing required fields, malformed or duplicate IDs, empty/duplicate/reserved subtests, invalid `server_subtests`, missing scripts, and subtest scripts without `-Subtest`.
@@ -130,7 +132,9 @@ Validation rejects unknown/legacy fields, missing required fields, malformed or 
 ## Non-interactive Module 04 run
 
 ```powershell
-.\Start-SCT.ps1 -Control SentinelOne -RunModule 04 -NonInteractive
+.\Start-SCT.ps1 `
+    -ControlProfilePath .\results\sentinelone\control-profile.json `
+    -RunModule 04 -NonInteractive
 ```
 
 Module 04 must contain only techniques with subtests. Each script must also accept `-NoPause`, `-NoReport`, and `-CleanupOnly`. SCT records all outcomes before cleaning up each technique.
@@ -139,18 +143,19 @@ Module 04 must contain only techniques with subtests. Each script must also acce
 
 | File | Contents |
 |---|---|
-| `results/raw/test-results.csv` | `timestamp`, `run_id`, `control`, `technique_id`, `technique_name`, `subtest`, `outcome`, and `notes`. |
-| `results/raw/results.csv` | Sample-delivery rows keyed by `technique_id`. |
-| `results/analysis/results-for-review.csv` | Stable, Excel-ready rows with blank `detection_status` and `action_status`. |
-| `results/analysis/test-catalog.csv` | Combined test descriptions generated from all module catalogues. |
+| `results/<control-id>/control-profile.json` | Product, version, agent, policy, settings, exclusions, and local-log context. |
+| `results/<control-id>/results.csv` | Generated observations plus reviewer-entered detection, action, and notes fields. |
+| `results/<control-id>/test-catalog.csv` | Combined test descriptions generated from all module catalogues. |
 
-Legacy generated CSV columns are read for compatibility, but all newly created files use the simplified names. Generated results and real malware samples should remain uncommitted.
+All framework-managed writers use one fixed result schema. Generated results and real malware samples should remain uncommitted.
 
 Each interactive subtest selection receives an `I<technique>-...` run ID. A non-interactive Module 04 run uses one shared `M04-...` run ID for all of its technique rows.
 
-`Prepare-SCTResultsForReview.ps1` does not modify either raw CSV. It derives only the execution observation, attaches the exact technique script and sample identity/hash when the source captured them, and leaves the control verdict to a reviewer. The reviewer enters:
+There is no raw/analysis conversion or separate reviewed copy. SCT appends generated observations to `results.csv` and leaves the control verdict fields blank. The reviewer edits that same file and enters:
 
 - `detection_status`: `detected` or `not_detected`.
 - `action_status`: `blocked_before_execution`, `blocked_after_execution`, or `not_blocked`.
 
-The completed copy is conventionally named `reviewed-results.csv` and can be checked with `Check-SCTReviewedResults.ps1`. Keeping execution, detection, and action separate avoids inferring control behavior from a marker or process-launch result.
+The reviewer may also fill `reviewer_notes`. The completed file is checked with `Check-SCTResults.ps1`, then packaged with its sibling profile and catalogue by `Build-SCTComparisonPackage.ps1`. Keeping execution, detection, and action separate avoids inferring control behavior from a marker or process-launch result.
+
+The package builder writes `submissions/<control-id>.zip`. Two products therefore produce two self-contained ZIP files for the comparison system.

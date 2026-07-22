@@ -8,7 +8,7 @@
     needed by later result review.
 
 .EXAMPLE
-    .\scripts\Describe-SCTModuleTests.ps1 `
+    .\scripts\authoring\Describe-SCTModuleTests.ps1 `
         -ModulePath .\scenarios\05-data-exfiltration\module.json
 #>
 
@@ -97,7 +97,7 @@ foreach ($technique in @($module.techniques)) {
 }
 
 if ((Test-Path -LiteralPath $resolvedOutputPath) -and -not $Force -and
-    -not (Read-SCTYesNo "Overwrite $resolvedOutputPath?")) {
+    -not (Read-SCTYesNo "Overwrite ${resolvedOutputPath}?")) {
     Write-Host 'No file was changed.' -ForegroundColor Yellow
     return
 }
@@ -108,4 +108,4 @@ if ($directory -and -not (Test-Path -LiteralPath $directory)) {
 }
 $rows | Export-Csv -LiteralPath $resolvedOutputPath -NoTypeInformation -Encoding UTF8
 Write-Host "Wrote $($rows.Count) catalogue rows to $resolvedOutputPath" -ForegroundColor Green
-Write-Host 'Check with: .\scripts\Check-SCTTestDescriptions.ps1' -ForegroundColor DarkGray
+Write-Host 'Check with: .\scripts\validation\Check-SCTTestDescriptions.ps1' -ForegroundColor DarkGray

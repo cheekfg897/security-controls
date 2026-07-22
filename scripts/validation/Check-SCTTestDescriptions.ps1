@@ -8,10 +8,12 @@ param([string]$ScenariosPath)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-. (Join-Path $PSScriptRoot '_SCT-ReviewHelpers.ps1')
+. (Join-Path $PSScriptRoot '..\common\SCT-ReviewHelpers.ps1')
 
 if (-not $ScenariosPath) {
-    $ScenariosPath = Join-Path (Split-Path $PSScriptRoot -Parent) 'scenarios'
+    $scriptsRoot = Split-Path $PSScriptRoot -Parent
+    $repoRoot = Split-Path $scriptsRoot -Parent
+    $ScenariosPath = Join-Path $repoRoot 'scenarios'
 }
 
 $catalog = Get-SCTCatalogData -ScenariosPath $ScenariosPath

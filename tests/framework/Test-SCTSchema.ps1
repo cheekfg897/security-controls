@@ -9,7 +9,7 @@ param()
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-$repoRoot = Split-Path $PSScriptRoot -Parent
+$repoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 . (Join-Path $repoRoot 'core\SCT-Core.ps1')
 
 $script:Assertions = 0
@@ -247,21 +247,66 @@ param(
     $marker = Get-SCTMarkerPath -TechniqueId '4.2' -Subtest 'HiddenXML'
     Assert-True ($marker -like '*\Temp\art-v4.2-HiddenXML.txt') 'Marker paths must follow the standard convention.'
 
-    $legacyCsv = Join-Path $tempRoot 'legacy-results.csv'
-    @'
-"timestamp","control","vector_id","vector_name","technique","outcome","notes"
-"2026-01-01T00:00:00.0000000Z","Test","4.2","Scheduled Task","HiddenXML","BLOCKED","legacy"
-'@ | Set-Content -LiteralPath $legacyCsv -Encoding UTF8
-    Update-SCTTestResultsSchema -Path $legacyCsv
-    $migrated = @(Import-Csv -LiteralPath $legacyCsv)
-    Assert-True ($migrated[0].technique_id -eq '4.2') 'Legacy result technique ID must migrate.'
-    Assert-True ($migrated[0].subtest -eq 'HiddenXML') 'Legacy result subtest must migrate.'
-    Assert-True ($migrated[0].PSObject.Properties.Name -contains 'run_id') 'Migrated results must include run_id.'
+    $canonicalCsv = Join-Path $tempRoot 'canonical-results.csv'
+    Write-SCTResultRow -Path $canonicalCsv -Timestamp (Get-Date) -RunId 'fixture-run' `
+        -TechniqueId '4.2' -TechniqueName 'Scheduled Task' -Subtest 'HiddenXML' `
+        -TestScript 'v4.2-scheduled-task/v4.2-scheduled-task.ps1' -TestStage 'execution' `
+        -SourceResult 'BLOCKED' -ExecutionStatus 'not_executed' -Notes 'fixture'
+    $canonicalRows = @(Import-Csv -LiteralPath $canonicalCsv)
+    Assert-True ($canonicalRows[0].technique_id -eq '4.2') 'Canonical results must identify the technique.'
+    Assert-True ($canonicalRows[0].subtest -eq 'HiddenXML') 'Canonical results must identify the subtest.'
+    Assert-True ($canonicalRows[0].PSObject.Properties.Name.Count -eq (Get-SCTResultColumns).Count) `
+        'Canonical results must use the complete shared schema.'
+    Assert-True (-not $canonicalRows[0].detection_status -and -not $canonicalRows[0].action_status) `
+        'New result rows must leave human review fields blank.'
 
     $scenariosPath = Join-Path $repoRoot 'scenarios'
     $realModules = @(Get-SCTModules -ScenariosPath $scenariosPath)
     Assert-True ($realModules.Count -eq 4) 'All four repository modules must load.'
     Assert-True (@($realModules | ForEach-Object { $_.techniques }).Count -eq 15) 'All 15 repository techniques must load.'
+
+    foreach ($toolName in @(
+        'AddModule', 'DescribeModuleTests', 'SetupControl', 'BuildPackage',
+        'CheckControlProfile', 'CheckModules', 'CheckResults', 'CheckTestDescriptions'
+    )) {
+        $toolPath = Get-SCTRepositoryToolPath -RepoRoot $repoRoot -Tool $toolName
+        Assert-True (Test-Path -LiteralPath $toolPath -PathType Leaf) `
+            "Manage SCT must resolve the $toolName utility."
+    }
+
+    $fixtureResultsRoot = Join-Path $tempRoot 'results'
+    $fixtureWorkspaceRoot = Join-Path $fixtureResultsRoot 'example-control'
+    New-Item -ItemType Directory -Path $fixtureWorkspaceRoot -Force | Out-Null
+    $fixtureProfilePath = Join-Path $fixtureWorkspaceRoot 'control-profile.json'
+    Copy-Item -LiteralPath (Join-Path $repoRoot 'config\control-profile.example.json') `
+        -Destination $fixtureProfilePath
+    $discoveredProfiles = @(Get-SCTControlProfilePaths -ResultsRoot $fixtureResultsRoot)
+    Assert-True ($discoveredProfiles.Count -eq 1) 'Control workspace discovery must find one profile per product folder.'
+    $fixtureWorkspace = Get-SCTControlWorkspace -RepoRoot $tempRoot -ProfilePath $fixtureProfilePath
+    Assert-True ($fixtureWorkspace.ControlId -eq 'example-control') 'The workspace must use the profile control id.'
+    Assert-True ($fixtureWorkspace.ResultsPath -eq (Join-Path $fixtureWorkspaceRoot 'results.csv')) `
+        'All observations must be routed to one canonical workspace results file.'
+    Assert-True ($fixtureWorkspace.CatalogPath -eq (Join-Path $fixtureWorkspaceRoot 'test-catalog.csv')) `
+        'The test catalogue must sit beside the canonical results file.'
+
+    $module1 = @($realModules | Where-Object { $_.id -eq '01' })[0]
+    foreach ($sampleTechniqueId in @('1.1', '1.2', '1.3')) {
+        $sampleTechnique = @($module1.techniques | Where-Object { $_.id -eq $sampleTechniqueId })[0]
+        $sampleScriptPath = Join-Path $module1.ScriptDir $sampleTechnique.script
+        Assert-True (Test-SCTScriptSupportsParameter -ScriptPath $sampleScriptPath -ParameterName 'ResultsPath') `
+            "Technique $sampleTechniqueId must accept the selected workspace result path."
+        $sampleScriptText = Get-Content -LiteralPath $sampleScriptPath -Raw -Encoding UTF8
+        Assert-True ($sampleScriptText -notmatch 'results\\raw') `
+            "Technique $sampleTechniqueId must not fall back to the old shared results directory."
+        $missingWorkspaceRejected = $false
+        try {
+            & $sampleScriptPath
+        } catch {
+            $missingWorkspaceRejected = $_.Exception.Message -like '*ResultsPath is required*'
+        }
+        Assert-True $missingWorkspaceRejected `
+            "Technique $sampleTechniqueId must reject a direct run without a workspace result path."
+    }
 
     $module4 = @($realModules | Where-Object { $_.id -eq '04' })[0]
     $technique41 = @($module4.techniques | Where-Object { $_.id -eq '4.1' })[0]
@@ -320,19 +365,22 @@ param(
         $interactiveTechnique = [pscustomobject]@{
             id = '4.99'
             name = 'Interactive CSV Fixture'
+            script = 'interactive.ps1'
             subtests = @('One')
         }
         Invoke-SCTSubtests -Technique $interactiveTechnique -ScriptPath $interactiveScript `
-            -Control 'FixtureControl' -TestResultsPath $interactiveCsv
+            -Control 'FixtureControl' -ResultsPath $interactiveCsv
 
         Assert-True (Test-Path -LiteralPath $interactiveCsv -PathType Leaf) `
-            'Interactive subtest execution must create test-results.csv.'
+            'Interactive subtest execution must create results.csv.'
         $interactiveRows = @(Import-Csv -LiteralPath $interactiveCsv)
         Assert-True ($interactiveRows.Count -eq 1) 'Interactive subtest execution must write one row.'
         Assert-True ($interactiveRows[0].technique_id -eq '4.99') 'Interactive CSV must identify the technique.'
         Assert-True ($interactiveRows[0].subtest -eq 'One') 'Interactive CSV must identify the subtest.'
         Assert-True (-not [string]::IsNullOrWhiteSpace($interactiveRows[0].run_id)) `
             'Interactive CSV rows must have a run_id.'
+        Assert-True ($interactiveRows[0].execution_status -eq 'not_executed') `
+            'A missing marker must be captured as not_executed.'
     } finally {
         $env:SystemRoot = $originalSystemRoot
     }

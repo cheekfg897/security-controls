@@ -8,13 +8,13 @@
     and are intentionally not stored in module.json.
 
 .EXAMPLE
-    .\scripts\Add-SCTModule.ps1
+    .\scripts\authoring\Add-SCTModule.ps1
 
 .EXAMPLE
-    .\scripts\Add-SCTModule.ps1 -OutputPath .\scenarios\05-lateral-movement\module.json
+    .\scripts\authoring\Add-SCTModule.ps1 -OutputPath .\scenarios\05-lateral-movement\module.json
 
 .EXAMPLE
-    .\scripts\Add-SCTModule.ps1 -NoWrite
+    .\scripts\authoring\Add-SCTModule.ps1 -NoWrite
 #>
 
 [CmdletBinding()]
@@ -168,16 +168,25 @@ do {
         }
         if ($subtests.Count -gt 0) {
             $technique['subtests'] = $subtests
-            while ($true) {
-                $serverSubtests = @(Read-List -Prompt 'Subtests that need a server VM (leave blank for none)')
-                $invalid = @($serverSubtests | Where-Object { $subtests -notcontains $_ })
-                $duplicates = @($serverSubtests | Group-Object | Where-Object Count -gt 1 | ForEach-Object Name)
-                if ($invalid.Count -eq 0 -and $duplicates.Count -eq 0) { break }
-                if ($invalid.Count -gt 0) {
-                    Write-Host "  Server subtests must also appear in subtests: $($invalid -join ', ')" -ForegroundColor Yellow
-                }
-                if ($duplicates.Count -gt 0) {
-                    Write-Host "  Remove duplicate server subtests: $($duplicates -join ', ')" -ForegroundColor Yellow
+            Write-Host ''
+            Write-Host 'Subtest input: enter names separated by commas, without quotation marks.' -ForegroundColor DarkGray
+            Write-Host 'Example: HTTPS, DNS, WebUpload' -ForegroundColor DarkGray
+            Write-Host 'The names must exactly match the subtests listed above.' -ForegroundColor DarkGray
+
+            if (Read-YesNo -Prompt 'Does every subtest require a companion server VM?' -Default $false) {
+                $serverSubtests = @($subtests)
+            } else {
+                while ($true) {
+                    $serverSubtests = @(Read-List -Prompt 'Which subtests require a server VM? Enter comma-separated names, or leave blank for none')
+                    $invalid = @($serverSubtests | Where-Object { $subtests -notcontains $_ })
+                    $duplicates = @($serverSubtests | Group-Object | Where-Object Count -gt 1 | ForEach-Object Name)
+                    if ($invalid.Count -eq 0 -and $duplicates.Count -eq 0) { break }
+                    if ($invalid.Count -gt 0) {
+                        Write-Host "  These names are not in the subtests list: $($invalid -join ', ')" -ForegroundColor Yellow
+                    }
+                    if ($duplicates.Count -gt 0) {
+                        Write-Host "  Remove duplicate names: $($duplicates -join ', ')" -ForegroundColor Yellow
+                    }
                 }
             }
             Add-IfPresent -Target $technique -Name 'server_subtests' -Value $serverSubtests
@@ -211,18 +220,18 @@ if ($NoWrite) {
 $resolvedPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputPath)
 $outputDir = Split-Path -Path $resolvedPath -Parent
 if ($outputDir -and -not (Test-Path -LiteralPath $outputDir)) {
-    if (-not (Read-YesNo -Prompt "Create directory $outputDir?" -Default $true)) { return }
+    if (-not (Read-YesNo -Prompt "Create directory ${outputDir}?" -Default $true)) { return }
     New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
 }
 if ((Test-Path -LiteralPath $resolvedPath) -and
-    -not (Read-YesNo -Prompt "Overwrite $resolvedPath?" -Default $false)) { return }
+    -not (Read-YesNo -Prompt "Overwrite ${resolvedPath}?" -Default $false)) { return }
 
 Set-Content -LiteralPath $resolvedPath -Value $json -Encoding UTF8
 Write-Host ''
 Write-Host "Wrote $resolvedPath" -ForegroundColor Green
 if ($SkipTestDescriptions) {
     Write-Host 'Test descriptions were skipped. Add them later with:' -ForegroundColor Yellow
-    Write-Host ".\scripts\Describe-SCTModuleTests.ps1 -ModulePath `"$resolvedPath`"" -ForegroundColor White
+    Write-Host ".\scripts\authoring\Describe-SCTModuleTests.ps1 -ModulePath `"$resolvedPath`"" -ForegroundColor White
 } else {
     Write-Host ''
     Write-Host 'Now describe the tests in this module.' -ForegroundColor Cyan

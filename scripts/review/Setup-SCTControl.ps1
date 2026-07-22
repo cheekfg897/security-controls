@@ -5,13 +5,15 @@
 .DESCRIPTION
     Prompts for the common control and policy fields, then optionally collects
     vendor-specific settings, exclusions, and local log locations. Use
-    -NonInteractive with the named parameters for automation and tests.
+    -NonInteractive with the named parameters for automation and tests. By
+    default, creates results\<control-id>\control-profile.json together with
+    the test catalogue used to interpret that control's results.csv.
 
 .EXAMPLE
-    .\scripts\Setup-SCTControl.ps1
+    .\scripts\review\Setup-SCTControl.ps1
 
 .EXAMPLE
-    .\scripts\Setup-SCTControl.ps1 -NonInteractive -Force `
+    .\scripts\review\Setup-SCTControl.ps1 -NonInteractive -Force `
         -ControlId control-a -DisplayName 'Control A' -Vendor Vendor `
         -Product Product -ProductVersion 1.0 -AgentVersion 1.0 `
         -PolicyName 'Evaluation Policy' -DefaultMode detect_only
@@ -19,7 +21,8 @@
 
 [CmdletBinding()]
 param(
-    [string]$OutputPath,
+    [string]$ResultsRoot,
+    [string]$ScenariosPath,
     [string]$ControlId,
     [string]$DisplayName,
     [string]$Vendor,
@@ -36,7 +39,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-. (Join-Path $PSScriptRoot '_SCT-ReviewHelpers.ps1')
+. (Join-Path $PSScriptRoot '..\common\SCT-ReviewHelpers.ps1')
 
 function Read-RequiredValue {
     param([string]$Prompt, [string]$Current, [scriptblock]$Validate, [string]$Message)
@@ -59,10 +62,9 @@ function Read-YesNoValue {
     }
 }
 
-$repoRoot = Split-Path $PSScriptRoot -Parent
-if (-not $OutputPath) {
-    $OutputPath = Join-Path $repoRoot 'config\control-profile.local.json'
-}
+$repoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+if (-not $ResultsRoot) { $ResultsRoot = Join-Path $repoRoot 'results' }
+if (-not $ScenariosPath) { $ScenariosPath = Join-Path $repoRoot 'scenarios' }
 
 $ControlId = Read-RequiredValue 'Control id' $ControlId `
     { param($value) $value -match '^[a-z0-9][a-z0-9._-]*$' } `
@@ -76,6 +78,8 @@ $PolicyName = Read-RequiredValue 'Policy name' $PolicyName $null 'Enter a policy
 $DefaultMode = Read-RequiredValue 'Default mode (detect_only, detect_and_block, or custom)' $DefaultMode `
     { param($value) $value -in @('detect_only', 'detect_and_block', 'custom') } `
     'Enter detect_only, detect_and_block, or custom.'
+
+$OutputPath = Join-Path (Join-Path $ResultsRoot $ControlId) 'control-profile.json'
 
 $settings = @()
 $exclusions = @()
@@ -129,9 +133,14 @@ $profile = [pscustomobject][ordered]@{
 $errors = @(Get-SCTControlProfileErrors -Profile $profile)
 if ($errors.Count -gt 0) { throw ($errors -join [Environment]::NewLine) }
 
+$catalog = Get-SCTCatalogData -ScenariosPath $ScenariosPath
+if ($catalog.Errors.Count -gt 0) {
+    throw "Invalid SCT test catalog:`n$($catalog.Errors -join "`n")"
+}
+
 $resolvedPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputPath)
 if ((Test-Path -LiteralPath $resolvedPath) -and -not $Force) {
-    if ($NonInteractive -or -not (Read-YesNoValue "Overwrite $resolvedPath?")) {
+    if ($NonInteractive -or -not (Read-YesNoValue "Overwrite ${resolvedPath}?")) {
         throw "Output file already exists: $resolvedPath"
     }
 }
@@ -142,4 +151,11 @@ if ($directory -and -not (Test-Path -LiteralPath $directory)) {
 
 $profile | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $resolvedPath -Encoding UTF8
 Write-Host "Wrote $resolvedPath" -ForegroundColor Green
-Write-Host "Check with: .\scripts\Check-SCTControlProfile.ps1 -Path `"$resolvedPath`"" -ForegroundColor DarkGray
+$catalogPath = Join-Path $directory 'test-catalog.csv'
+$catalog.Rows |
+    Select-Object module_id, module_name, technique_id, technique_name, subtest, attack_id, test_script, `
+        objective, what_it_does, success_indicator, status |
+    Export-Csv -LiteralPath $catalogPath -NoTypeInformation -Encoding UTF8
+Write-Host "Wrote $catalogPath" -ForegroundColor Green
+Write-Host "Workspace: $directory" -ForegroundColor Green
+Write-Host "Check with: .\scripts\validation\Check-SCTControlProfile.ps1 -Path `"$resolvedPath`"" -ForegroundColor DarkGray

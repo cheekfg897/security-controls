@@ -3,7 +3,7 @@
     Checks every SCT module.json file and its script contract.
 
 .EXAMPLE
-    .\scripts\Check-SCTModules.ps1
+    .\scripts\validation\Check-SCTModules.ps1
 #>
 
 [CmdletBinding()]
@@ -14,8 +14,8 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$repoRoot = Split-Path $scriptRoot -Parent
+$scriptsRoot = Split-Path $PSScriptRoot -Parent
+$repoRoot = Split-Path $scriptsRoot -Parent
 if (-not $ScenariosPath) {
     $ScenariosPath = Join-Path $repoRoot 'scenarios'
 }

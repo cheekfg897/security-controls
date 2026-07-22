@@ -15,10 +15,13 @@
     new malware samples, techniques, or entirely new test modules.
 
 .PARAMETER Control
-    Name of the security product under test (e.g. SentinelOne, CarbonBlack,
-    Morphisec, Baseline-NoAV). Passed automatically to every test script so
-    results.csv rows are tagged consistently. If omitted, the launcher prompts
-    at startup.
+    Deprecated compatibility parameter. The control name is now read from the
+    selected control profile so identity and results cannot diverge.
+
+.PARAMETER ControlProfilePath
+    Selects a product workspace through its results\<control-id>\control-profile.json.
+    Required with -NonInteractive. Interactive runs prompt when multiple
+    workspaces exist and automatically select the only workspace when possible.
 
 .PARAMETER SamplesPath
     Override the default samples/ folder used for malware ZIP archives.
@@ -28,10 +31,11 @@
     .\Start-SCT.ps1
 
 .EXAMPLE
-    .\Start-SCT.ps1 -Control SentinelOne
+    .\Start-SCT.ps1 -ControlProfilePath .\results\sentinelone\control-profile.json
 
 .EXAMPLE
-    .\Start-SCT.ps1 -Control CarbonBlack -SamplesPath D:\MalwareSamples
+    .\Start-SCT.ps1 -ControlProfilePath .\results\sentinelone\control-profile.json `
+        -SamplesPath D:\MalwareSamples
 
 .NOTES
     Lab use only. Run inside an isolated VM - NEVER on production systems.
@@ -41,6 +45,7 @@
 [CmdletBinding()]
 param(
     [string]$Control,
+    [string]$ControlProfilePath,
     [string]$SamplesPath,
     [string]$RunModule,
     [switch]$NonInteractive,
@@ -69,10 +74,34 @@ if (-not (Test-Path $corePath)) {
 # Resolve working paths
 # ---------------------------------------------------------------------------
 $scenariosPath    = Join-Path $PSScriptRoot 'scenarios'
-$resultsPath      = Join-Path $PSScriptRoot 'results\raw\results.csv'
-$testResultsPath  = Join-Path $PSScriptRoot 'results\raw\test-results.csv'
+$resultsRoot      = Join-Path $PSScriptRoot 'results'
 if (-not $SamplesPath) {
     $SamplesPath = Join-Path $PSScriptRoot 'samples'
+}
+
+$workspace = $null
+if ($ControlProfilePath) {
+    $workspace = Get-SCTControlWorkspace -RepoRoot $PSScriptRoot -ProfilePath $ControlProfilePath
+} else {
+    $availableProfiles = @(Get-SCTControlProfilePaths -ResultsRoot $resultsRoot)
+    if ($availableProfiles.Count -eq 1) {
+        $workspace = Get-SCTControlWorkspace -RepoRoot $PSScriptRoot -ProfilePath $availableProfiles[0]
+    } elseif ($Control) {
+        foreach ($profilePath in $availableProfiles) {
+            $candidate = Get-SCTControlWorkspace -RepoRoot $PSScriptRoot -ProfilePath $profilePath
+            if ($candidate.ControlId -eq $Control -or $candidate.ControlName -eq $Control) {
+                $workspace = $candidate
+                break
+            }
+        }
+    }
+}
+
+if ($workspace) {
+    if ($Control -and $Control -ne $workspace.ControlName -and $Control -ne $workspace.ControlId) {
+        Write-Warning "Ignoring -Control '$Control'; the selected profile identifies '$($workspace.ControlName)'."
+    }
+    $Control = $workspace.ControlName
 }
 
 # ---------------------------------------------------------------------------
@@ -81,23 +110,20 @@ if (-not $SamplesPath) {
 Show-SCTBanner
 
 # ---------------------------------------------------------------------------
-# Prompt for security product name (once, reused for all tests)
+# Validate non-interactive identity requirements
 # ---------------------------------------------------------------------------
-if (-not $Control) {
-    if ($NonInteractive) {
-        throw "-Control is required with -NonInteractive so CSV rows identify the product under test."
-    }
-    Write-Host "  Before we start, identify the security product under test." -ForegroundColor White
-    Write-Host "  This label tags every row in the sample and subtest result CSVs." -ForegroundColor DarkGray
-    Write-Host "  Examples: SentinelOne, CarbonBlack, Morphisec, Baseline-NoAV" -ForegroundColor DarkGray
-    $Control = (Read-Host "`n  Security product name").Trim()
-    if (-not $Control) { $Control = 'Unnamed-Control' }
+if ($NonInteractive -and -not $ControlProfilePath) {
+    throw "-ControlProfilePath is required with -NonInteractive so configuration and results stay together."
 }
 
 Write-Host ""
-Write-Host "  Control       : $Control" -ForegroundColor Green
-Write-Host "  Sample CSV    : $resultsPath" -ForegroundColor DarkGray
-Write-Host "  Subtest CSV   : $testResultsPath" -ForegroundColor DarkGray
+if ($workspace) {
+    Write-Host "  Control       : $($workspace.ControlName) [$($workspace.ControlId)]" -ForegroundColor Green
+    Write-Host "  Workspace     : $($workspace.WorkspaceRoot)" -ForegroundColor DarkGray
+} else {
+    Write-Host "  Control       : no workspace selected" -ForegroundColor Yellow
+    Write-Host "  Setup         : [M] Manage SCT -> [3] Create a control workspace" -ForegroundColor DarkGray
+}
 Write-Host "  Samples       : $SamplesPath" -ForegroundColor DarkGray
 
 # ---------------------------------------------------------------------------
@@ -109,7 +135,7 @@ if ($modules.Count -eq 0) {
     Write-Host ""
     Write-Host "  [!] No modules found in: $scenariosPath" -ForegroundColor Red
     Write-Host "  [!] Each module folder needs a module.json file." -ForegroundColor Red
-    Write-Host "  [!] See docs/project-structure.md -> 'Adding a module'." -ForegroundColor Red
+    Write-Host "  [!] See docs/guides/project-structure.md -> 'Adding a module'." -ForegroundColor Red
     Write-Host ""
     exit 1
 }
@@ -127,13 +153,13 @@ if ($NonInteractive) {
     }
 
     [void](Invoke-SCTModuleNonInteractive -Module $targetModule[0] -Control $Control `
-        -TestResultsPath $testResultsPath -StartDelaySeconds $StartDelaySeconds `
+        -ResultsPath $workspace.ResultsPath -StartDelaySeconds $StartDelaySeconds `
         -InterTechniqueDelaySeconds $InterTechniqueDelaySeconds)
     exit 0
 }
 
 if ($RunModule) {
-    throw "-RunModule requires -NonInteractive. Use: .\Start-SCT.ps1 -Control <product> -RunModule 04 -NonInteractive"
+    throw "-RunModule requires -NonInteractive. Use -ControlProfilePath <profile> -RunModule 04 -NonInteractive."
 }
 
 # ---------------------------------------------------------------------------
@@ -149,26 +175,70 @@ while ($true) {
     switch ($choice.ToUpper()) {
         'Q' {
             Write-Host ""
-            Write-Host "  Exiting. Review your results at:" -ForegroundColor Gray
-            Write-Host "  Samples : $resultsPath" -ForegroundColor DarkGray
-            Write-Host "  Subtests: $testResultsPath" -ForegroundColor DarkGray
+            if ($workspace) {
+                Write-Host "  Exiting. Product workspace:" -ForegroundColor Gray
+                Write-Host "  $($workspace.WorkspaceRoot)" -ForegroundColor DarkGray
+            } else {
+                Write-Host "  Exiting. No product workspace was selected." -ForegroundColor Gray
+            }
             Write-Host ""
             exit 0
         }
         'V' {
-            Show-SCTSummary -ResultsPath $resultsPath -TestResultsPath $testResultsPath
+            if (-not $workspace) {
+                $selectedProfile = Select-SCTControlProfilePath -ResultsRoot $resultsRoot
+                if ($selectedProfile) {
+                    $workspace = Get-SCTControlWorkspace -RepoRoot $PSScriptRoot -ProfilePath $selectedProfile
+                    $Control = $workspace.ControlName
+                }
+            }
+            if ($workspace) {
+                Show-SCTSummary -ResultsPath $workspace.ResultsPath
+            }
+        }
+        'M' {
+            $profilesBefore = @(Get-SCTControlProfilePaths -ResultsRoot $resultsRoot)
+            Invoke-SCTManagementMenu -RepoRoot $PSScriptRoot
+            $modules = Get-SCTModules -ScenariosPath $scenariosPath
+            $profilesAfter = @(Get-SCTControlProfilePaths -ResultsRoot $resultsRoot)
+            $newProfiles = @($profilesAfter | Where-Object { $profilesBefore -notcontains $_ })
+            if ($newProfiles.Count -eq 1) {
+                $workspace = Get-SCTControlWorkspace -RepoRoot $PSScriptRoot -ProfilePath $newProfiles[0]
+                $Control = $workspace.ControlName
+                Write-Host "  Active workspace: $($workspace.ControlName) [$($workspace.ControlId)]" -ForegroundColor Green
+            } elseif ($workspace -and (Test-Path -LiteralPath $workspace.ProfilePath)) {
+                $workspace = Get-SCTControlWorkspace -RepoRoot $PSScriptRoot -ProfilePath $workspace.ProfilePath
+                $Control = $workspace.ControlName
+            }
+        }
+        'C' {
+            $selectedProfile = Select-SCTControlProfilePath -ResultsRoot $resultsRoot
+            if ($selectedProfile) {
+                $workspace = Get-SCTControlWorkspace -RepoRoot $PSScriptRoot -ProfilePath $selectedProfile
+                $Control = $workspace.ControlName
+                Write-Host "  Active workspace: $($workspace.ControlName) [$($workspace.ControlId)]" -ForegroundColor Green
+            }
         }
         default {
             $idx = $choice -as [int]
             if ($idx -ge 1 -and $idx -le $modules.Count) {
+                if (-not $workspace) {
+                    $selectedProfile = Select-SCTControlProfilePath -ResultsRoot $resultsRoot
+                    if ($selectedProfile) {
+                        $workspace = Get-SCTControlWorkspace -RepoRoot $PSScriptRoot -ProfilePath $selectedProfile
+                        $Control = $workspace.ControlName
+                    }
+                }
+                if (-not $workspace) {
+                    continue
+                }
                 Invoke-SCTModuleMenu -Module $modules[$idx - 1] `
                     -Control $Control `
                     -SamplesPath $SamplesPath `
                     -ScenarioRoot $scenariosPath `
-                    -ResultsPath $resultsPath `
-                    -TestResultsPath $testResultsPath
+                    -ResultsPath $workspace.ResultsPath
             } else {
-                Write-Host "  Invalid selection. Enter 1-$($modules.Count), [V], or [Q]." -ForegroundColor Yellow
+                Write-Host "  Invalid selection. Enter 1-$($modules.Count), [C], [M], [V], or [Q]." -ForegroundColor Yellow
                 Start-Sleep -Milliseconds 600
             }
         }

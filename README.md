@@ -14,7 +14,7 @@ SCT is a PowerShell lab framework for checking whether EDR and antivirus product
   - [Run SCT normally](#run-sct-normally)
   - [Malware samples](#malware-samples)
   - [Run Module 4 non-interactively](#run-module-4-non-interactively)
-  - [Prepare one VM's results for review](#prepare-one-vms-results-for-review)
+  - [Complete and package one product's results](#complete-and-package-one-products-results)
 - [Built-in modules](#built-in-modules)
 - [Project structure](#project-structure)
 - [Adding a technique](#adding-a-technique)
@@ -54,12 +54,13 @@ Set-Location security-controls
 | I want to... | Run this |
 |---|---|
 | Run the security tests | `.\Start-SCT.ps1` |
-| Describe the control installed in this VM | `.\scripts\Setup-SCTControl.ps1` |
-| Prepare finished test results for Excel review | `.\scripts\Prepare-SCTResultsForReview.ps1` |
-| Fill detection and action status | No script: edit `results-for-review.csv` in Excel |
-| Check the completed Excel CSV | `.\scripts\Check-SCTReviewedResults.ps1` |
-| Add a new test module | `.\scripts\Add-SCTModule.ps1` |
-| Check module files after editing them | `.\scripts\Check-SCTModules.ps1` |
+| Open module, review, and validation tools | `.\Start-SCT.ps1`, then select `[M] Manage SCT` |
+| Create a product workspace | `.\Start-SCT.ps1`, then select `[M]` → `[3]` |
+| Fill detection and action status | Edit `results/<control-id>/results.csv` directly |
+| Check the completed results | `.\Start-SCT.ps1`, then select `[M]` -> `[4]` |
+| Build a comparison ZIP | `.\Start-SCT.ps1`, then select `[M]` -> `[5]` |
+| Add a new test module | `.\scripts\authoring\Add-SCTModule.ps1` |
+| Check module files after editing them | `.\scripts\validation\Check-SCTModules.ps1` |
 
 The remaining utilities are listed by purpose in [`scripts/README.md`](scripts/README.md).
 
@@ -71,22 +72,19 @@ On the isolated lab VM, open PowerShell 5.1 or later. From the repository direct
 .\Start-SCT.ps1
 ```
 
-SCT asks for the security product name, then displays the module and technique menus. To provide the product name at launch instead of being prompted:
+SCT displays the module menu immediately. Before testing a new product, select `[M] Manage SCT` and then `[3] Create or update a control workspace`. Setup records the product and policy configuration in `results/<control-id>/control-profile.json`, creates the combined `test-catalog.csv`, and routes all observations to the workspace's single `results.csv`.
+
+When more than one workspace exists, select `[C] Select Control Workspace` before testing. You can also select one at launch:
 
 ```powershell
-.\Start-SCT.ps1 -Control SentinelOne
+.\Start-SCT.ps1 -ControlProfilePath .\results\sentinelone\control-profile.json
 ```
 
 > Start with a standard PowerShell session unless the selected technique says it requires Administrator rights. Do not run Technique 3.2 (UAC Bypass) from an already elevated session because existing elevation invalidates the test.
 
 Choose a module, then a technique, then a subtest when the technique provides them. `EXECUTED` means the expected execution marker was created; `BLOCKED` means it was not created. These labels describe the test observation only. They do not prove whether the security control detected the activity, blocked it before execution, or blocked it after execution. Press `V` in the main menu to view the result summary.
 
-Results are written to:
-
-- `results/raw/test-results.csv` for subtest outcomes.
-- `results/raw/results.csv` for sample-delivery outcomes.
-
-Interactive subtest selections append to `test-results.csv` after the technique script returns. Running a technique script directly produces its console output and markers but does not invoke the central CSV writer.
+Results are appended directly to `results/<control-id>/results.csv`. The generated observation fields and the human review fields live in the same CSV; there is no raw/analysis copy step. Running a subtest technique directly produces console output and markers but does not invoke the central writer unless that script accepts and is given `-ResultsPath`.
 
 Before testing, confirm the security product is active with a check from [`sanity_checks/`](sanity_checks/README.md).
 
@@ -108,52 +106,54 @@ See the [sample guide](samples/README.md) for ZIP layouts and password-protected
 From an Administrator PowerShell session:
 
 ```powershell
-.\Start-SCT.ps1 -Control SentinelOne -RunModule 04 -NonInteractive
+.\Start-SCT.ps1 `
+    -ControlProfilePath .\results\sentinelone\control-profile.json `
+    -RunModule 04 -NonInteractive
 ```
 
 This runs all 19 persistence subtests, including the HKCU and HKLM Run/RunOnce and permanent WMI consumer cases, records one row per subtest with a shared `run_id`, and performs cleanup after each technique.
 
-### Prepare one VM's results for review
+### Complete and package one product's results
 
-Run this workflow inside each test VM after its SCT tests finish. It uses PowerShell only; Python, Docker, and an AI model are not required.
+Run this workflow for each product. It uses PowerShell only; Python, Docker, and an AI model are not required.
 
-First create a JSON profile describing the exact control, product versions, policy mode, product-specific settings, exclusions, and optional local log locations used during the test:
-
-```powershell
-.\scripts\Setup-SCTControl.ps1
-```
-
-The setup command validates the profile before saving it. You can also copy [`config/control-profile.example.json`](config/control-profile.example.json) and edit it directly; after a manual edit, check it with `.\scripts\Check-SCTControlProfile.ps1 -Path .\config\control-profile.local.json`. Do not store passwords, API tokens, or other secrets in the profile.
-
-Then join the raw results to the standard test descriptions:
+Create the workspace through Manage SCT option `[3]`, or run:
 
 ```powershell
-.\scripts\Prepare-SCTResultsForReview.ps1 `
-    -ControlProfilePath .\config\control-profile.local.json
+.\scripts\review\Setup-SCTControl.ps1
 ```
 
-This leaves both raw CSV files unchanged and creates:
+The workspace contains exactly the product configuration, the combined test catalogue, and one result file:
 
-- `results/analysis/results-for-review.csv` — Excel-ready result rows with the technique script, sample name/hash when available, execution observation, and two blank human-review fields.
-- `results/analysis/test-catalog.csv` — one combined description of every test and subtest, including its objective, behavior, and success indicator.
+```text
+results/<control-id>/
+|-- control-profile.json
+|-- results.csv
+`-- test-catalog.csv
+```
 
-Open `results-for-review.csv` in Excel and fill only these fields:
+The profile records the exact product versions, policy mode, product-specific settings, exclusions, and optional local-log locations used during the test. Do not store passwords, API tokens, or other secrets in it.
+
+Run SCT with that workspace selected. SCT appends generated observations to `results.csv`. After testing, open that same file in Excel and fill only these fields:
 
 | Field | Allowed values |
 |---|---|
 | `detection_status` | `detected`, `not_detected` |
 | `action_status` | `blocked_before_execution`, `blocked_after_execution`, `not_blocked` |
 
-`execution_status` is derived separately as `executed` or `not_executed`; it never determines the two review fields. A test may execute and then be detected, execute and later be blocked, or execute without detection. Timestamps remain in the output so a reviewer can correlate each row with the product console or local logs.
+`execution_status` is generated separately as `executed`, `not_executed`, or blank when it is not applicable; it never determines the review fields. A test may execute and then be detected, execute and later be blocked, or execute without detection. Timestamps remain so a reviewer can correlate each row with the product console or local logs.
 
-Save the reviewed copy as `reviewed-results.csv`, then validate it:
+Save `results.csv` in place, then validate and package it through Manage SCT options `[4]` and `[5]`, or run:
 
 ```powershell
-.\scripts\Check-SCTReviewedResults.ps1 `
-    -Path .\results\analysis\reviewed-results.csv
+.\scripts\validation\Check-SCTResults.ps1 `
+    -Path .\results\sentinelone\results.csv
+
+.\scripts\review\Build-SCTComparisonPackage.ps1 `
+    -ControlProfilePath .\results\sentinelone\control-profile.json
 ```
 
-For an eventual comparison, copy the profile, reviewed result CSV, and generated test catalogue from Control A's VM into one folder, and do the same for Control B. AI comparison is deliberately outside this first workflow.
+The package is written to `submissions/<control-id>.zip` and contains only `control-profile.json`, `results.csv`, and `test-catalog.csv`. Repeat for the second product and submit the two ZIP files to the comparison system.
 
 ## Built-in modules
 
@@ -164,7 +164,7 @@ For an eventual comparison, copy the profile, reviewed result CSV, and generated
 | 3 | Privilege Escalation | Partial | 3.1 Process Hollowing *(planned)*; 3.2 UAC Bypass; 3.3 LOLBin Signed Binary |
 | 4 | Persistence | Active | 4.1 Registry Run Keys (HKCU/HKLM); 4.2 Scheduled Tasks; 4.3 Advanced Startup Folder; 4.4 WMI Event Subscription |
 
-See the [control matrix](docs/control-matrix.md) for implementation status and ATT&CK mappings.
+See the [control matrix](docs/reference/control-matrix.md) for implementation status and ATT&CK mappings.
 
 ## Project structure
 
@@ -173,8 +173,8 @@ security-controls/
 |-- Start-SCT.ps1       # Main launcher
 |-- config/             # Control-profile example and JSON schema
 |-- core/               # Discovery, execution, markers, and results
-|-- docs/               # Detailed documentation
-|-- results/            # Generated result files
+|-- docs/               # Indexed architecture, guides, and reference docs
+|-- results/            # Per-product profiles and generated result workspaces
 |-- samples/            # Local malware ZIPs (gitignored)
 |-- sanity_checks/      # EDR/AV verification checks
 |-- scenarios/          # Module metadata and technique scripts
@@ -182,11 +182,16 @@ security-controls/
 |       |-- module.json
 |       |-- test-catalog.csv
 |       `-- <technique>/
-|-- scripts/            # Scaffolding and validation utilities
-`-- tests/              # Developer regression tests for SCT schema and framework behavior
+|-- scripts/            # Authoring, review, validation, and shared utilities
+|-- submissions/        # Generated one-ZIP-per-product comparison packages
+`-- tests/              # Framework/workflow regression tests and suite runner
 ```
 
-The `tests/` folder verifies SCT's internal schema and framework behavior after code changes; it does not run security techniques or test an endpoint product.
+The `tests/` folder verifies SCT's internal schema and framework behavior after code changes; it does not run security techniques or test an endpoint product. Run the full suite with:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\Run-Tests.ps1
+```
 
 ## Adding a technique
 
@@ -226,20 +231,23 @@ For a planned technique, add only `"status": "planned"`; remove that field when 
 Use the guided module command and checks:
 
 ```powershell
-.\scripts\Add-SCTModule.ps1
-.\scripts\Check-SCTModules.ps1
-.\scripts\Check-SCTTestDescriptions.ps1
+.\scripts\authoring\Add-SCTModule.ps1
+.\scripts\validation\Check-SCTModules.ps1
+.\scripts\validation\Check-SCTTestDescriptions.ps1
 ```
 
-`Add-SCTModule.ps1` creates `module.json` and then asks for each test's descriptions. Every new technique/subtest needs one `test-catalog.csv` row. Different modules may continue producing different raw CSV shapes; the preparation command is the boundary that maps supported raw rows into the stable review columns. Catalogue validation fails with a precise missing-row message instead of silently omitting a new test.
+`Add-SCTModule.ps1` creates `module.json` and then asks for each test's descriptions. Every new technique/subtest needs one `test-catalog.csv` row. All framework-managed result writers use the canonical schema in `core/SCT-Results.ps1`; catalogue validation fails with a precise missing-row message instead of silently omitting a new test.
 
-See [Project Structure](docs/project-structure.md) for the full authoring workflow and [Framework Design](docs/framework-design.md) for how SCT infers execution behavior without a metadata type field.
+See [Project Structure](docs/guides/project-structure.md) for the full authoring workflow and [Framework Design](docs/architecture/framework-design.md) for how SCT infers execution behavior without a metadata type field.
 
 ## Documentation
 
-- [Framework Design](docs/framework-design.md) - schema, execution inference, markers, and results.
-- [Project Structure](docs/project-structure.md) - where files belong and how to add modules or techniques.
-- [Control Matrix](docs/control-matrix.md) - status and ATT&CK mapping for every technique.
-- [Threat Scenarios](docs/threat-scenarios.md) - purpose, prerequisites, and operating notes.
+- [Documentation Index](docs/README.md) - the entry point for architecture, guides, and reference material.
+- [Framework Design](docs/architecture/framework-design.md) - schema, execution inference, markers, and results.
+- [Project Structure](docs/guides/project-structure.md) - where files belong and how to add modules or techniques.
+- [Control Matrix](docs/reference/control-matrix.md) - status and ATT&CK mapping for every technique.
+- [Threat Scenarios](docs/reference/threat-scenarios.md) - purpose, prerequisites, and operating notes.
 - [Sample Guide](samples/README.md) - ZIP layouts and sample handling.
 - [Sanity Checks](sanity_checks/README.md) - verify the endpoint control before testing.
+- [Results Workspaces](results/README.md) - per-product profile, results, and catalogue layout.
+- [Comparison Submissions](submissions/README.md) - the exact three-file ZIP format.
