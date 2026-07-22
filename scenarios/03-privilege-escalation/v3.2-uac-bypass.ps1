@@ -50,7 +50,8 @@ param(
     [ValidateSet('Fodhelper','Eventvwr','ComputerDefaults','SilentCleanup','All')]
     [Alias('Technique')]
     [string]$Subtest = 'Fodhelper',
-    [switch]$NoCleanupPrompt
+    [switch]$NoCleanupPrompt,
+    [switch]$NoPause
 )
 
 $tempDir        = "C:\Windows\Temp"
@@ -373,8 +374,10 @@ function Test-All {
     $results = @()
     foreach ($t in $tests) {
         $results += @{ Name = $t.Name; Success = (& $t.Fn) }
-        Write-Host "`n[!] Check EDR/AV console before continuing." -ForegroundColor Yellow
-        [void](Read-Host "    Press Enter for next subtest")
+        if (-not $NoPause) {
+            Write-Host "`n[!] Check EDR/AV console before continuing." -ForegroundColor Yellow
+            [void](Read-Host "    Press Enter for next subtest")
+        }
     }
     return $results
 }

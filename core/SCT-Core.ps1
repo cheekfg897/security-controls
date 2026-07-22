@@ -1062,7 +1062,10 @@ function Invoke-SCTSubtests {
     if (Test-SCTScriptSupportsParameter -ScriptPath $ScriptPath -ParameterName 'NoReport') {
         $scriptArgs += '-NoReport'
     }
-    if ($NonInteractive -and (Test-SCTScriptSupportsParameter -ScriptPath $ScriptPath -ParameterName 'NoPause')) {
+    # SCT owns the interactive start/end prompts. A script that supports
+    # -NoPause must not add its own nested prompts, which can strand the user
+    # before the module menu regains control.
+    if (Test-SCTScriptSupportsParameter -ScriptPath $ScriptPath -ParameterName 'NoPause') {
         $scriptArgs += '-NoPause'
     }
 
