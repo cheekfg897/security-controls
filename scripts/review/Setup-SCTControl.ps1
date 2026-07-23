@@ -7,7 +7,7 @@
     vendor-specific settings, exclusions, and local log locations. Use
     -NonInteractive with the named parameters for automation and tests. By
     default, creates results\<control-id>\control-profile.json together with
-    the test catalogue used to interpret that control's results.csv.
+    one module-specific test catalogue for every discovered SCT module.
 
 .EXAMPLE
     .\scripts\review\Setup-SCTControl.ps1
@@ -133,11 +133,6 @@ $profile = [pscustomobject][ordered]@{
 $errors = @(Get-SCTControlProfileErrors -Profile $profile)
 if ($errors.Count -gt 0) { throw ($errors -join [Environment]::NewLine) }
 
-$catalog = Get-SCTCatalogData -ScenariosPath $ScenariosPath
-if ($catalog.Errors.Count -gt 0) {
-    throw "Invalid SCT test catalog:`n$($catalog.Errors -join "`n")"
-}
-
 $resolvedPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputPath)
 if ((Test-Path -LiteralPath $resolvedPath) -and -not $Force) {
     if ($NonInteractive -or -not (Read-YesNoValue "Overwrite ${resolvedPath}?")) {
@@ -145,17 +140,18 @@ if ((Test-Path -LiteralPath $resolvedPath) -and -not $Force) {
     }
 }
 $directory = Split-Path $resolvedPath -Parent
+if (Test-Path -LiteralPath $directory -PathType Container) {
+    Assert-SCTWorkspaceUsesModuleFiles -WorkspaceRoot $directory -ControlProfilePath $resolvedPath
+}
 if ($directory -and -not (Test-Path -LiteralPath $directory)) {
     New-Item -ItemType Directory -Path $directory -Force | Out-Null
 }
 
 $profile | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $resolvedPath -Encoding UTF8
 Write-Host "Wrote $resolvedPath" -ForegroundColor Green
-$catalogPath = Join-Path $directory 'test-catalog.csv'
-$catalog.Rows |
-    Select-Object module_id, module_name, technique_id, technique_name, subtest, attack_id, test_script, `
-        objective, what_it_does, success_indicator, status |
-    Export-Csv -LiteralPath $catalogPath -NoTypeInformation -Encoding UTF8
-Write-Host "Wrote $catalogPath" -ForegroundColor Green
+$catalogPaths = @(Sync-SCTWorkspaceCatalogs -ScenariosPath $ScenariosPath -WorkspaceRoot $directory)
+foreach ($catalogPath in $catalogPaths) {
+    Write-Host "Wrote $catalogPath" -ForegroundColor Green
+}
 Write-Host "Workspace: $directory" -ForegroundColor Green
 Write-Host "Check with: .\scripts\validation\Check-SCTControlProfile.ps1 -Path `"$resolvedPath`"" -ForegroundColor DarkGray

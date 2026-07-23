@@ -284,12 +284,20 @@ param(
     Assert-True ($discoveredProfiles.Count -eq 1) 'Control workspace discovery must find one profile per product folder.'
     $fixtureWorkspace = Get-SCTControlWorkspace -RepoRoot $tempRoot -ProfilePath $fixtureProfilePath
     Assert-True ($fixtureWorkspace.ControlId -eq 'example-control') 'The workspace must use the profile control id.'
-    Assert-True ($fixtureWorkspace.ResultsPath -eq (Join-Path $fixtureWorkspaceRoot 'results.csv')) `
-        'All observations must be routed to one canonical workspace results file.'
-    Assert-True ($fixtureWorkspace.CatalogPath -eq (Join-Path $fixtureWorkspaceRoot 'test-catalog.csv')) `
-        'The test catalogue must sit beside the canonical results file.'
+    Assert-True ((Get-SCTModuleResultsPath -WorkspaceRoot $fixtureWorkspaceRoot -ModuleId '01') -eq `
+        (Join-Path $fixtureWorkspaceRoot 'results-module-01.csv')) `
+        'Module 01 observations must use the stable module result filename.'
+    Assert-True ((Get-SCTModuleCatalogPath -WorkspaceRoot $fixtureWorkspaceRoot -ModuleId '02') -eq `
+        (Join-Path $fixtureWorkspaceRoot 'test-catalog-module-02.csv')) `
+        'Module 02 descriptions must use the stable module catalogue filename.'
 
     $module1 = @($realModules | Where-Object { $_.id -eq '01' })[0]
+    $technique14 = @($module1.techniques | Where-Object { $_.id -eq '1.4' })[0]
+    Assert-True (($technique14.subtests -join '|') -eq 'EICARWrite|HiddenPowerShell') `
+        'Technique 1.4 must expose separate EICAR and hidden PowerShell observations.'
+    $technique14Path = Join-Path $module1.ScriptDir $technique14.script
+    Assert-True (Test-SCTScriptSupportsParameter -ScriptPath $technique14Path -ParameterName 'Subtest') `
+        'Technique 1.4 must use the standard subtest runner contract.'
     foreach ($sampleTechniqueId in @('1.1', '1.2', '1.3')) {
         $sampleTechnique = @($module1.techniques | Where-Object { $_.id -eq $sampleTechniqueId })[0]
         $sampleScriptPath = Join-Path $module1.ScriptDir $sampleTechnique.script
@@ -372,7 +380,7 @@ param(
             -Control 'FixtureControl' -ResultsPath $interactiveCsv
 
         Assert-True (Test-Path -LiteralPath $interactiveCsv -PathType Leaf) `
-            'Interactive subtest execution must create results.csv.'
+            'Interactive subtest execution must create its selected module result file.'
         $interactiveRows = @(Import-Csv -LiteralPath $interactiveCsv)
         Assert-True ($interactiveRows.Count -eq 1) 'Interactive subtest execution must write one row.'
         Assert-True ($interactiveRows[0].technique_id -eq '4.99') 'Interactive CSV must identify the technique.'
@@ -381,6 +389,37 @@ param(
             'Interactive CSV rows must have a run_id.'
         Assert-True ($interactiveRows[0].execution_status -eq 'not_executed') `
             'A missing marker must be captured as not_executed.'
+
+        # Direct/manual techniques must also append an authoritative result row.
+        $directCsv = Join-Path $tempRoot 'results-module-05.csv'
+        $directTechnique = [pscustomobject]@{
+            id = '5.1'
+            name = 'Direct CSV Fixture'
+            script = 'direct.ps1'
+        }
+
+        $script:ReadResponses = New-Object 'System.Collections.Generic.Queue[string]'
+        foreach ($response in @('', 'E', 'reviewed execution', '')) { $script:ReadResponses.Enqueue($response) }
+        Invoke-DirectTechnique -Technique $directTechnique -ScriptPath (Join-Path $tempRoot 'direct.ps1') `
+            -ResultsPath $directCsv
+
+        $script:ReadResponses = New-Object 'System.Collections.Generic.Queue[string]'
+        foreach ($response in @('', 'N', 'execution absent', '')) { $script:ReadResponses.Enqueue($response) }
+        Invoke-DirectTechnique -Technique $directTechnique -ScriptPath (Join-Path $tempRoot 'direct.ps1') `
+            -ResultsPath $directCsv
+
+        $script:ReadResponses = New-Object 'System.Collections.Generic.Queue[string]'
+        foreach ($response in @('', 'S', '')) { $script:ReadResponses.Enqueue($response) }
+        Invoke-DirectTechnique -Technique $directTechnique -ScriptPath (Join-Path $tempRoot 'direct.ps1') `
+            -ResultsPath $directCsv
+
+        $directRows = @(Import-Csv -LiteralPath $directCsv)
+        Assert-True ($directRows.Count -eq 2) 'Skipping a direct result must not append a row.'
+        Assert-True ($directRows[0].execution_status -eq 'executed') `
+            'An executed direct result must use execution_status executed.'
+        Assert-True ($directRows[1].source_result -eq 'NOT_EXECUTED' -and
+            $directRows[1].execution_status -eq 'not_executed') `
+            'A not-executed direct result must not claim that the control blocked it.'
     } finally {
         $env:SystemRoot = $originalSystemRoot
     }

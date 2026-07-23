@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Dependency-free regression tests for the single-file product workflow.
+    Dependency-free regression tests for module-specific product workspaces.
 #>
 
 [CmdletBinding()]
@@ -27,8 +27,10 @@ try {
     $resultsRoot = Join-Path $tempRoot 'results'
     $workspaceRoot = Join-Path $resultsRoot 'control-a'
     $profilePath = Join-Path $workspaceRoot 'control-profile.json'
-    $resultsPath = Join-Path $workspaceRoot 'results.csv'
-    $catalogPath = Join-Path $workspaceRoot 'test-catalog.csv'
+    $results01 = Join-Path $workspaceRoot 'results-module-01.csv'
+    $results04 = Join-Path $workspaceRoot 'results-module-04.csv'
+    $catalog01 = Join-Path $workspaceRoot 'test-catalog-module-01.csv'
+    $catalog04 = Join-Path $workspaceRoot 'test-catalog-module-04.csv'
 
     & (Join-Path $repoRoot 'scripts\review\Setup-SCTControl.ps1') `
         -NonInteractive -Force -ResultsRoot $resultsRoot `
@@ -38,56 +40,56 @@ try {
 
     Assert-True (Test-Path -LiteralPath $profilePath -PathType Leaf) `
         'Workspace setup must write control-profile.json.'
-    Assert-True (Test-Path -LiteralPath $catalogPath -PathType Leaf) `
-        'Workspace setup must write test-catalog.csv.'
-    Assert-True (-not (Test-Path -LiteralPath (Join-Path $workspaceRoot 'raw'))) `
-        'Workspace setup must not create a raw directory.'
-    Assert-True (-not (Test-Path -LiteralPath (Join-Path $workspaceRoot 'analysis'))) `
-        'Workspace setup must not create an analysis directory.'
+    $catalogPaths = @(Get-ChildItem -LiteralPath $workspaceRoot -Filter 'test-catalog-module-*.csv' -File)
+    Assert-True ($catalogPaths.Count -eq 4) 'Workspace setup must write one catalogue per current module.'
+    Assert-True (-not (Test-Path -LiteralPath $results01)) `
+        'Workspace setup must not create a module result file before its first observation.'
+    $catalogRows = @($catalogPaths | ForEach-Object { Import-Csv -LiteralPath $_.FullName -Encoding UTF8 })
+    Assert-True ($catalogRows.Count -eq 45) 'Module catalogues must contain all current test descriptions.'
+    Assert-True (@($catalogRows | Where-Object { -not $_.module_id -or -not $_.module_name }).Count -eq 0) `
+        'Every workspace catalogue row must identify its module.'
 
-    $catalogRows = @(Import-Csv -LiteralPath $catalogPath -Encoding UTF8)
-    Assert-True ($catalogRows.Count -eq 44) 'The workspace catalogue must contain all current test descriptions.'
-
-    Write-SCTResultRow -Path $resultsPath -Timestamp (Get-Date) -RunId 'run-a' `
+    Write-SCTResultRow -Path $results04 -Timestamp (Get-Date) -RunId 'run-a' `
         -TechniqueId '4.1' -TechniqueName 'Registry Run Keys' -Subtest 'HKCURunKey' `
         -TestScript 'v4.1-registry-run-key/v4.1-registry-run-key.ps1' `
         -TestStage 'execution' -SourceResult 'EXECUTED' -ExecutionStatus 'executed' `
         -Notes 'marker created'
-    Write-SCTResultRow -Path $resultsPath -Timestamp (Get-Date) -RunId 'run-a' `
+    Write-SCTResultRow -Path $results01 -Timestamp (Get-Date) -RunId 'run-a' `
         -TechniqueId '1.1' -TechniqueName 'Disk Drop' `
         -TestScript 'v1.1-known-malware/v1.1-known-malware.ps1' `
         -TestInput 'malware-a.exe' -TestInputSha256 ('A' * 64) -DeliveryMethod 'DiskDrop' `
         -TestStage 'write' -SourceResult 'delivery_success=True; sysmon_event_found=True' `
         -Notes 'sample written'
-    Write-SCTResultRow -Path $resultsPath -Timestamp (Get-Date) -RunId 'run-a' `
+    Write-SCTResultRow -Path $results01 -Timestamp (Get-Date) -RunId 'run-a' `
         -TechniqueId '1.1' -TechniqueName 'Disk Drop' `
         -TestScript 'v1.1-known-malware/v1.1-known-malware.ps1' `
         -TestInput 'malware-a.exe' -TestInputSha256 ('A' * 64) -DeliveryMethod 'DiskDrop' `
         -TestStage 'execution' -SourceResult 'delivery_success=True; sysmon_event_found=True' `
         -ExecutionStatus 'executed' -Notes 'sample executed'
 
-    $rows = @(Import-Csv -LiteralPath $resultsPath -Encoding UTF8)
-    Assert-True ($rows.Count -eq 3) 'Subtest and sample observations must append to the same results.csv.'
-    Assert-True (@($rows | Where-Object { $_.detection_status -or $_.action_status }).Count -eq 0) `
-        'New observations must leave human review fields blank.'
+    Assert-True (@(Import-Csv -LiteralPath $results01).Count -eq 2) `
+        'Module 01 observations must stay in results-module-01.csv.'
+    Assert-True (@(Import-Csv -LiteralPath $results04).Count -eq 1) `
+        'Module 04 observations must stay in results-module-04.csv.'
 
     $pendingValidationFailed = $false
     try {
-        & (Join-Path $repoRoot 'scripts\validation\Check-SCTResults.ps1') -Path $resultsPath
+        & (Join-Path $repoRoot 'scripts\validation\Check-SCTResults.ps1') -ControlProfilePath $profilePath
     } catch {
         $pendingValidationFailed = $true
     }
-    Assert-True $pendingValidationFailed 'Unreviewed results.csv must not pass final validation.'
+    Assert-True $pendingValidationFailed 'Unreviewed module results must not pass workspace validation.'
 
-    foreach ($row in $rows) {
-        $row.detection_status = 'detected'
-        $row.action_status = 'not_blocked'
-        $row.reviewer_notes = 'Reviewed in fixture.'
+    foreach ($resultPath in @($results01, $results04)) {
+        $rows = @(Import-Csv -LiteralPath $resultPath -Encoding UTF8)
+        foreach ($row in $rows) {
+            $row.detection_status = 'detected'
+            $row.action_status = 'not_blocked'
+            $row.reviewer_notes = 'Reviewed in fixture.'
+        }
+        $rows | Export-Csv -LiteralPath $resultPath -NoTypeInformation -Encoding UTF8
     }
-    $rows | Export-Csv -LiteralPath $resultsPath -NoTypeInformation -Encoding UTF8
-    & (Join-Path $repoRoot 'scripts\validation\Check-SCTResults.ps1') -Path $resultsPath
-    Assert-True (Test-Path -LiteralPath $resultsPath -PathType Leaf) `
-        'The same results.csv must remain valid after in-place human review.'
+    & (Join-Path $repoRoot 'scripts\validation\Check-SCTResults.ps1') -ControlProfilePath $profilePath
 
     $packagePath = Join-Path $tempRoot 'control-a.zip'
     & (Join-Path $repoRoot 'scripts\review\Build-SCTComparisonPackage.ps1') `
@@ -102,8 +104,85 @@ try {
     } finally {
         $archive.Dispose()
     }
-    Assert-True (($entryNames -join '|') -eq 'control-profile.json|results.csv|test-catalog.csv') `
-        'The comparison ZIP must contain exactly the profile, canonical results, and catalogue.'
+    $expectedEntries = @(
+        'control-profile.json',
+        'results-module-01.csv',
+        'results-module-04.csv',
+        'test-catalog-module-01.csv',
+        'test-catalog-module-04.csv'
+    )
+    Assert-True (($entryNames -join '|') -eq ($expectedEntries -join '|')) `
+        'The comparison ZIP must contain only the profile and tested module pairs.'
+
+    # A newly authored module automatically receives stable ID-based workspace files.
+    $fixtureScenarios = Join-Path $tempRoot 'fixture-scenarios'
+    $module05Root = Join-Path $fixtureScenarios '05-lateral-movement'
+    New-Item -ItemType Directory -Path $module05Root -Force | Out-Null
+    @'
+{
+  "id": "05",
+  "name": "Lateral Movement",
+  "techniques": [
+    { "id": "5.1", "name": "Fixture Technique", "attack_id": "T0001", "script": "v5.1-fixture.ps1", "status": "planned" }
+  ]
+}
+'@ | Set-Content -LiteralPath (Join-Path $module05Root 'module.json') -Encoding UTF8
+    @'
+"technique_id","subtest","objective","what_it_does","success_indicator"
+"5.1","","Fixture objective","Fixture behavior","Fixture success"
+'@ | Set-Content -LiteralPath (Join-Path $module05Root 'test-catalog.csv') -Encoding UTF8
+
+    $fixtureResultsRoot = Join-Path $tempRoot 'fixture-results'
+    & (Join-Path $repoRoot 'scripts\review\Setup-SCTControl.ps1') `
+        -NonInteractive -Force -ResultsRoot $fixtureResultsRoot -ScenariosPath $fixtureScenarios `
+        -ControlId 'control-b' -DisplayName 'Control B' -Vendor 'Fixture Vendor' `
+        -Product 'Fixture XDR' -ProductVersion '1.0' -AgentVersion '2.0' `
+        -PolicyName 'Fixture policy' -DefaultMode 'detect_only'
+    $catalog05 = Join-Path $fixtureResultsRoot 'control-b\test-catalog-module-05.csv'
+    Assert-True (Test-Path -LiteralPath $catalog05 -PathType Leaf) `
+        'Adding Module 05 must automatically create test-catalog-module-05.csv.'
+
+    $module05 = Get-Content -LiteralPath (Join-Path $module05Root 'module.json') -Raw | ConvertFrom-Json
+    $module05.name = 'East-West Movement'
+    $module05 | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $module05Root 'module.json') -Encoding UTF8
+    [void](Sync-SCTWorkspaceCatalogs -ScenariosPath $fixtureScenarios -WorkspaceRoot (Split-Path $catalog05 -Parent))
+    $renamedCatalogRows = @(Import-Csv -LiteralPath $catalog05)
+    Assert-True ($renamedCatalogRows[0].module_name -eq 'East-West Movement') `
+        'Changing a module display name must update catalogue content without changing its filename.'
+
+    # Legacy conversion writes every row once and preserves the original combined files.
+    $legacyWorkspace = Join-Path $tempRoot 'legacy-workspace'
+    New-Item -ItemType Directory -Path $legacyWorkspace | Out-Null
+    Copy-Item -LiteralPath $profilePath -Destination (Join-Path $legacyWorkspace 'control-profile.json')
+    @(
+        Import-Csv -LiteralPath $results01 -Encoding UTF8
+        Import-Csv -LiteralPath $results04 -Encoding UTF8
+    ) | Export-Csv -LiteralPath (Join-Path $legacyWorkspace 'results.csv') -NoTypeInformation -Encoding UTF8
+    @(
+        Import-Csv -LiteralPath $catalog01 -Encoding UTF8
+        Import-Csv -LiteralPath $catalog04 -Encoding UTF8
+    ) | Export-Csv -LiteralPath (Join-Path $legacyWorkspace 'test-catalog.csv') -NoTypeInformation -Encoding UTF8
+
+    $legacyRejected = $false
+    try {
+        Assert-SCTWorkspaceUsesModuleFiles -WorkspaceRoot $legacyWorkspace `
+            -ControlProfilePath (Join-Path $legacyWorkspace 'control-profile.json')
+    } catch {
+        $legacyRejected = $_.Exception.Message -like '*Convert-SCTLegacyWorkspace.ps1*'
+    }
+    Assert-True $legacyRejected 'Selecting a legacy workspace must stop with the exact conversion command.'
+
+    & (Join-Path $repoRoot 'scripts\review\Convert-SCTLegacyWorkspace.ps1') `
+        -ControlProfilePath (Join-Path $legacyWorkspace 'control-profile.json')
+    $convertedRows = @(
+        Import-Csv -LiteralPath (Join-Path $legacyWorkspace 'results-module-01.csv')
+        Import-Csv -LiteralPath (Join-Path $legacyWorkspace 'results-module-04.csv')
+    )
+    Assert-True ($convertedRows.Count -eq 3) 'Legacy conversion must preserve every result exactly once.'
+    Assert-True (Test-Path -LiteralPath (Join-Path $legacyWorkspace 'legacy\results.csv')) `
+        'Legacy conversion must preserve the original combined results.'
+    Assert-True (Test-Path -LiteralPath (Join-Path $legacyWorkspace 'legacy\test-catalog.csv')) `
+        'Legacy conversion must preserve the original combined catalogue.'
 
     Write-Host "Passed $script:Assertions workspace-workflow assertions." -ForegroundColor Green
 } finally {

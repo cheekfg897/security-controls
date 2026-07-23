@@ -5,6 +5,7 @@
 Set-StrictMode -Version Latest
 
 . (Join-Path $PSScriptRoot 'SCT-Results.ps1')
+. (Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts\common\SCT-ReviewHelpers.ps1')
 
 # =============================================================================
 # BANNER
@@ -339,13 +340,12 @@ function Get-SCTControlWorkspace {
     }
 
     $workspaceRoot = Split-Path $resolvedProfilePath -Parent
+    Assert-SCTWorkspaceUsesModuleFiles -WorkspaceRoot $workspaceRoot -ControlProfilePath $resolvedProfilePath
     return [pscustomobject]@{
         ControlId       = $controlId
         ControlName     = $controlName
         ProfilePath     = $resolvedProfilePath
         WorkspaceRoot   = $workspaceRoot
-        ResultsPath     = Join-Path $workspaceRoot 'results.csv'
-        CatalogPath     = Join-Path $workspaceRoot 'test-catalog.csv'
     }
 }
 
@@ -494,7 +494,7 @@ function Invoke-SCTManagementMenu {
         Write-Host ""
         Write-Host "  Product workflow" -ForegroundColor DarkGray
         Write-Host "  [3]  Create or update a control workspace" -ForegroundColor White
-        Write-Host "  [4]  Check completed results.csv" -ForegroundColor White
+        Write-Host "  [4]  Check completed module results" -ForegroundColor White
         Write-Host "  [5]  Build comparison ZIP" -ForegroundColor White
         Write-Host ""
         Write-Host "  Repository validation" -ForegroundColor DarkGray
@@ -529,9 +529,8 @@ function Invoke-SCTManagementMenu {
                 '4' {
                     $profilePath = Select-SCTControlProfilePath -ResultsRoot $resultsRoot
                     if ($profilePath) {
-                        $resultsPath = Join-Path (Split-Path $profilePath -Parent) 'results.csv'
                         Invoke-SCTRepositoryTool -RepoRoot $RepoRoot -Tool 'CheckResults' `
-                            -Arguments @('-Path', $resultsPath)
+                            -Arguments @('-ControlProfilePath', $profilePath)
                         $ranTool = $true
                     }
                 }
@@ -681,7 +680,7 @@ function Invoke-SCTTechnique {
             Invoke-ClientServerTechnique -Technique $Technique -ScriptPath $scriptPath -Control $Control -ResultsPath $ResultsPath
         }
         default {
-            Invoke-DirectTechnique -Technique $Technique -ScriptPath $scriptPath
+            Invoke-DirectTechnique -Technique $Technique -ScriptPath $scriptPath -ResultsPath $ResultsPath
         }
     }
 }
@@ -1113,7 +1112,7 @@ function Invoke-SCTSubtests {
         Write-Host "  Results appended to: $ResultsPath" -ForegroundColor DarkGray
         Write-Host "  [i] [!] Marker found: execution observed" -ForegroundColor DarkGray
         Write-Host "  [i] [?] Marker absent: execution not observed; this alone does not prove a control block" -ForegroundColor DarkGray
-        Write-Host "  [i] Review detection and action directly in results.csv" -ForegroundColor DarkGray
+        Write-Host "  [i] Review detection and action directly in this module result CSV" -ForegroundColor DarkGray
     }
 
     if ($NonInteractive) {
@@ -1270,7 +1269,7 @@ function Invoke-SCTModuleNonInteractive {
 
 function Invoke-DirectTechnique {
     [CmdletBinding()]
-    param($Technique, [string]$ScriptPath)
+    param($Technique, [string]$ScriptPath, [string]$ResultsPath)
 
     Write-Host ""
     Write-Host "  [*] Open your EDR/AV console and start monitoring before proceeding." -ForegroundColor Yellow
@@ -1282,7 +1281,28 @@ function Invoke-DirectTechnique {
     Write-Host "  [>] Launching: $ScriptPath" -ForegroundColor Cyan
     Write-Host ""
 
+    $startTime = Get-Date
     Start-Process -FilePath 'powershell.exe' -ArgumentList $scriptArgs -Wait -NoNewWindow
+
+    if ($ResultsPath) {
+        Write-Host ""
+        Write-Host "  Record the observed execution result:" -ForegroundColor White
+        Write-Host "  [E] Executed    [N] Not executed    [S] Skip" -ForegroundColor DarkGray
+        $answer = (Read-Host "  Result").Trim().ToUpperInvariant()
+        if ($answer -in @('E', 'N')) {
+            $notes = (Read-Host "  Notes (optional)").Trim()
+            $outcome = if ($answer -eq 'E') { 'EXECUTED' } else { 'NOT_EXECUTED' }
+            $runId = "I$($Technique.id -replace '[^0-9A-Za-z]', '')-" +
+                (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' +
+                ([guid]::NewGuid().ToString('N').Substring(0, 6))
+            Write-SCTResult -Path $ResultsPath -Timestamp $startTime -RunId $runId `
+                -TechniqueId $Technique.id -TechniqueName $Technique.name -Subtest '' `
+                -TestScript ([string]$Technique.script) -Outcome $outcome -Notes $notes
+            Write-Host "  Result appended to: $ResultsPath" -ForegroundColor DarkGray
+        } else {
+            Write-Host "  No result row was written." -ForegroundColor DarkGray
+        }
+    }
     Read-Host "`n  Press Enter to return"
 }
 
@@ -1414,7 +1434,7 @@ function Merge-StagingFromZips {
 }
 
 # =============================================================================
-# RESULT WRITER - writes one canonical row per subtest to results.csv.
+# RESULT WRITER - writes one canonical row per subtest to the selected module CSV.
 # =============================================================================
 
 function Write-SCTResult {
@@ -1425,15 +1445,16 @@ function Write-SCTResult {
         [string]$RunId = '',
         [Parameter(Mandatory)] [string]$TechniqueId,
         [Parameter(Mandatory)] [string]$TechniqueName,
-        [Parameter(Mandatory)] [string]$Subtest,
+        [Parameter(Mandatory)] [AllowEmptyString()] [string]$Subtest,
         [string]$TestScript = '',
-        [Parameter(Mandatory)] [ValidateSet('EXECUTED','BLOCKED','NOT-EXPLOITABLE','ERROR')]
+        [Parameter(Mandatory)] [ValidateSet('EXECUTED','NOT_EXECUTED','BLOCKED','NOT-EXPLOITABLE','ERROR')]
         [string]$Outcome,
         [string]$Notes = ''
     )
 
     $executionStatus = switch ($Outcome) {
         'EXECUTED' { 'executed' }
+        'NOT_EXECUTED' { 'not_executed' }
         'BLOCKED'  { 'not_executed' }
         default    { '' }
     }
@@ -1563,31 +1584,35 @@ function Test-SCTCalcSpawned {
 
 # =============================================================================
 # RESULTS SUMMARY
-# Reads the active control workspace's canonical results.csv.
+# Reads every authoritative module result file in the active control workspace.
 # =============================================================================
 
 function Show-SCTSummary {
     [CmdletBinding()]
-    param([Parameter(Mandatory)] [string]$ResultsPath)
+    param([Parameter(Mandatory)] [string]$WorkspaceRoot)
 
     Write-Host ""
     Write-Host "  ============================================================================" -ForegroundColor Cyan
     Write-Host "  AGGREGATED TEST RESULTS" -ForegroundColor Cyan
     Write-Host "  ============================================================================" -ForegroundColor Cyan
 
-    if (-not (Test-Path -LiteralPath $ResultsPath -PathType Leaf)) {
+    $resultPaths = @(Get-SCTWorkspaceResultPaths -WorkspaceRoot $WorkspaceRoot)
+    if ($resultPaths.Count -eq 0) {
         Write-Host ""
         Write-Host "  No results found yet. Run some tests first." -ForegroundColor Yellow
-        Write-Host "  Results will appear at: $ResultsPath" -ForegroundColor DarkGray
+        Write-Host "  Results will appear under: $WorkspaceRoot" -ForegroundColor DarkGray
         Write-Host ""
         Read-Host "  Press Enter to return"
         return
     }
 
     try {
-        Assert-SCTResultFileSchema -Path $ResultsPath
-        $data = @(Import-Csv -LiteralPath $ResultsPath -Encoding UTF8 -ErrorAction Stop)
-        if ($data.Count -eq 0) { throw 'The results file has no rows.' }
+        $data = @()
+        foreach ($resultsPath in $resultPaths) {
+            Assert-SCTResultFileSchema -Path $resultsPath
+            $data += @(Import-Csv -LiteralPath $resultsPath -Encoding UTF8 -ErrorAction Stop)
+        }
+        if ($data.Count -eq 0) { throw 'The module result files have no rows.' }
 
         Write-Host ""
         $header = "  {0,-12} {1,-8} {2,-10} {3,-12} {4}"
@@ -1601,9 +1626,9 @@ function Show-SCTSummary {
         Write-Host ("  " + ('-' * 64)) -ForegroundColor DarkGray
         $reviewedTotal = @($data | Where-Object { $_.detection_status -and $_.action_status }).Count
         Write-Host "  $($data.Count) rows total; $reviewedTotal reviewed." -ForegroundColor Cyan
-        Write-Host "  Source: $ResultsPath" -ForegroundColor DarkGray
+        Write-Host "  Sources: $($resultPaths.Count) module result file(s) under $WorkspaceRoot" -ForegroundColor DarkGray
     } catch {
-        Write-Host "  Could not read $ResultsPath : $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "  Could not read module results: $($_.Exception.Message)" -ForegroundColor Red
     }
 
     Write-Host ""

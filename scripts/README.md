@@ -10,11 +10,18 @@ For interactive use, run `.\Start-SCT.ps1` and select `[M] Manage SCT`. The dire
 |---|---|---|
 | 1 | Create the product workspace and record its control policy | `.\scripts\review\Setup-SCTControl.ps1` |
 | 2 | Run tests | `.\Start-SCT.ps1` |
-| 3 | Enter detection and action status | Open `results\<control-id>\results.csv` in Excel |
-| 4 | Check the completed results | `.\scripts\validation\Check-SCTResults.ps1 -Path .\results\<control-id>\results.csv` |
+| 3 | Enter detection and action status | Open each `results\<control-id>\results-module-<id>.csv` in Excel |
+| 4 | Check the completed results | `.\scripts\validation\Check-SCTResults.ps1 -ControlProfilePath .\results\<control-id>\control-profile.json` |
 | 5 | Build that product's comparison ZIP | `.\scripts\review\Build-SCTComparisonPackage.ps1 -ControlProfilePath .\results\<control-id>\control-profile.json` |
 
-There is no raw/analysis conversion step and no second review CSV. SCT writes observations to `results.csv`; a person fills `detection_status`, `action_status`, and optional `reviewer_notes` directly in that file because execution alone cannot determine what the control detected or blocked.
+There is no raw/analysis conversion step and no second review CSV. SCT writes observations to the authoritative `results-module-<id>.csv`; a person fills `detection_status`, `action_status`, and optional `reviewer_notes` directly in each tested module file because execution alone cannot determine what the control detected or blocked.
+
+Convert an older combined workspace with:
+
+```powershell
+.\scripts\review\Convert-SCTLegacyWorkspace.ps1 `
+    -ControlProfilePath .\results\<control-id>\control-profile.json
+```
 
 Repeat the workflow for the second product. The package builder writes `submissions/<control-id>.zip`, giving the comparison system one ZIP per product.
 
@@ -34,6 +41,6 @@ Repeat the workflow for the second product. The package builder writes `submissi
 ## Layout
 
 - `authoring/` creates and describes modules and techniques.
-- `review/` creates product workspaces and comparison packages.
+- `review/` creates product workspaces, converts legacy workspaces, and builds comparison packages.
 - `validation/` checks committed metadata and operator-produced files.
 - `common/` contains shared implementation and is not run directly.

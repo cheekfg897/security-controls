@@ -3,6 +3,80 @@
 
 Set-StrictMode -Version Latest
 
+function Assert-SCTModuleId {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)] [string]$ModuleId)
+
+    if ($ModuleId -notmatch '^\d{2}$') {
+        throw "Module id '$ModuleId' must contain two digits, for example '01'."
+    }
+}
+
+function Get-SCTModuleResultsFileName {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)] [string]$ModuleId)
+
+    Assert-SCTModuleId -ModuleId $ModuleId
+    return "results-module-$ModuleId.csv"
+}
+
+function Get-SCTModuleCatalogFileName {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)] [string]$ModuleId)
+
+    Assert-SCTModuleId -ModuleId $ModuleId
+    return "test-catalog-module-$ModuleId.csv"
+}
+
+function Get-SCTModuleResultsPath {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$WorkspaceRoot,
+        [Parameter(Mandatory)] [string]$ModuleId
+    )
+
+    return (Join-Path $WorkspaceRoot (Get-SCTModuleResultsFileName -ModuleId $ModuleId))
+}
+
+function Get-SCTModuleCatalogPath {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$WorkspaceRoot,
+        [Parameter(Mandatory)] [string]$ModuleId
+    )
+
+    return (Join-Path $WorkspaceRoot (Get-SCTModuleCatalogFileName -ModuleId $ModuleId))
+}
+
+function Get-SCTWorkspaceResultPaths {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)] [string]$WorkspaceRoot)
+
+    if (-not (Test-Path -LiteralPath $WorkspaceRoot -PathType Container)) { return @() }
+    return @(
+        Get-ChildItem -LiteralPath $WorkspaceRoot -Filter 'results-module-*.csv' -File |
+            Where-Object { $_.Name -match '^results-module-\d{2}\.csv$' } |
+            Sort-Object Name |
+            ForEach-Object FullName
+    )
+}
+
+function Assert-SCTWorkspaceUsesModuleFiles {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$WorkspaceRoot,
+        [string]$ControlProfilePath = (Join-Path $WorkspaceRoot 'control-profile.json')
+    )
+
+    $legacyResults = Join-Path $WorkspaceRoot 'results.csv'
+    $legacyCatalog = Join-Path $WorkspaceRoot 'test-catalog.csv'
+    if ((Test-Path -LiteralPath $legacyResults -PathType Leaf) -or
+        (Test-Path -LiteralPath $legacyCatalog -PathType Leaf)) {
+        throw ("Legacy combined workspace files were found in '$WorkspaceRoot'. Convert them with: " +
+            ".\scripts\review\Convert-SCTLegacyWorkspace.ps1 -ControlProfilePath `"$ControlProfilePath`"")
+    }
+}
+
 function Get-SCTAnalysisPropertyValue {
     [CmdletBinding()]
     param(
@@ -247,6 +321,33 @@ function Get-SCTCatalogData {
     }
 
     return [pscustomobject]@{ Rows = @($combinedRows); Errors = @($errors) }
+}
+
+function Sync-SCTWorkspaceCatalogs {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$ScenariosPath,
+        [Parameter(Mandatory)] [string]$WorkspaceRoot
+    )
+
+    $catalog = Get-SCTCatalogData -ScenariosPath $ScenariosPath
+    if ($catalog.Errors.Count -gt 0) {
+        throw "Invalid SCT test catalog:`n$($catalog.Errors -join "`n")"
+    }
+    if (-not (Test-Path -LiteralPath $WorkspaceRoot -PathType Container)) {
+        New-Item -ItemType Directory -Path $WorkspaceRoot -Force | Out-Null
+    }
+
+    $writtenPaths = @()
+    foreach ($moduleGroup in @($catalog.Rows | Group-Object module_id | Sort-Object Name)) {
+        $catalogPath = Get-SCTModuleCatalogPath -WorkspaceRoot $WorkspaceRoot -ModuleId $moduleGroup.Name
+        $moduleGroup.Group |
+            Select-Object module_id, module_name, technique_id, technique_name, subtest, attack_id, test_script, `
+                objective, what_it_does, success_indicator, status |
+            Export-Csv -LiteralPath $catalogPath -NoTypeInformation -Encoding UTF8
+        $writtenPaths += $catalogPath
+    }
+    return @($writtenPaths)
 }
 
 function Get-SCTCsvRowValue {

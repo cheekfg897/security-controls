@@ -140,6 +140,10 @@ if ($modules.Count -eq 0) {
     exit 1
 }
 
+if ($workspace) {
+    [void](Sync-SCTWorkspaceCatalogs -ScenariosPath $scenariosPath -WorkspaceRoot $workspace.WorkspaceRoot)
+}
+
 Write-Host "  Modules  : $($modules.Count) loaded" -ForegroundColor DarkGray
 
 if ($NonInteractive) {
@@ -153,7 +157,8 @@ if ($NonInteractive) {
     }
 
     [void](Invoke-SCTModuleNonInteractive -Module $targetModule[0] -Control $Control `
-        -ResultsPath $workspace.ResultsPath -StartDelaySeconds $StartDelaySeconds `
+        -ResultsPath (Get-SCTModuleResultsPath -WorkspaceRoot $workspace.WorkspaceRoot -ModuleId $targetModule[0].id) `
+        -StartDelaySeconds $StartDelaySeconds `
         -InterTechniqueDelaySeconds $InterTechniqueDelaySeconds)
     exit 0
 }
@@ -189,11 +194,12 @@ while ($true) {
                 $selectedProfile = Select-SCTControlProfilePath -ResultsRoot $resultsRoot
                 if ($selectedProfile) {
                     $workspace = Get-SCTControlWorkspace -RepoRoot $PSScriptRoot -ProfilePath $selectedProfile
+                    [void](Sync-SCTWorkspaceCatalogs -ScenariosPath $scenariosPath -WorkspaceRoot $workspace.WorkspaceRoot)
                     $Control = $workspace.ControlName
                 }
             }
             if ($workspace) {
-                Show-SCTSummary -ResultsPath $workspace.ResultsPath
+                Show-SCTSummary -WorkspaceRoot $workspace.WorkspaceRoot
             }
         }
         'M' {
@@ -204,10 +210,12 @@ while ($true) {
             $newProfiles = @($profilesAfter | Where-Object { $profilesBefore -notcontains $_ })
             if ($newProfiles.Count -eq 1) {
                 $workspace = Get-SCTControlWorkspace -RepoRoot $PSScriptRoot -ProfilePath $newProfiles[0]
+                [void](Sync-SCTWorkspaceCatalogs -ScenariosPath $scenariosPath -WorkspaceRoot $workspace.WorkspaceRoot)
                 $Control = $workspace.ControlName
                 Write-Host "  Active workspace: $($workspace.ControlName) [$($workspace.ControlId)]" -ForegroundColor Green
             } elseif ($workspace -and (Test-Path -LiteralPath $workspace.ProfilePath)) {
                 $workspace = Get-SCTControlWorkspace -RepoRoot $PSScriptRoot -ProfilePath $workspace.ProfilePath
+                [void](Sync-SCTWorkspaceCatalogs -ScenariosPath $scenariosPath -WorkspaceRoot $workspace.WorkspaceRoot)
                 $Control = $workspace.ControlName
             }
         }
@@ -215,6 +223,7 @@ while ($true) {
             $selectedProfile = Select-SCTControlProfilePath -ResultsRoot $resultsRoot
             if ($selectedProfile) {
                 $workspace = Get-SCTControlWorkspace -RepoRoot $PSScriptRoot -ProfilePath $selectedProfile
+                [void](Sync-SCTWorkspaceCatalogs -ScenariosPath $scenariosPath -WorkspaceRoot $workspace.WorkspaceRoot)
                 $Control = $workspace.ControlName
                 Write-Host "  Active workspace: $($workspace.ControlName) [$($workspace.ControlId)]" -ForegroundColor Green
             }
@@ -226,6 +235,7 @@ while ($true) {
                     $selectedProfile = Select-SCTControlProfilePath -ResultsRoot $resultsRoot
                     if ($selectedProfile) {
                         $workspace = Get-SCTControlWorkspace -RepoRoot $PSScriptRoot -ProfilePath $selectedProfile
+                        [void](Sync-SCTWorkspaceCatalogs -ScenariosPath $scenariosPath -WorkspaceRoot $workspace.WorkspaceRoot)
                         $Control = $workspace.ControlName
                     }
                 }
@@ -236,7 +246,8 @@ while ($true) {
                     -Control $Control `
                     -SamplesPath $SamplesPath `
                     -ScenarioRoot $scenariosPath `
-                    -ResultsPath $workspace.ResultsPath
+                    -ResultsPath (Get-SCTModuleResultsPath -WorkspaceRoot $workspace.WorkspaceRoot `
+                        -ModuleId $modules[$idx - 1].id)
             } else {
                 Write-Host "  Invalid selection. Enter 1-$($modules.Count), [C], [M], [V], or [Q]." -ForegroundColor Yellow
                 Start-Sleep -Milliseconds 600

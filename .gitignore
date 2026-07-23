@@ -29,6 +29,9 @@ samples/*.zip
 samples/*.7z
 samples/*.tar.gz
 
+# Locally built Office macro test documents
+scenarios/02-exploitation/v2.1-malicious-macro/*.docm
+
 # VM / lab artifacts
 *.vmdk
 *.vmx

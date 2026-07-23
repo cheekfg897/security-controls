@@ -23,7 +23,7 @@ Tests exploit-like delivery and execution behavior.
 
 | Technique | Purpose | Status |
 |---|---|---|
-| 2.1 Malicious Macro | Exercise an Office VBA delivery chain. | Planned |
+| 2.1 Malicious Macro | Exercise a Word VBA AutoOpen chain that starts hidden encoded PowerShell, writes a benign marker, and opens Notepad. | Available; requires desktop Word and one-time document preparation described in the [technique guide](../../scenarios/02-exploitation/v2.1-malicious-macro/README.md). |
 | 2.2 CVE Simulation | Exercise behavior associated with a known-vulnerability proof of concept. | Available; follow the [technique guide](../../scenarios/02-exploitation/v2.2-cve-simulation/README.md). |
 
 ## Module 03 - Privilege Escalation
@@ -60,5 +60,5 @@ Module 04 can run all 19 subtests without prompts from an Administrator PowerShe
 - Snapshot the isolated VM before each test series.
 - Confirm the EDR/AV is active with a [sanity check](../../sanity_checks/README.md).
 - Monitor the product console while the technique runs.
-- Review the generated `results/<control-id>/results.csv`.
+- Review the generated `results/<control-id>/results-module-<id>.csv` files.
 - Complete the technique's cleanup before restoring or reusing the VM.
