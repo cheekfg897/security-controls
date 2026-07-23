@@ -267,7 +267,8 @@ param(
 
     foreach ($toolName in @(
         'AddModule', 'DescribeModuleTests', 'SetupControl', 'BuildPackage',
-        'CheckControlProfile', 'CheckModules', 'CheckResults', 'CheckTestDescriptions'
+        'ComparePackages', 'CheckControlProfile', 'CheckModules', 'CheckResults',
+        'CheckTestDescriptions'
     )) {
         $toolPath = Get-SCTRepositoryToolPath -RepoRoot $repoRoot -Tool $toolName
         Assert-True (Test-Path -LiteralPath $toolPath -PathType Leaf) `

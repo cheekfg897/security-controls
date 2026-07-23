@@ -1,0 +1,2 @@
+﻿"timestamp","run_id","technique_id","technique_name","subtest","test_script","test_input","test_input_sha256","delivery_method","test_stage","source_result","execution_status","detection_status","action_status","reviewer_notes","notes"
+"2026-07-23T17:34:17.9383467+08:00","fixture-run","4.2","Scheduled Task","HiddenXML","v4.2-scheduled-task/v4.2-scheduled-task.ps1","","","","execution","BLOCKED","not_executed","","","","fixture"

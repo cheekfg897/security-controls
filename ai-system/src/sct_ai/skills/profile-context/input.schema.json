@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["controls", "ranking", "evidence"],
+  "properties": {
+    "controls": { "type": "array", "minItems": 2 },
+    "ranking": { "type": "object" },
+    "evidence": { "type": "array" }
+  },
+  "additionalProperties": false
+}

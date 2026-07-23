@@ -25,6 +25,21 @@ Convert an older combined workspace with:
 
 Repeat the workflow for the second product. The package builder writes `submissions/<control-id>.zip`, giving the comparison system one ZIP per product.
 
+## Comparison workflow
+
+| Purpose | Command |
+|---|---|
+| Compare two or more ZIPs | `.\ai-system\scripts\Compare-SCTControls.ps1` |
+| Start the local web app | `.\ai-system\scripts\Start-SCTComparisonWeb.ps1` |
+| Start trusted-network proof-of-concept mode | `.\ai-system\scripts\Start-SCTComparisonWeb.ps1 -Shared -ListenAddress 0.0.0.0` |
+| Build an offline dependency/model bundle | `.\ai-system\scripts\Build-SCTOfflineBundle.ps1` |
+| Verify and install an offline bundle | `.\ai-system\scripts\Install-SCTOfflineBundle.ps1` |
+| Import an approved Ollama model | `.\ai-system\scripts\Import-SCTOllamaModel.ps1` |
+
+The comparison engine never edits source ZIPs. Metrics, optional AI analysis,
+reports, and provenance are written under `ai-system/comparisons/<comparison-id>/`. See
+the [isolated AI comparison system](../ai-system/README.md).
+
 `scripts/validation/Check-SCTControlProfile.ps1` is an optional standalone check for an edited control JSON. The setup script already checks newly generated profiles before writing them to `results/<control-id>/`.
 
 ## Authoring workflow
@@ -44,3 +59,6 @@ Repeat the workflow for the second product. The package builder writes `submissi
 - `review/` creates product workspaces, converts legacy workspaces, and builds comparison packages.
 - `validation/` checks committed metadata and operator-produced files.
 - `common/` contains shared implementation and is not run directly.
+
+Comparison launchers, configuration, dependencies, generated runs, and tests
+are intentionally isolated under `ai-system/`.

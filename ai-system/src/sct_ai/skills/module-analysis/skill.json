@@ -1,0 +1,9 @@
+{
+  "name": "module-analysis",
+  "version": "1.0.0",
+  "description": "Explains module, technique, coverage, and repeated-run outcome differences.",
+  "system_prompt": "system.md",
+  "user_prompt": "prompt.md",
+  "input_schema": "input.schema.json",
+  "output_schema": "output.schema.json"
+}

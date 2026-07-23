@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}New comparison — SCT{% endblock %}
+{% block content %}
+<section class="hero">
+  <p class="eyebrow">Security control evaluation</p>
+  <h1>Compare validated SCT results</h1>
+  <p>Select two or more immutable comparison packages. The engine calculates
+  matched metrics first, then optionally runs the evidence-analysis skills.</p>
+</section>
+
+{% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
+
+<form action="/comparisons" method="post" enctype="multipart/form-data" class="panel">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <fieldset>
+    <legend>1. Result packages</legend>
+    {% if packages %}
+    <div class="check-grid">
+      {% for package in packages %}
+      <label><input type="checkbox" name="existing_packages" value="{{ package }}"> {{ package }}</label>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="muted">No ZIPs are currently stored under <code>submissions/</code>.</p>
+    {% endif %}
+    <label class="field">Upload additional ZIPs
+      <input type="file" name="uploads" accept=".zip,application/zip" multiple>
+    </label>
+    <p class="hint">Maximum 20 packages and 100 MB per uploaded package.</p>
+  </fieldset>
+
+  <fieldset>
+    <legend>2. Module weights</legend>
+    <label class="field">JSON object; submitted module weights must total 100
+      <textarea name="module_weights" rows="7" spellcheck="false" required>{{ default_weights }}</textarea>
+    </label>
+  </fieldset>
+
+  <fieldset>
+    <legend>3. Analysis mode</legend>
+    <label><input type="checkbox" name="enable_ai" id="enable-ai"> Run AI evidence skills</label>
+    <label class="field">Allowlisted provider and model
+      <select name="provider_model">
+        <option value="">Metrics only</option>
+        {% for option in provider_options %}
+        <option value="{{ option.value }}">{{ option.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    {% if not provider_options %}
+    <p class="hint">No usable models are configured; metrics-only comparisons remain available.</p>
+    {% endif %}
+    <label class="field">Optional comparison ID
+      <input type="text" name="comparison_id" pattern="[a-z0-9][a-z0-9._-]{0,79}" maxlength="80">
+    </label>
+  </fieldset>
+
+  <div class="actions">
+    <button type="button" class="secondary"
+      hx-post="/comparisons/validate"
+      hx-target="#preflight-result"
+      hx-swap="innerHTML"
+      hx-encoding="multipart/form-data">Validate packages</button>
+    <button type="submit" class="primary">Run comparison</button>
+  </div>
+  <div id="preflight-result" aria-live="polite"></div>
+</form>
+
+<section class="section">
+  <h2>Recent runs</h2>
+  {% if jobs %}
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Comparison</th><th>Status</th><th>Updated</th><th></th></tr></thead>
+      <tbody>
+      {% for job in jobs %}
+      <tr>
+        <td>{{ job.comparison_id or job.job_id }}</td>
+        <td><span class="status status-{{ job.status }}">{{ job.status }}</span></td>
+        <td>{{ job.updated_at }}</td>
+        <td>
+          {% if job.comparison_id %}
+          <a href="/comparisons/{{ job.comparison_id }}">Open</a>
+          {% else %}
+          <a href="/jobs/{{ job.job_id }}">Progress</a>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}<p class="muted">No comparison runs yet.</p>{% endif %}
+</section>
+{% endblock %}

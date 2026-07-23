@@ -59,6 +59,8 @@ Set-Location security-controls
 | Fill detection and action status | Edit `results/<control-id>/results-module-<id>.csv` directly |
 | Check the completed results | `.\Start-SCT.ps1`, then select `[M]` -> `[4]` |
 | Build a comparison ZIP | `.\Start-SCT.ps1`, then select `[M]` -> `[5]` |
+| Compare two or more product ZIPs | `.\Start-SCT.ps1`, then select `[M]` -> `[6]` |
+| Open the local comparison web app | `.\ai-system\scripts\Start-SCTComparisonWeb.ps1` |
 | Add a new test module | `.\scripts\authoring\Add-SCTModule.ps1` |
 | Check module files after editing them | `.\scripts\validation\Check-SCTModules.ps1` |
 
@@ -157,6 +159,26 @@ Save the module result files in place, then validate and package the workspace t
 
 The package is written to `submissions/<control-id>.zip` and contains `control-profile.json` plus the authoritative result/catalogue pair for every tested module. Repeat for the second product and submit the two ZIP files to the comparison system.
 
+### Compare products
+
+After building at least two product ZIPs, start the local, air-gap-compatible
+web application:
+
+```powershell
+.\ai-system\scripts\Start-SCTComparisonWeb.ps1
+```
+
+The repository-owned Python engine validates each package, matches equivalent
+cases, calculates detection/action rates and weighted rankings, and can use an
+allowlisted hosted or local Ollama model to explain the verified evidence. The
+model cannot alter calculated values or the deterministic recommendation.
+Generated runs are stored separately under `ai-system/comparisons/<comparison-id>/`;
+source ZIPs and authoritative result CSVs are never changed.
+
+See [AI-assisted control comparison](ai-system/README.md) for setup,
+scoring, provider configuration, shared proof-of-concept mode, and offline
+installation.
+
 ## Built-in modules
 
 | # | Module | Status | Techniques |
@@ -173,6 +195,7 @@ See the [control matrix](docs/reference/control-matrix.md) for implementation st
 ```text
 security-controls/
 |-- Start-SCT.ps1       # Main launcher
+|-- ai-system/          # Isolated comparison engine, web app, config, outputs, and tests
 |-- config/             # Control-profile example and JSON schema
 |-- core/               # Discovery, execution, markers, and results
 |-- docs/               # Indexed architecture, guides, and reference docs

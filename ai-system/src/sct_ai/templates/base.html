@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en" hx-history="false">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="htmx-config" content='{"historyCacheSize":0,"allowEval":false,"allowScriptTags":false,"selfRequestsOnly":true,"includeIndicatorStyles":false}'>
+  <title>{% block title %}SCT Comparison{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}">
+  <script src="{{ url_for('static', path='htmx.min.js') }}" defer></script>
+  <script src="{{ url_for('static', path='app.js') }}" defer></script>
+</head>
+<body>
+  <header class="site-header">
+    <a href="/" class="brand">SCT Comparison</a>
+    <span class="tag">Evidence-first</span>
+  </header>
+  {% if shared_mode %}
+  <div class="warning" role="alert">
+    Shared proof-of-concept mode: no authentication or built-in TLS. Use only
+    on a trusted isolated network.
+  </div>
+  {% endif %}
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+  <footer>Metrics are deterministic. AI explains evidence but cannot change scores.</footer>
+</body>
+</html>

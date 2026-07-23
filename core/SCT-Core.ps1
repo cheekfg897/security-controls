@@ -395,7 +395,8 @@ function Get-SCTRepositoryToolPath {
         [Parameter(Mandatory)]
         [ValidateSet(
             'AddModule', 'DescribeModuleTests', 'SetupControl', 'BuildPackage',
-            'CheckControlProfile', 'CheckModules', 'CheckResults', 'CheckTestDescriptions'
+            'ComparePackages', 'CheckControlProfile', 'CheckModules', 'CheckResults',
+            'CheckTestDescriptions'
         )]
         [string]$Tool
     )
@@ -405,6 +406,7 @@ function Get-SCTRepositoryToolPath {
         'DescribeModuleTests'   { 'scripts\authoring\Describe-SCTModuleTests.ps1' }
         'SetupControl'          { 'scripts\review\Setup-SCTControl.ps1' }
         'BuildPackage'          { 'scripts\review\Build-SCTComparisonPackage.ps1' }
+        'ComparePackages'       { 'ai-system\scripts\Compare-SCTControls.ps1' }
         'CheckControlProfile'   { 'scripts\validation\Check-SCTControlProfile.ps1' }
         'CheckModules'          { 'scripts\validation\Check-SCTModules.ps1' }
         'CheckResults'          { 'scripts\validation\Check-SCTResults.ps1' }
@@ -496,10 +498,11 @@ function Invoke-SCTManagementMenu {
         Write-Host "  [3]  Create or update a control workspace" -ForegroundColor White
         Write-Host "  [4]  Check completed module results" -ForegroundColor White
         Write-Host "  [5]  Build comparison ZIP" -ForegroundColor White
+        Write-Host "  [6]  Compare two or more result ZIPs" -ForegroundColor White
         Write-Host ""
         Write-Host "  Repository validation" -ForegroundColor DarkGray
-        Write-Host "  [6]  Check modules and test descriptions" -ForegroundColor White
-        Write-Host "  [7]  Check a control profile" -ForegroundColor White
+        Write-Host "  [7]  Check modules and test descriptions" -ForegroundColor White
+        Write-Host "  [8]  Check a control profile" -ForegroundColor White
         Write-Host ""
         Write-Host "  [0]  Back to Main Menu" -ForegroundColor Yellow
         Write-Host ""
@@ -543,11 +546,15 @@ function Invoke-SCTManagementMenu {
                     }
                 }
                 '6' {
+                    Invoke-SCTRepositoryTool -RepoRoot $RepoRoot -Tool 'ComparePackages'
+                    $ranTool = $true
+                }
+                '7' {
                     Invoke-SCTRepositoryTool -RepoRoot $RepoRoot -Tool 'CheckModules'
                     Invoke-SCTRepositoryTool -RepoRoot $RepoRoot -Tool 'CheckTestDescriptions'
                     $ranTool = $true
                 }
-                '7' {
+                '8' {
                     $profilePath = Select-SCTControlProfilePath -ResultsRoot $resultsRoot
                     if ($profilePath) {
                         Invoke-SCTRepositoryTool -RepoRoot $RepoRoot -Tool 'CheckControlProfile' `
@@ -556,7 +563,7 @@ function Invoke-SCTManagementMenu {
                     }
                 }
                 default {
-                    Write-Host "  Invalid selection. Enter 0-7." -ForegroundColor Yellow
+                    Write-Host "  Invalid selection. Enter 0-8." -ForegroundColor Yellow
                 }
             }
         } catch {

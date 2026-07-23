@@ -1,0 +1,11 @@
+{
+  "schema_version": "1.0",
+  "module_weights": {
+    "01": 25,
+    "02": 25,
+    "03": 25,
+    "04": 25
+  },
+  "minimum_comparable_weight": 80,
+  "tie_margin": 2
+}

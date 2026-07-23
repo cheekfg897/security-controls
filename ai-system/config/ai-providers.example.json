@@ -1,0 +1,36 @@
+{
+  "schema_version": "1.0",
+  "providers": {
+    "local-ollama": {
+      "type": "ollama",
+      "base_url": "http://127.0.0.1:11434",
+      "models": [
+        "<approved-local-model>"
+      ],
+      "timeout_seconds": 180,
+      "max_retries": 2,
+      "include_policy_details": true
+    },
+    "hosted-openai": {
+      "type": "openai",
+      "models": [
+        "<approved-hosted-model>"
+      ],
+      "api_key_env": "OPENAI_API_KEY",
+      "timeout_seconds": 120,
+      "max_retries": 2,
+      "include_policy_details": false
+    },
+    "compatible-api": {
+      "type": "openai-compatible",
+      "base_url": "https://approved-model-endpoint.example/v1",
+      "models": [
+        "<approved-compatible-model>"
+      ],
+      "api_key_env": "SCT_AI_API_KEY",
+      "timeout_seconds": 120,
+      "max_retries": 2,
+      "include_policy_details": false
+    }
+  }
+}

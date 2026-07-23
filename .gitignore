@@ -18,6 +18,17 @@ __pycache__/
 *.pyc
 *.pyo
 .env
+ai-system/.venv/
+ai-system/.tools/
+.pytest_cache/
+*.egg-info/
+
+# Generated comparison runs and local AI-system configuration
+ai-system/comparisons/*
+!ai-system/comparisons/README.md
+ai-system/config/config.local.comparison.json
+ai-system/config/config.local.ai.json
+ai-system/offline-bundles/
 
 # OS junk
 .DS_Store

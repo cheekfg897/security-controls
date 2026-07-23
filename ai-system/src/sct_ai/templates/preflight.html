@@ -1,0 +1,14 @@
+{% if valid %}
+<div class="success" role="status">
+  <strong>Packages are valid and distinct.</strong>
+  <ul>
+  {% for package in packages %}
+    <li>{{ package.display_name }} ({{ package.control_id }}):
+    {{ package.case_count }} cases, {{ package.trial_count }} trials,
+    modules {{ package.modules|map(attribute="module_id")|join(", ") }}</li>
+  {% endfor %}
+  </ul>
+</div>
+{% else %}
+<div class="error" role="alert">{{ error }}</div>
+{% endif %}

@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+{% block title %}{{ comparison.comparison_id }} — SCT{% endblock %}
+{% block content %}
+<section class="hero compact">
+  <p class="eyebrow">Completed comparison</p>
+  <h1>{{ comparison.comparison_id }}</h1>
+  <p>{{ comparison.coverage.control_count }} controls ·
+  {{ comparison.coverage.globally_comparable_case_count }} shared of
+  {{ comparison.coverage.union_case_count }} union cases</p>
+</section>
+
+<section class="decision decision-{{ comparison.ranking.status }}">
+  <div>
+    <span class="status">{{ comparison.ranking.status }}</span>
+    <h2>{{ comparison.ranking.reason }}</h2>
+  </div>
+  <div class="coverage-number">
+    <strong>{{ comparison.ranking.weighted_comparable_coverage if comparison.ranking.weighted_comparable_coverage is not none else "n/a" }}</strong>
+    <span>weighted coverage</span>
+  </div>
+</section>
+
+{% if comparison.ranking.entries %}
+<section class="section">
+  <h2>Verified ranking</h2>
+  <div class="score-grid">
+  {% for entry in comparison.ranking.entries %}
+    <article class="score-card">
+      <span class="rank">#{{ entry.rank }}</span>
+      <h3>{{ entry.display_name }}</h3>
+      <strong>{{ "%.2f"|format(entry.score) }}</strong><span>/100</span>
+    </article>
+  {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+<section class="section">
+  <h2>Control metrics</h2>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Control</th><th>Cases</th><th>Detection</th><th>Blocked before</th><th>Blocked after</th><th>Score</th><th>Coverage</th></tr></thead>
+    <tbody>
+    {% for control in comparison.controls %}
+    {% set metrics = control.metrics.all_cases %}
+    <tr>
+      <td>{{ control.display_name }}</td>
+      <td>{{ metrics.case_count }}</td>
+      <td>{{ "%.2f"|format(metrics.detection_rate) }}%</td>
+      <td>{{ "%.2f"|format(metrics.blocked_before_rate) }}%</td>
+      <td>{{ "%.2f"|format(metrics.blocked_after_rate) }}%</td>
+      <td>{{ "%.2f"|format(metrics.score) }}</td>
+      <td>{{ "%.2f"|format(control.metrics.coverage.coverage_rate) }}%</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+
+{% set module_ids = [] %}
+{% for control in comparison.controls %}
+  {% for module_id in control.metrics.comparable_modules.keys() %}
+    {% if module_id not in module_ids %}{% set _ = module_ids.append(module_id) %}{% endif %}
+  {% endfor %}
+{% endfor %}
+{% if module_ids %}
+<section class="section">
+  <h2>Comparable module scores</h2>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Control</th>{% for module_id in module_ids|sort %}<th>Module {{ module_id }}</th>{% endfor %}</tr></thead>
+    <tbody>
+    {% for control in comparison.controls %}
+    <tr>
+      <td>{{ control.display_name }}</td>
+      {% for module_id in module_ids|sort %}
+      {% set module = control.metrics.comparable_modules.get(module_id) %}
+      <td>{{ "%.2f"|format(module.score) if module else "n/a" }}</td>
+      {% endfor %}
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+{% endif %}
+
+{% if comparison.pairwise %}
+<section class="section">
+  <h2>Pairwise differences</h2>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Left</th><th>Right</th><th>Shared cases</th><th>Score delta</th><th>Evidence</th></tr></thead>
+    <tbody>
+    {% for pair in comparison.pairwise %}
+    <tr>
+      <td>{{ pair.left_control_id }}</td>
+      <td>{{ pair.right_control_id }}</td>
+      <td>{{ pair.comparable_case_count }}</td>
+      <td>{{ "%.2f"|format(pair.score_delta) if pair.score_delta is not none else "n/a" }}</td>
+      <td><code>{{ pair.evidence_id }}</code></td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+{% endif %}
+
+{% if analysis %}
+<section class="section">
+  <h2>AI-assisted evidence analysis</h2>
+  {% for skill in analysis.skills %}
+  <article class="analysis-card">
+    <p class="eyebrow">{{ skill.name }} v{{ skill.version }}</p>
+    <h3>{{ skill.output.summary }}</h3>
+    <ul>
+    {% for finding in skill.output.findings %}
+      <li><strong>{{ finding.title }}</strong> — {{ finding.analysis }}
+      <span class="refs">{{ finding.evidence_ids|join(", ") }}</span></li>
+    {% endfor %}
+    </ul>
+    {% if skill.output.recommendation %}
+    <p><strong>Qualified recommendation:</strong> {{ skill.output.recommendation.rationale }}</p>
+    {% endif %}
+  </article>
+  {% endfor %}
+</section>
+{% endif %}
+
+<section class="section">
+  <h2>Evidence index</h2>
+  <p class="muted">Expand an evidence record to inspect the structured values used by the analysis.</p>
+  <div class="evidence-list">
+  {% for item in comparison.evidence %}
+    <details>
+      <summary><code>{{ item.evidence_id }}</code> · {{ item.type }}</summary>
+      <pre>{{ item|tojson(indent=2) }}</pre>
+    </details>
+  {% endfor %}
+  </div>
+</section>
+
+<section class="section">
+  <h2>Artifacts</h2>
+  <div class="downloads">
+  {% for artifact in downloads %}
+    <a href="/comparisons/{{ comparison.comparison_id }}/download/{{ artifact }}">{{ artifact }}</a>
+  {% endfor %}
+  </div>
+</section>
+{% endblock %}

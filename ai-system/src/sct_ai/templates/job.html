@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Comparison progress — SCT{% endblock %}
+{% block content %}
+<section class="hero compact">
+  <p class="eyebrow">Comparison job</p>
+  <h1>Processing evidence</h1>
+  <p>Job <code>{{ job.job_id }}</code></p>
+</section>
+<section class="panel job-panel" data-job-id="{{ job.job_id }}">
+  <progress id="job-progress" max="100" value="{{ job.progress }}" aria-label="Comparison progress">{{ job.progress }}%</progress>
+  <p><strong id="job-status">{{ job.status }}</strong> · <span id="job-stage">{{ job.stage }}</span></p>
+  <p id="job-message">{{ job.message }}</p>
+  <p id="job-error" class="error{% if not job.error %} hidden{% endif %}">{{ job.error or "" }}</p>
+  {% if job.status in ["failed", "interrupted"] %}
+  <form method="post" action="/jobs/{{ job.job_id }}/rerun">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit" class="secondary">Rerun saved job</button>
+  </form>
+  {% endif %}
+</section>
+{% endblock %}

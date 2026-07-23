@@ -6,6 +6,19 @@ This guide explains where SCT configuration and technique code belong.
 
 ```text
 security-controls/
+|-- ai-system/
+|   |-- config/
+|   |-- comparisons/
+|   |   `-- <comparison-id>/
+|   |-- requirements/
+|   |-- scripts/
+|   |-- src/
+|   |   `-- sct_ai/
+|   |       |-- skills/
+|   |       |-- templates/
+|   |       `-- static/
+|   `-- tests/
+|       `-- python/
 |-- Start-SCT.ps1
 |-- config/
 |   |-- control-profile.example.json
@@ -56,7 +69,11 @@ security-controls/
 | Pre-test control checks | `sanity_checks/` |
 | Product configuration and generated outputs | `results/<control-id>/` |
 | Architecture, contributor guides, and reference material | `docs/` |
+| Comparison engine, web app, config, generated reports, scripts, and tests | `ai-system/` |
+| Model adapters and runtime skills | `ai-system/src/sct_ai/` |
+| Generated reports and the local web job index | `ai-system/comparisons/` |
 | Module and catalogue authoring utilities | `scripts/authoring/` |
+| Comparison, web, model-import, and offline-bundle utilities | `ai-system/scripts/` |
 | Control-workspace setup and comparison packaging | `scripts/review/` |
 | Profile, module, catalogue, and result validators | `scripts/validation/` |
 | Shared script implementation | `scripts/common/` |

@@ -1,0 +1,9 @@
+{
+  "name": "qualified-recommendation",
+  "version": "1.0.0",
+  "description": "Explains, without changing, the deterministic recommendation or no-winner result.",
+  "system_prompt": "system.md",
+  "user_prompt": "prompt.md",
+  "input_schema": "input.schema.json",
+  "output_schema": "output.schema.json"
+}
