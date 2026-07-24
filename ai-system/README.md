@@ -16,6 +16,63 @@ The normal way to use it is:
 The scoring engine is authoritative. AI can explain calculated evidence, but it
 cannot calculate scores, change rankings, or select a different winner.
 
+## Find what you need
+
+| I want to... | Go to |
+|---|---|
+| See what is required | [Requirements at a glance](#requirements-at-a-glance) |
+| Install the application | [Quick start](#quick-start) |
+| Run the local web application | [Quick start: Start the web application](#4-start-the-web-application) |
+| Learn how to use the web interface | [Using the web application](#using-the-web-application) |
+| Choose a model and configure its API key | [Choose and configure an AI model](#choose-and-configure-an-ai-model) |
+| Run a comparison from the command line | [Command-line use](#command-line-use) |
+| Allow access from a trusted lab network | [Shared-network mode](#shared-network-mode) |
+| Host the ASGI application | [ASGI hosting](#asgi-hosting) |
+| Install in an air-gapped environment | [Air-gapped installation](#air-gapped-installation) |
+| Understand the generated output | [Generated files](#generated-files) |
+| Understand the folders, source, and HTML | [Developer guide](DEVELOPER_GUIDE.md) |
+| Fix a problem | [Troubleshooting](#troubleshooting) |
+| Run the regression tests | [Tests](#tests) |
+| Review the security boundaries | [Security boundary](#security-boundary) |
+
+### Full contents
+
+- [Requirements at a glance](#requirements-at-a-glance)
+- [Quick start](#quick-start)
+  - [1. Check Python](#1-check-python)
+  - [2. Create the private Python environment](#2-create-the-private-python-environment)
+  - [3. Install the Python application](#3-install-the-python-application)
+  - [4. Start the web application](#4-start-the-web-application)
+- [Using the web application](#using-the-web-application)
+- [Choose and configure an AI model](#choose-and-configure-an-ai-model)
+- [What the AI workflow does](#what-the-ai-workflow-does)
+- [Generated files](#generated-files)
+- [Command-line use](#command-line-use)
+- [Shared-network mode](#shared-network-mode)
+- [ASGI hosting](#asgi-hosting)
+- [Air-gapped installation](#air-gapped-installation)
+- [Developer documentation](#developer-documentation)
+- [Troubleshooting](#troubleshooting)
+- [Tests](#tests)
+- [Security boundary](#security-boundary)
+
+## Requirements at a glance
+
+To install and start the application, you need:
+
+- This repository on the machine where the application will run.
+- A supported 64-bit CPython 3.11 or newer within the Python 3 series.
+- The Python dependencies installed from a package index or from the
+  [air-gapped installation](#air-gapped-installation) bundle.
+
+To perform a comparison, you also need at least two valid SCT result ZIPs.
+These can already be present under `submissions\` or be uploaded through the
+web application.
+
+AI is optional. Metrics, scoring, ranking, and deterministic reports work
+without Ollama, an OpenAI API key, or any other model provider. Node.js, npm,
+Docker, and a separate database server are not required.
+
 ## Quick start
 
 Run all commands from the repository root, not from inside `ai-system`.
@@ -88,27 +145,6 @@ Keep the Python server terminal open while using the application. Press
 The optional `Start-SCTComparisonWeb.ps1` wrapper remains available for older
 Windows workflows, but it launches this same Python command and is no longer
 the primary startup method.
-
-## How the frontend works
-
-There is one Python web application and no separate Node.js frontend service:
-
-```text
-browser
-  -> FastAPI routes
-  -> Jinja HTML templates
-  -> bundled CSS, HTMX, and app.js
-  -> JSON job-status polling
-  -> Python comparison workers
-```
-
-FastAPI renders the initial pages from `src\sct_ai\templates`. It serves the
-vendored browser files from `src\sct_ai\static` under `/static`. The main form
-is ordinary server-rendered HTML. HTMX submits package preflight validation and
-replaces only the preflight result fragment. `app.js` validates weight totals
-in the browser and polls `/api/jobs/<job-id>` once per second while a comparison
-runs. Completed reports are rendered by the same Python server, so the frontend
-and backend remain on one origin and require no frontend build step.
 
 ## Using the web application
 
@@ -282,33 +318,71 @@ When complete, the browser displays:
 - Expandable evidence records.
 - Downloadable output files.
 
-## Optional AI setup
+## Choose and configure an AI model
 
-AI configuration is server-side. Browser users can select only provider/model
-pairs explicitly allowlisted by the administrator.
+AI is optional. Leave **Run AI evidence skills** unchecked when deterministic
+metrics and reports are sufficient. No provider or API key is contacted in
+metrics-only mode.
 
-Copy the example:
+AI configuration is server-side. Browser users can select only the exact
+provider/model pairs allowlisted by the administrator.
+
+### 1. Choose a provider
+
+| Provider | Choose it when | API key |
+|---|---|---|
+| Local Ollama | Model data must remain on the machine or isolated lab network, and the machine can run the approved model. | Not required by this application. |
+| Hosted OpenAI | The organization permits the approved evidence payload to be sent to OpenAI and has an approved model/API project. | Required through an environment variable. |
+| OpenAI-compatible endpoint | The organization operates or approves another chat-completions-compatible service. | Normally required through an environment variable. |
+
+For a hosted provider, confirm its data-handling approval before enabling AI.
+The deterministic comparison does not require any external provider.
+
+### 2. Create the server allowlist
+
+Copy the example configuration:
 
 ```powershell
 Copy-Item .\ai-system\config\ai-providers.example.json `
     .\ai-system\config\config.local.ai.json
 ```
 
-Edit `config.local.ai.json` and replace placeholder model names such as
-`<approved-local-model>`. Entries that still contain angle-bracket
-placeholders are not shown in the web GUI.
+Edit `config.local.ai.json`. Under the selected provider, replace the
+placeholder in `models` with the exact model identifier exposed by Ollama or
+the hosted endpoint:
+
+```json
+{
+  "models": ["exact-approved-model-id"]
+}
+```
+
+Choose a model that is:
+
+- Approved for the classification of evidence being compared.
+- Available to the configured account or local runtime.
+- Compatible with chat-style requests and structured JSON responses.
+- Small enough for the local machine, or within the hosted service's approved
+  cost and latency limits.
+
+The application does not automatically discover, download, or choose a model.
+Every allowed model must be named explicitly. Placeholder names containing
+angle brackets are hidden from the web interface.
 
 Local configuration files are gitignored.
 
-### Local Ollama
+### 3. Configure the selected provider
 
-Install and start Ollama separately, then confirm it is responding:
+#### Local Ollama
+
+Install and start Ollama separately, then list the locally available model
+names:
 
 ```powershell
 ollama list
 ```
 
-The provider configuration should use:
+The value in `models` must exactly match the imported Ollama name:
 
 ```json
 {
@@ -329,29 +403,86 @@ To import an approved GGUF or supported Safetensors model:
 The model's learned weights are stored and run by Ollama, not by this Python
 application. No model weights are committed under `ai-system`.
 
-### Hosted OpenAI
+#### Hosted OpenAI
 
-Set the API key in the environment before starting the web application:
-
-```powershell
-$env:OPENAI_API_KEY = '<secret>'
-```
-
-Do not put the secret value in `config.local.ai.json`. The configuration names
-the environment variable:
+Configure the exact approved model and the name of the environment variable
+that will hold the API key:
 
 ```json
 {
   "type": "openai",
-  "models": ["<approved-model-name>"],
+  "models": ["exact-approved-model-id"],
   "api_key_env": "OPENAI_API_KEY"
 }
 ```
 
-### OpenAI-compatible endpoint
+Set that environment variable in the same PowerShell session before starting
+the web application:
 
-Configure the approved HTTPS base URL, model allowlist, and key environment
-variable. Users cannot submit an arbitrary model URL through the browser.
+```powershell
+$openAIKey = Read-Host 'OpenAI API key' -AsSecureString
+$openAICredential = [System.Management.Automation.PSCredential]::new(
+    'unused',
+    $openAIKey
+)
+$env:OPENAI_API_KEY = $openAICredential.GetNetworkCredential().Password
+Remove-Variable openAICredential, openAIKey
+```
+
+Enter the key issued for the approved API project when prompted.
+
+#### OpenAI-compatible endpoint
+
+Configure the approved HTTPS API base URL, exact model identifier, and the
+environment variable that contains its key:
+
+```json
+{
+  "type": "openai-compatible",
+  "base_url": "https://approved-model-endpoint.example/v1",
+  "models": ["exact-approved-model-id"],
+  "api_key_env": "SCT_AI_API_KEY"
+}
+```
+
+Then set the matching variable before startup:
+
+```powershell
+$compatibleKey = Read-Host 'Compatible API key' -AsSecureString
+$compatibleCredential = [System.Management.Automation.PSCredential]::new(
+    'unused',
+    $compatibleKey
+)
+$env:SCT_AI_API_KEY = $compatibleCredential.GetNetworkCredential().Password
+Remove-Variable compatibleCredential, compatibleKey
+```
+
+Users cannot submit an arbitrary model URL through the browser.
+
+### 4. Protect the API key
+
+- Put only the environment-variable name in `config.local.ai.json`, never the
+  secret value.
+- Do not commit keys, paste them into comparison policies, or include them in
+  command history or screenshots.
+- Use a key scoped to the approved project and provider permissions.
+- The `$env:` examples set the key for the current PowerShell process and
+  programs started from it. Open a new session or remove the variable when it
+  is no longer needed.
+
+### 5. Start and verify
+
+Start the application from the same terminal in which a hosted API key was
+set:
+
+```powershell
+.\ai-system\.venv\Scripts\python.exe -m sct_ai web
+```
+
+Open `http://127.0.0.1:8000`, enable **Run AI evidence skills**, and confirm
+the expected provider/model pair appears in the dropdown. If it does not,
+check the model spelling, remove placeholder angle brackets, confirm the API
+key variable is set, and restart the server after configuration changes.
 
 ## What the AI workflow does
 
@@ -579,36 +710,12 @@ Import the model separately into Ollama:
     -ModelName sct-approved
 ```
 
-## Folder guide and generated-file clutter
+## Developer documentation
 
-The files normally edited by developers are:
-
-```text
-README.md                 setup and usage documentation
-config\                   example local policies and provider allowlists
-requirements\             pinned dependency lists
-scripts\                  PowerShell launch and offline tools
-src\sct_ai\               Python engine and web application
-tests\                    regression tests
-```
-
-Large or generated folders:
-
-```text
-.venv\                    private Python runtime and installed packages
-.tools\                   local Python bootstrap downloads
-src\sct_ai\__pycache__\   generated Python bytecode
-comparisons\              generated run data and SQLite job index
-```
-
-Those folders can contain thousands of files, but they are not thousands of
-application components. They are gitignored and should not be reviewed or
-edited as source. Collapse or exclude them in the editor when browsing the
-project.
-
-The repetitive per-skill directories were consolidated into one
-`src\sct_ai\skills.json` file to keep the repository-owned source easier to
-navigate.
+The complete source tree, PowerShell and Python file responsibilities, HTML
+template flow, browser assets, architecture, generated files, and test guide
+are maintained separately in
+[DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md).
 
 ## Troubleshooting
 
