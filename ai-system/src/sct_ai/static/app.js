@@ -51,24 +51,23 @@ document.addEventListener("DOMContentLoaded", () => {
   function configureScoringMode() {
     if (!scoringMode || !detectionWeight || !blockingWeight) return;
     const mode = scoringMode.value;
-    const custom = mode === "custom";
-    detectionWeight.readOnly = !custom;
-    blockingWeight.readOnly = !custom;
+    detectionWeight.readOnly = false;
+    blockingWeight.readOnly = false;
     if (mode === "detect_only") {
       detectionWeight.value = "100";
       blockingWeight.value = "0";
       scoringHelp.textContent =
-        "Blocking outcomes remain visible in the report but do not affect the score.";
+        "Blocking outcomes remain visible but do not affect the score. Edit either percentage to switch to Custom.";
     } else if (mode === "prevention_first") {
       detectionWeight.value = "40";
       blockingWeight.value = "60";
       scoringHelp.textContent =
-        "Detection contributes 40% and the binary blocked/not-blocked result contributes 60%.";
+        "Detection contributes 40% and blocking contributes 60%. Edit either percentage to switch to Custom.";
     } else if (mode === "auto") {
       detectionWeight.value = "40";
       blockingWeight.value = "60";
       scoringHelp.textContent =
-        "If every submitted profile is detect-only, the server changes this to 100% detection and 0% blocking. Otherwise it uses 40% and 60%.";
+        "The server resolves Automatic from submitted policies. Edit either percentage to switch to Custom.";
     } else {
       scoringHelp.textContent =
         "Choose your own detection and blocking percentages; together they must total 100%.";
@@ -76,9 +75,19 @@ document.addEventListener("DOMContentLoaded", () => {
     updateScoringTotal();
   }
 
+  function switchToCustomScoring() {
+    if (!scoringMode) return;
+    if (scoringMode.value !== "custom") {
+      scoringMode.value = "custom";
+      configureScoringMode();
+      return;
+    }
+    updateScoringTotal();
+  }
+
   scoringMode?.addEventListener("change", configureScoringMode);
-  detectionWeight?.addEventListener("input", updateScoringTotal);
-  blockingWeight?.addEventListener("input", updateScoringTotal);
+  detectionWeight?.addEventListener("input", switchToCustomScoring);
+  blockingWeight?.addEventListener("input", switchToCustomScoring);
   configureScoringMode();
 
   const panel = document.querySelector("[data-job-id]");

@@ -32,8 +32,9 @@
   <fieldset>
     <legend>2. Module weights</legend>
     <p class="hint">Set how much each test module contributes to the final
-    ranking. Only modules present in the submitted packages are used, and
-    their weights must total 100%.</p>
+    ranking. Modules are discovered from <code>scenarios/*/module.json</code>,
+    so newly added modules appear here automatically. Only modules present in
+    the submitted packages are used, and their weights must total 100%.</p>
     <div class="weight-grid">
       {% for module in modules %}
       <label class="weight-field">
@@ -69,7 +70,7 @@
     <div class="weight-grid compact-grid">
       <label class="weight-field">
         <span>Detection</span>
-        <small>How often the control detected the case.</small>
+        <small>Editable in every mode; changing a preset selects Custom.</small>
         <span class="number-with-unit">
           <input type="number" name="detection_weight" id="detection-weight"
             value="{{ detection_weight }}" min="0" max="100" step="0.001"
@@ -79,7 +80,7 @@
       </label>
       <label class="weight-field">
         <span>Blocking</span>
-        <small>Any logged block gets full credit; no timing distinction is required.</small>
+        <small>Editable in every mode; changing a preset selects Custom.</small>
         <span class="number-with-unit">
           <input type="number" name="blocking_weight" id="blocking-weight"
             value="{{ blocking_weight }}" min="0" max="100" step="0.001"

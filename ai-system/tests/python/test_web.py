@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from sct_ai.jobs import JobStore
-from sct_ai.web import validate_web_binding
+from sct_ai.web import _module_options, validate_web_binding
 
 from .helpers import package_bytes
 
@@ -22,6 +22,55 @@ HAS_WEB_DEPS = bool(
 
 
 class WebSurfaceTests(unittest.TestCase):
+    def test_module_options_expand_for_six_discovered_modules(self) -> None:
+        with tempfile.TemporaryDirectory() as value:
+            root = Path(value)
+            for index in range(1, 7):
+                module = root / "scenarios" / f"{index:02d}-fixture"
+                module.mkdir(parents=True)
+                (module / "module.json").write_text(
+                    json.dumps(
+                        {
+                            "id": f"{index:02d}",
+                            "name": f"Fixture {index}",
+                            "techniques": [],
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+            options = _module_options(root)
+
+        self.assertEqual(
+            [f"{index:02d}" for index in range(1, 7)],
+            [option["module_id"] for option in options],
+        )
+        self.assertEqual(6, len(options))
+        self.assertAlmostEqual(
+            100.0,
+            sum(float(option["weight"]) for option in options),
+            places=3,
+        )
+
+    def test_scoring_fields_switch_edits_to_custom_mode(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[2]
+            / "src"
+            / "sct_ai"
+            / "static"
+            / "app.js"
+        ).read_text(encoding="utf-8")
+        self.assertIn('detectionWeight.readOnly = false', source)
+        self.assertIn('blockingWeight.readOnly = false', source)
+        self.assertIn('scoringMode.value = "custom"', source)
+        self.assertIn(
+            'detectionWeight?.addEventListener("input", switchToCustomScoring)',
+            source,
+        )
+        self.assertIn(
+            'blockingWeight?.addEventListener("input", switchToCustomScoring)',
+            source,
+        )
+
     def test_non_loopback_requires_shared_mode(self) -> None:
         validate_web_binding("127.0.0.1", 8000, False)
         validate_web_binding("0.0.0.0", 8000, True)

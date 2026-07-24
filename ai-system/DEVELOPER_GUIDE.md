@@ -309,7 +309,7 @@ Job completes
 | Path | Purpose |
 |---|---|
 | `src\sct_ai\templates\base.html` | Shared document shell. It defines UTF-8 and viewport metadata, disables HTMX history/evaluation/script injection, loads only local CSS and JavaScript, provides title/content blocks, renders the site header and footer, and displays the shared-mode security warning. Every full page extends this file. |
-| `src\sct_ai\templates\index.html` | Home and new-comparison page. Its ordinary multipart form contains existing-package selection, uploads, module weights, scoring mode and weights, decision thresholds, optional allowlisted AI selection, and comparison ID. The Validate button uses HTMX only to replace the preflight result region; the Run button performs a normal form submission. It also renders server validation errors and recent jobs. |
+| `src\sct_ai\templates\index.html` | Home and new-comparison page. Its ordinary multipart form contains dynamically discovered module weights, editable detection/blocking weights, decision thresholds, optional allowlisted AI selection, and comparison ID. The Validate button uses HTMX only to replace the preflight result region; the Run button performs a normal form submission. It also renders server validation errors and recent jobs. |
 | `src\sct_ai\templates\preflight.html` | Reusable HTML fragment returned by package preflight. Success output lists control identity, cases, trials, and modules. Failure output uses an alert region. It is intentionally a fragment rather than a complete HTML document because HTMX inserts it into `index.html`. |
 | `src\sct_ai\templates\job.html` | Background-job progress page. It exposes the job ID through a `data-job-id` attribute and provides stable progress, status, stage, message, and error elements for `app.js`. Failed or interrupted jobs receive a server-rendered, CSRF-protected rerun form. |
 | `src\sct_ai\templates\comparison.html` | Completed-result page. It renders the decision state, weighted coverage, resolved scoring, ranking cards, per-control metrics, comparable module scores, pairwise differences, optional AI analysis, expandable JSON evidence, and allowlisted artifact-download links. It reads already-calculated data and does not calculate scores in the template. |
@@ -334,7 +334,7 @@ Job completes
 | Path | Purpose |
 |---|---|
 | `src\sct_ai\static\app.css` | All repository-owned visual styling for forms, messages, tables, rankings, evidence panels, downloads, responsive layouts, and print-friendly pages. |
-| `src\sct_ai\static\app.js` | Configures HTMX, validates module and custom scoring totals in the browser, updates scoring-mode fields/help text, polls the job-status API, redirects completed jobs, and displays polling or job errors. |
+| `src\sct_ai\static\app.js` | Configures HTMX, validates module and scoring totals, keeps detection/blocking fields editable, switches an edited preset to Custom, updates scoring help, polls the job-status API, redirects completed jobs, and displays polling or job errors. |
 | `src\sct_ai\static\htmx.min.js` | Vendored and pinned HTMX 2.0.10 library used for partial package-preflight submission. It avoids a CDN dependency and supports air-gapped operation. |
 | `src\sct_ai\static\HTMX-LICENSE.txt` | Zero-Clause BSD licence text accompanying the vendored HTMX file. |
 

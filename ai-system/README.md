@@ -172,12 +172,19 @@ job finishes. ZIPs already stored under `submissions\` are never modified.
 
 ### Step 2: Set module weights
 
-The page shows one numeric field for each repository module:
+The module display is not fixed to four entries. The page discovers every
+valid `scenarios\*\module.json` file and creates one numeric field for each
+module. The current repository has:
 
 - Module 01: Malware Delivery
 - Module 02: Exploitation
 - Module 03: Privilege Escalation
 - Module 04: Persistence
+
+If two more module definitions are added, the page displays six module cards
+automatically. Initial weights are divided equally across all discovered
+modules, with the final value adjusted for rounding so the total remains
+exactly 100%. For six modules, that is approximately 16.667% per module.
 
 Module weights describe business importance. A module with a 40% weight has
 twice the ranking influence of a module with a 20% weight.
@@ -199,7 +206,12 @@ make a product-only case comparable.
 
 ### Step 3: Choose detection and blocking scoring
 
-The GUI provides four scoring modes.
+The detection and blocking percentage fields are editable in every mode.
+Selecting a preset fills its standard values; changing either percentage
+automatically changes the mode to **Custom** so the server uses the edited
+values. Each value may be from 0% to 100%, but together they must total 100%.
+
+The GUI provides four starting modes.
 
 #### Automatic
 
