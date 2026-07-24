@@ -1,245 +1,700 @@
-# AI-assisted control comparison
+# SCT comparison web application
 
-This folder is the self-contained SCT comparison and AI subsystem. It
-accepts two or more validated ZIPs from `submissions/`, calculates reproducible
-metrics, and can ask an allowlisted hosted or local model to explain those
-metrics. The model never calculates or changes the official score.
+This folder contains the Security Control Testing (SCT) comparison engine,
+web application, optional AI explanation workflow, and offline-installation
+tools.
 
-## Workflow
+The normal way to use it is:
+
+1. Install the Python dependencies once.
+2. Start the local web application.
+3. Select or upload two or more validated result ZIPs.
+4. Configure module, detection, and blocking weights in the browser.
+5. Run the deterministic comparison.
+6. Optionally ask an allowlisted local or hosted model to explain the results.
+
+The scoring engine is authoritative. AI can explain calculated evidence, but it
+cannot calculate scores, change rankings, or select a different winner.
+
+## Quick start
+
+Run all commands from the repository root, not from inside `ai-system`.
+
+### 1. Check Python
+
+The application supports 64-bit CPython 3.11 or newer within the Python 3
+series, including Python 3.13 and 3.14:
+
+```powershell
+python --version
+```
+
+When several Python versions are installed through the Windows Python launcher,
+you can select one explicitly:
+
+```powershell
+py -3.14 --version
+```
+
+If neither command finds a supported runtime, install a supported x64 Python
+version or use the offline installation workflow later in this document.
+
+### 2. Create the private Python environment
+
+Only do this when `ai-system\.venv` does not already exist:
+
+```powershell
+py -3.14 -m venv .\ai-system\.venv
+```
+
+Replace `3.14` with the installed version you want to test, such as `3.13`.
+If the `py` launcher is unavailable, use `python -m venv
+.\ai-system\.venv`. A virtual environment is tied to the Python version that
+created it and should not be copied between testers.
+
+You do not need to activate the environment. The commands below invoke its
+Python executable directly.
+
+### 3. Install the Python application
+
+```powershell
+.\ai-system\.venv\Scripts\python.exe -m pip install `
+    --editable ".\ai-system[all]"
+```
+
+This installs the `sct_ai` package, its Python command-line entry points, the
+web dependencies, and the optional AI integrations. For a metrics-only
+installation, use `--editable ".\ai-system[web]"`.
+
+No Node.js, npm, frontend build, database server, or Docker container is
+required. The application uses FastAPI, server-rendered HTML, a local SQLite
+job index, and browser assets included in this repository.
+
+### 4. Start the web application
+
+```powershell
+.\ai-system\.venv\Scripts\python.exe -m sct_ai web
+```
+
+Open:
 
 ```text
-validated product ZIPs
-        |
-        v
-safe package validation and normalization
-        |
-        v
-deterministic coverage, metrics, pairwise deltas, and ranking
-        |
-        +---------------------> metrics-only reports
-        |
-        v
-versioned LangChain runtime skills
-        |
-        v
-validated evidence citations and qualified narrative
+http://127.0.0.1:8000
 ```
 
-Authoritative workspaces under `results/` and source ZIPs under `submissions/`
-are read-only inputs. Each generated run is written under
-`ai-system/comparisons/<comparison-id>/`. Run every command below from the
-repository root.
+Keep the Python server terminal open while using the application. Press
+`Ctrl+C` in that terminal to stop it.
 
-## Install
+The optional `Start-SCTComparisonWeb.ps1` wrapper remains available for older
+Windows workflows, but it launches this same Python command and is no longer
+the primary startup method.
 
-The comparison application targets Python 3.11 x64. On a connected development
-machine:
+## How the frontend works
 
-```powershell
-py -3.11 -m venv .\ai-system\.venv
-.\ai-system\.venv\Scripts\python.exe -m pip install -r .\ai-system\requirements\all.txt
+There is one Python web application and no separate Node.js frontend service:
+
+```text
+browser
+  -> FastAPI routes
+  -> Jinja HTML templates
+  -> bundled CSS, HTMX, and app.js
+  -> JSON job-status polling
+  -> Python comparison workers
 ```
 
-Generated virtual environments are gitignored. For an air-gapped installation,
-use the [offline transfer workflow](#air-gapped-transfer) instead.
+FastAPI renders the initial pages from `src\sct_ai\templates`. It serves the
+vendored browser files from `src\sct_ai\static` under `/static`. The main form
+is ordinary server-rendered HTML. HTMX submits package preflight validation and
+replaces only the preflight result fragment. `app.js` validates weight totals
+in the browser and polls `/api/jobs/<job-id>` once per second while a comparison
+runs. Completed reports are rendered by the same Python server, so the frontend
+and backend remain on one origin and require no frontend build step.
 
-## Prepare local configuration
+## Using the web application
 
-Copy and edit the examples. Both local files are gitignored:
+The home page is arranged in the same order as a comparison run.
+
+### Step 1: Select result packages
+
+Select existing ZIPs from `submissions\`, upload additional ZIPs, or combine
+both methods.
+
+Requirements:
+
+- At least two and no more than twenty ZIPs.
+- Each ZIP must be no larger than 100 MB.
+- Every package must have a unique control ID.
+- Every result module must have a matching test catalogue.
+- Unsafe paths, duplicate entries, encrypted entries, unexpected files, and
+  unsafe compression ratios are rejected.
+
+Use **Validate packages** before running a comparison. The preflight result
+shows each control ID, case count, trial count, and submitted module IDs.
+
+Uploads are copied to a generated staging directory. They are removed when the
+job finishes. ZIPs already stored under `submissions\` are never modified.
+
+### Step 2: Set module weights
+
+The page shows one numeric field for each repository module:
+
+- Module 01: Malware Delivery
+- Module 02: Exploitation
+- Module 03: Privilege Escalation
+- Module 04: Persistence
+
+Module weights describe business importance. A module with a 40% weight has
+twice the ranking influence of a module with a 20% weight.
+
+The modules contained in the selected ZIPs must have positive weights totaling
+100%. Set modules not present in the selected packages to 0%. The server
+validates this again before starting the job.
+
+Examples:
+
+```text
+Equal importance:       25 / 25 / 25 / 25
+Delivery emphasized:   40 / 20 / 20 / 20
+Modules 01 and 02 only: 60 / 40 /  0 /  0
+```
+
+Module weighting occurs after cases have been matched and averaged. It cannot
+make a product-only case comparable.
+
+### Step 3: Choose detection and blocking scoring
+
+The GUI provides four scoring modes.
+
+#### Automatic
+
+This is the recommended default.
+
+- If every submitted control profile has `default_mode: detect_only`, scoring
+  resolves to 100% detection and 0% blocking.
+- If any submitted control is `detect_and_block` or `custom`, scoring resolves
+  to prevention-first: 40% detection and 60% blocking.
+
+The completed comparison page and generated reports show the mode that was
+actually used.
+
+#### Detection only
+
+Detection contributes 100% and blocking contributes 0%.
+
+Use this when blocking was intentionally disabled or when the evaluation is
+only intended to measure visibility. Blocking outcomes remain visible in the
+reports but do not affect the score.
+
+#### Prevention first
+
+Detection contributes 40% and the binary blocked/not-blocked rate contributes
+60%.
+
+#### Custom
+
+Enter any detection and blocking percentages from 0 to 100. The two values
+must total 100%.
+
+Examples:
+
+```text
+Detection emphasized: 75% detection / 25% blocking
+Equal emphasis:       50% detection / 50% blocking
+Prevention emphasized: 25% detection / 75% blocking
+```
+
+For each case:
+
+```text
+case score =
+    detection rate × detection weight
+  + blocked rate × blocking weight
+```
+
+Blocking is intentionally binary:
+
+- `blocked` receives full blocking credit.
+- `not_blocked` receives no blocking credit.
+
+The framework does not require reviewers to decide whether blocking happened
+before or after execution because product logs often do not expose that timing
+reliably. Older timing-specific values are accepted and normalized to
+`blocked`.
+
+Repeated trials are averaged inside their case first. Cases are then averaged
+inside their module. This prevents frequently repeated tests from silently
+dominating a module.
+
+### Step 4: Set decision thresholds
+
+**Minimum comparable weight** defaults to 80%.
+
+The ranking uses only cases shared by every submitted control. If the modules
+containing shared cases represent less than this threshold, the result is
+provisional and the engine does not recommend a product.
+
+**Tie margin** defaults to 2 points.
+
+When the top two scores are within this margin, the result is reported as
+`no_clear_winner`.
+
+### Step 5: Optionally enable AI explanation
+
+Metrics-only mode is always available and does not contact an AI provider.
+
+When AI is configured:
+
+1. Select **Run AI evidence skills**.
+2. Select an allowlisted provider and model.
+3. Run the comparison normally.
+
+The deterministic comparison is completed and saved before any model request.
+If AI configuration or output validation fails, the metrics and deterministic
+reports remain available.
+
+### Step 6: Validate and run
+
+Use **Validate packages** to check the ZIPs first, then select
+**Run comparison**.
+
+The browser opens a progress page. The application performs:
+
+```text
+package validation
+        ↓
+case matching and deterministic metrics
+        ↓
+coverage, pairwise differences, and ranking
+        ↓
+deterministic reports
+        ↓ optional
+validated AI evidence explanation
+```
+
+When complete, the browser displays:
+
+- The resolved scoring mode and weights.
+- Comparable coverage.
+- The verified ranking or no-winner reason.
+- Per-control and per-module metrics.
+- Pairwise score differences.
+- Optional AI findings.
+- Expandable evidence records.
+- Downloadable output files.
+
+## Optional AI setup
+
+AI configuration is server-side. Browser users can select only provider/model
+pairs explicitly allowlisted by the administrator.
+
+Copy the example:
 
 ```powershell
-Copy-Item .\ai-system\config\comparison-policy.example.json `
-    .\ai-system\config\config.local.comparison.json
 Copy-Item .\ai-system\config\ai-providers.example.json `
     .\ai-system\config\config.local.ai.json
 ```
 
-The comparison policy must contain exactly the modules represented by the
-selected ZIPs, and its weights must total 100. For example:
+Edit `config.local.ai.json` and replace placeholder model names such as
+`<approved-local-model>`. Entries that still contain angle-bracket
+placeholders are not shown in the web GUI.
+
+Local configuration files are gitignored.
+
+### Local Ollama
+
+Install and start Ollama separately, then confirm it is responding:
+
+```powershell
+ollama list
+```
+
+The provider configuration should use:
+
+```json
+{
+  "type": "ollama",
+  "base_url": "http://127.0.0.1:11434",
+  "models": ["sct-approved"]
+}
+```
+
+To import an approved GGUF or supported Safetensors model:
+
+```powershell
+.\ai-system\scripts\Import-SCTOllamaModel.ps1 `
+    -ModelPath D:\ApprovedModels\model.gguf `
+    -ModelName sct-approved
+```
+
+The model's learned weights are stored and run by Ollama, not by this Python
+application. No model weights are committed under `ai-system`.
+
+### Hosted OpenAI
+
+Set the API key in the environment before starting the web application:
+
+```powershell
+$env:OPENAI_API_KEY = '<secret>'
+```
+
+Do not put the secret value in `config.local.ai.json`. The configuration names
+the environment variable:
+
+```json
+{
+  "type": "openai",
+  "models": ["<approved-model-name>"],
+  "api_key_env": "OPENAI_API_KEY"
+}
+```
+
+### OpenAI-compatible endpoint
+
+Configure the approved HTTPS base URL, model allowlist, and key environment
+variable. Users cannot submit an arbitrary model URL through the browser.
+
+## What the AI workflow does
+
+The optional workflow makes four sequential model calls:
+
+1. `profile-context`
+2. `module-analysis`
+3. `cross-control-synthesis`
+4. `qualified-recommendation`
+
+These are versioned prompt-and-schema stages, not autonomous or parallel
+agents. One selected model client runs the stages in order. Later stages can
+receive validated earlier output.
+
+All definitions now live in the consolidated
+`src\sct_ai\skills.json` catalog.
+
+Each response must:
+
+- Match its JSON schema.
+- Reference known control IDs.
+- Cite exact evidence IDs from `comparison.json`.
+- Avoid unsupported percentage claims.
+- Return the deterministic recommendation exactly, including `null` when
+  evidence is insufficient or scores are tied.
+
+A skill receives one correction attempt when its first response is invalid.
+
+Remote-provider payloads omit raw CSV rows, reviewer notes, source results,
+sample names, local log paths, exclusion values, and detailed settings by
+default. A local server configuration may explicitly allow policy-setting
+details.
+
+## Generated files
+
+Each run is written to:
+
+```text
+ai-system\comparisons\<comparison-id>\
+```
+
+Artifacts:
+
+```text
+comparison.json       authoritative calculated evidence and ranking
+ai-analysis.json      optional validated AI output
+technical-report.md   detailed human-readable report
+executive-summary.md  short decision-focused report
+report.html           portable standalone HTML report
+run-manifest.json     inputs, Python version, status, timestamps, artifacts, and errors
+```
+
+The web job index is:
+
+```text
+ai-system\comparisons\index.sqlite3
+```
+
+Run manifests remain the source of truth. The web application re-imports them
+into SQLite when it starts.
+
+Generated comparison data is gitignored because it may contain sensitive
+evaluation context.
+
+## Command-line use
+
+The web GUI is recommended for interactive use. The same engine is available
+through the installed Python module.
+
+Create a local policy file:
+
+```powershell
+Copy-Item .\ai-system\config\comparison-policy.example.json `
+    .\ai-system\config\config.local.comparison.json
+```
+
+An automatic policy looks like:
 
 ```json
 {
   "schema_version": "1.0",
   "module_weights": {
-    "01": 40,
-    "02": 20,
-    "03": 20,
-    "04": 20
+    "01": 25,
+    "02": 25,
+    "03": 25,
+    "04": 25
   },
   "minimum_comparable_weight": 80,
-  "tie_margin": 2
+  "tie_margin": 2,
+  "scoring_mode": "auto"
 }
 ```
 
-An AI provider entry allowlists its models and names the environment variable
-that contains its key. It never contains the secret value. Ollama requires no
-key. Browser users can select only server-allowlisted provider/model pairs and
-cannot supply an arbitrary model URL.
+A custom scoring policy adds:
 
-## Start the web application
-
-Local mode is the default and binds only to loopback:
-
-```powershell
-.\ai-system\scripts\Start-SCTComparisonWeb.ps1
+```json
+{
+  "scoring_mode": "custom",
+  "detection_weight": 70,
+  "blocking_weight": 30
+}
 ```
 
-Open `http://127.0.0.1:8000`. The page can select existing ZIPs, upload
-additional packages, preflight them, set module weights, choose metrics-only or
-AI analysis, show job progress, and reopen completed runs.
-
-Shared proof-of-concept mode must be explicit:
+Run metrics and ranking:
 
 ```powershell
-.\ai-system\scripts\Start-SCTComparisonWeb.ps1 `
-    -Shared `
-    -ListenAddress 0.0.0.0 `
-    -Port 8000
+.\ai-system\.venv\Scripts\python.exe -m sct_ai compare `
+    --package .\submissions\control-a.zip `
+    --package .\submissions\control-b.zip `
+    --policy .\ai-system\config\config.local.comparison.json
 ```
 
-Shared mode has no authentication or built-in TLS. Use it only on a trusted,
-isolated lab network. A production deployment needs a separate authentication,
-authorization, TLS, and operational-security design.
-
-## Run from PowerShell
-
-Metrics and ranking only:
+Add local AI analysis:
 
 ```powershell
-.\ai-system\scripts\Compare-SCTControls.ps1 `
-    -PackagePath .\submissions\control-a.zip,.\submissions\control-b.zip `
-    -PolicyPath .\ai-system\config\config.local.comparison.json
+.\ai-system\.venv\Scripts\python.exe -m sct_ai compare `
+    --package .\submissions\control-a.zip `
+    --package .\submissions\control-b.zip `
+    --policy .\ai-system\config\config.local.comparison.json `
+    --provider local-ollama `
+    --model sct-approved `
+    --provider-config .\ai-system\config\config.local.ai.json
 ```
 
-Local Ollama analysis:
-
-```powershell
-.\ai-system\scripts\Compare-SCTControls.ps1 `
-    -PackagePath .\submissions\control-a.zip,.\submissions\control-b.zip `
-    -PolicyPath .\ai-system\config\config.local.comparison.json `
-    -Provider local-ollama `
-    -Model <allowlisted-model-name> `
-    -ProviderConfigPath .\ai-system\config\config.local.ai.json
-```
-
-The direct Python interface is:
+The installed Python module is the primary interface:
 
 ```text
-python -m sct_ai compare --package <zip> --package <zip> \
-  --policy <json> --provider <provider-alias> --model <model> \
-  --provider-config <json>
+python -m sct_ai validate --package <zip> --package <zip>
+python -m sct_ai compare --package <zip> --package <zip> --policy <json>
+python -m sct_ai web --host 127.0.0.1 --port 8000
 ```
 
-Use `--provider none` or omit all AI options for a network-free metrics-only
-run.
+Use the virtual environment's `python.exe` in place of `python` when the
+environment is not activated. The installation also provides `sct-web` and
+`sct-compare` console commands for environments that place console scripts on
+`PATH`; `python -m sct_ai` remains the portable interface. Selecting Python
+3.13 versus 3.14 happens when the virtual environment is created, so the
+application runs under that interpreter without a separate runtime-selection
+layer.
 
-## How matching and scoring work
+The PowerShell comparison scripts remain optional wrappers for existing SCT
+menu integration.
 
-A comparison case is identified by module, technique, subtest, test stage,
-delivery method, and sample hash or opaque input identity. Display names and
-free-text notes are not matching keys.
+## Shared-network mode
 
-Repeated executions remain separate trials inside one case. SCT first averages
-trials within that case, then averages cases within the module. This prevents a
-frequently repeated case from silently dominating the module.
+Local mode binds only to loopback. To expose the proof of concept on a trusted,
+isolated lab network:
 
-The prevention-first score is:
+```powershell
+.\ai-system\.venv\Scripts\python.exe -m sct_ai web `
+    --shared `
+    --host 0.0.0.0 `
+    --port 8000 `
+    --workers 2
+```
+
+Shared mode has no authentication and no built-in TLS. Do not expose it to an
+untrusted network. A production deployment requires a separate design for
+authentication, authorization, TLS, audit logging, secrets, rate limiting,
+backups, and operational monitoring.
+
+`--workers` controls background comparison concurrency:
+
+The default is one; the maximum is eight. These are background job threads,
+not separate web-server processes or AI agents.
+
+## ASGI hosting
+
+The package exports the conventional ASGI target `sct_ai.asgi:app`. A hosting
+platform can install `.[all]`, configure environment variables, and start:
 
 ```text
-case score = (detection effectiveness * 40%)
-           + (action effectiveness * 60%)
+python -m uvicorn sct_ai.asgi:app --host 0.0.0.0 --port 8000 --workers 1
 ```
 
-Action credit is 100% for a block before execution, 50% for a block after
-execution, and 0% for no block. Module scores are combined with the explicit
-operator weights.
+Configuration:
 
-The headline ranking uses only cases shared by every submitted control.
-Product-only cases still contribute to coverage and gap reporting. If the
-shared modules represent less than the configured minimum weight, scores are
-provisional and no product is recommended. Scores within the configured tie
-margin also produce no clear winner.
+| Variable | Purpose |
+|---|---|
+| `SCT_REPOSITORY_ROOT` | Repository directory containing `scenarios/` and `submissions/` |
+| `SCT_SYSTEM_ROOT` | Writable persistent directory for `comparisons/` and the SQLite index |
+| `SCT_SHARED_MODE` | Set to `true` for a non-loopback deployment |
+| `SCT_PROVIDER_CONFIG` | Optional path to the server-side AI provider configuration |
+| `SCT_JOB_WORKERS` | Background comparison threads, from 1 to 8 |
 
-## Runtime skills and evidence
+Run one Uvicorn process because the current background queue is in-process.
+Increase `SCT_JOB_WORKERS` for comparison concurrency. A public deployment
+still requires an authenticated TLS reverse proxy and the operational controls
+listed above; the ASGI entry point makes hosting straightforward but does not
+turn the proof of concept into a secured public service.
 
-The model workflow is stored under `ai-system/src/sct_ai/skills/`:
+## Air-gapped installation
 
-- `profile-context`
-- `module-analysis`
-- `cross-control-synthesis`
-- `qualified-recommendation`
-
-Each skill has a versioned manifest, system and user prompts, and input/output
-schemas. Outputs must cite evidence IDs from `comparison.json`. Unknown
-evidence, unsupported percentages, invalid fields, or a recommendation that
-differs from the deterministic decision are rejected. The model receives one
-correction attempt before the AI stage fails.
-
-Remote-provider payloads omit raw CSV rows, reviewer notes, source results,
-sample names, local-log paths, exclusion values, and detailed settings by
-default. A provider may explicitly enable policy-setting details in the local
-server configuration.
-
-## Generated artifacts
-
-```text
-ai-system/comparisons/<comparison-id>/
-|-- comparison.json
-|-- ai-analysis.json
-|-- technical-report.md
-|-- executive-summary.md
-|-- report.html
-`-- run-manifest.json
-```
-
-`comparison.json` is the authoritative calculated output.
-`ai-analysis.json` exists only when every AI skill succeeds. If AI fails, the
-metrics and deterministic reports remain available and the manifest records
-the failure.
-
-The web job index is `ai-system/comparisons/index.sqlite3`. Run manifests remain the
-source of truth and are re-imported when the application starts.
-
-## Air-gapped transfer
-
-On an approved connected Windows staging machine with Python 3.11:
+Offline wheel bundles are specific to a Python minor version because some
+dependencies contain compiled components. Build one bundle for each Python
+minor version that will be used. On an approved connected Windows staging
+machine with the target runtime installed:
 
 ```powershell
 .\ai-system\scripts\Build-SCTOfflineBundle.ps1 `
-    -OutputPath D:\Transfer\sct-comparison-python311 `
+    -PythonVersion 3.14 `
+    -OutputPath D:\Transfer\sct-comparison-python314 `
     -ModelPath D:\ApprovedModels\model.gguf
 ```
 
-The command downloads binary wheels for the pinned top-level dependency set
-and writes `bundle-manifest.json` containing the exact size and SHA-256 of
-every transferred file.
+The bundle contains the pinned dependency wheelhouse and a SHA-256 manifest
+that records its Python version.
 
-Inside the air gap, verify and install without consulting a package index:
+Inside the air gap, install the matching Python minor version and its bundle:
 
 ```powershell
 .\ai-system\scripts\Install-SCTOfflineBundle.ps1 `
-    -BundlePath D:\Transfer\sct-comparison-python311
+    -BundlePath D:\Transfer\sct-comparison-python314
 ```
 
-Import an approved GGUF or supported Safetensors model:
+The installer verifies every transferred file and installs without consulting
+a package index. It rejects installation when the machine does not have the
+Python minor version recorded in the manifest.
+
+Import the model separately into Ollama:
 
 ```powershell
 .\ai-system\scripts\Import-SCTOllamaModel.ps1 `
-    -ModelPath D:\Transfer\sct-comparison-python311\models\model.gguf `
+    -ModelPath D:\Transfer\sct-comparison-python314\models\model.gguf `
     -ModelName sct-approved
 ```
 
-The import script creates a temporary Ollama `Modelfile`, verifies that Ollama
-can show the imported model, and removes the temporary file.
+## Folder guide and generated-file clutter
+
+The files normally edited by developers are:
+
+```text
+README.md                 setup and usage documentation
+config\                   example local policies and provider allowlists
+requirements\             pinned dependency lists
+scripts\                  PowerShell launch and offline tools
+src\sct_ai\               Python engine and web application
+tests\                    regression tests
+```
+
+Large or generated folders:
+
+```text
+.venv\                    private Python runtime and installed packages
+.tools\                   local Python bootstrap downloads
+src\sct_ai\__pycache__\   generated Python bytecode
+comparisons\              generated run data and SQLite job index
+```
+
+Those folders can contain thousands of files, but they are not thousands of
+application components. They are gitignored and should not be reviewed or
+edited as source. Collapse or exclude them in the editor when browsing the
+project.
+
+The repetitive per-skill directories were consolidated into one
+`src\sct_ai\skills.json` file to keep the repository-owned source easier to
+navigate.
+
+## Troubleshooting
+
+### FastAPI or Uvicorn is not installed
+
+Symptom:
+
+```text
+FastAPI web dependencies are not installed
+```
+
+Fix:
+
+```powershell
+.\ai-system\.venv\Scripts\python.exe -m pip install `
+    --editable ".\ai-system[all]"
+```
+
+### The page does not open
+
+- Confirm the Python server process is still running.
+- Use `http://127.0.0.1:8000`, not HTTPS.
+- Try another port:
+
+```powershell
+.\ai-system\.venv\Scripts\python.exe -m sct_ai web --port 8080
+```
+
+### No AI models appear
+
+- Confirm `ai-system\config\config.local.ai.json` exists.
+- Remove placeholder angle brackets from the model name.
+- Confirm the model is allowlisted under the selected provider.
+- Restart the web application after changing the configuration.
+- For Ollama, confirm `ollama list` shows the configured model.
+
+Metrics-only comparisons remain available without an AI provider.
+
+### Module weights are rejected
+
+- Use **Validate packages** to see which modules are present.
+- Give every present module a positive value.
+- Set absent modules to 0.
+- Confirm the present-module values total exactly 100.
+
+### Custom scoring is rejected
+
+Detection and blocking weights must each be between 0 and 100 and together
+must total exactly 100.
+
+### A run is provisional
+
+The modules containing cases shared by every control have less total weight
+than **Minimum comparable weight**. Add comparable evidence or intentionally
+lower the threshold with a documented justification.
+
+### No clear winner is reported
+
+The top scores are within the configured tie margin. This is an intentional
+decision rule, not an AI failure.
+
+## Tests
+
+Run the complete regression suite:
+
+```powershell
+.\ai-system\tests\Run-Tests.ps1
+```
+
+To verify a particular installed runtime, add `-PythonVersion`, for example
+`-PythonVersion 3.13` or `-PythonVersion 3.14`. Run the suite separately under
+each version that the deployment will support.
+
+The suite checks package safety, deterministic scoring, automatic detect-only
+behavior, custom weights, coverage rules, tie handling, output preservation,
+the web surface, and AI evidence validation.
 
 ## Security boundary
 
-- ZIP paths, duplicate entries, unexpected files, encrypted entries, excessive
-  sizes, schemas, catalogue joins, and result values are validated before use.
-- Uploads are given generated staging names and removed after their job.
-- Web forms use a same-site double-submit CSRF token.
-- Pages use automatic HTML escaping, self-only browser requests, no CDN, and a
-  restrictive Content Security Policy.
-- API keys are read only from server environment variables.
-- Generated comparisons are gitignored because they may contain sensitive
-  evaluation context.
+- Source ZIPs under `submissions\` and workspaces under `results\` are treated
+  as read-only.
+- Uploads receive generated staging names and are deleted after their job.
+- Web forms use same-site double-submit CSRF protection.
+- Pages use automatic HTML escaping and a restrictive Content Security Policy.
+- Browser code makes self-origin requests only and uses no CDN.
+- API keys are read from server environment variables.
+- Provider names, model names, and endpoints are server-allowlisted.
+- The model receives structured evidence and cannot change the deterministic
+  ranking.

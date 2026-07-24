@@ -4,14 +4,15 @@
 
 .DESCRIPTION
     Run this on an approved internet-connected Windows staging machine with
-    Python 3.11. Model files are optional and are copied only when explicitly
-    supplied.
+    the same supported Python 3.x minor version as the destination machine.
+    Model files are optional and are copied only when explicitly supplied.
 #>
 
 [CmdletBinding()]
 param(
     [string]$OutputPath,
     [string]$ModelPath,
+    [ValidatePattern('^3\.\d+$')] [string]$PythonVersion,
     [switch]$Force
 )
 
@@ -20,8 +21,15 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'SCT-ComparisonHelpers.ps1')
 
 $systemRoot = Split-Path $PSScriptRoot -Parent
+$pythonArguments = @{ SystemRoot = $systemRoot }
+if ($PythonVersion) {
+    $pythonArguments.PythonVersion = $PythonVersion
+}
+$python = Get-SCTComparisonPython @pythonArguments
+$PythonVersion = $python.Version
 if (-not $OutputPath) {
-    $OutputPath = Join-Path $systemRoot 'offline-bundles\sct-comparison-python311'
+    $versionTag = $PythonVersion.Replace('.', '')
+    $OutputPath = Join-Path $systemRoot "offline-bundles\sct-comparison-python$versionTag"
 }
 $resolvedOutput = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputPath)
 $driveRoot = [IO.Path]::GetPathRoot($resolvedOutput).TrimEnd('\')
@@ -39,15 +47,21 @@ New-Item -ItemType Directory -Path $resolvedOutput | Out-Null
 $wheelhouse = New-Item -ItemType Directory -Path (Join-Path $resolvedOutput 'wheelhouse')
 $requirementsTarget = New-Item -ItemType Directory -Path (Join-Path $resolvedOutput 'requirements')
 $requirementsSource = Join-Path $systemRoot 'requirements\all.txt'
+$buildRequirementsSource = Join-Path $systemRoot 'requirements\build.txt'
 Copy-Item -LiteralPath $requirementsSource -Destination $requirementsTarget.FullName
+Copy-Item -LiteralPath $buildRequirementsSource -Destination $requirementsTarget.FullName
 
 $downloadArguments = @(
     '-m', 'pip', 'download',
     '--only-binary=:all:',
     '--dest', $wheelhouse.FullName,
-    '-r', $requirementsSource
+    '-r', $requirementsSource,
+    '-r', $buildRequirementsSource
 )
-$exitCode = Invoke-SCTComparisonPython -SystemRoot $systemRoot -Arguments $downloadArguments
+$exitCode = Invoke-SCTComparisonPython `
+    -SystemRoot $systemRoot `
+    -Arguments $downloadArguments `
+    -PythonVersion $PythonVersion
 if ($exitCode -ne 0) {
     throw "Python dependency download exited with code $exitCode."
 }
@@ -71,7 +85,7 @@ $files = @(
 )
 $manifest = [pscustomobject][ordered]@{
     schema_version = '1.0'
-    python_version = '3.11'
+    python_version = $PythonVersion
     created_at     = (Get-Date).ToUniversalTime().ToString('o')
     files          = $files
 }

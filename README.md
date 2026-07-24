@@ -56,11 +56,11 @@ Set-Location security-controls
 | Run the security tests | `.\Start-SCT.ps1` |
 | Open module, review, and validation tools | `.\Start-SCT.ps1`, then select `[M] Manage SCT` |
 | Create a product workspace | `.\Start-SCT.ps1`, then select `[M]` → `[3]` |
-| Fill detection and action status | Edit `results/<control-id>/results-module-<id>.csv` directly |
+| Fill detected/not-detected and blocked/not-blocked status | Edit `results/<control-id>/results-module-<id>.csv` directly |
 | Check the completed results | `.\Start-SCT.ps1`, then select `[M]` -> `[4]` |
 | Build a comparison ZIP | `.\Start-SCT.ps1`, then select `[M]` -> `[5]` |
 | Compare two or more product ZIPs | `.\Start-SCT.ps1`, then select `[M]` -> `[6]` |
-| Open the local comparison web app | `.\ai-system\scripts\Start-SCTComparisonWeb.ps1` |
+| Open the local comparison web app | `.\ai-system\.venv\Scripts\python.exe -m sct_ai web` |
 | Add a new test module | `.\scripts\authoring\Add-SCTModule.ps1` |
 | Check module files after editing them | `.\scripts\validation\Check-SCTModules.ps1` |
 
@@ -143,9 +143,15 @@ Run SCT with that workspace selected. SCT creates a module result file on its fi
 | Field | Allowed values |
 |---|---|
 | `detection_status` | `detected`, `not_detected` |
-| `action_status` | `blocked_before_execution`, `blocked_after_execution`, `not_blocked` |
+| `action_status` | `blocked`, `not_blocked` |
 
-`execution_status` is generated separately as `executed`, `not_executed`, or blank when it is not applicable; it never determines the review fields. A test may execute and then be detected, execute and later be blocked, or execute without detection. Timestamps remain so a reviewer can correlate each row with the product console or local logs.
+`execution_status` is generated separately as `executed`, `not_executed`, or blank when it is not applicable; it never determines the review fields. A test may have an execution marker while the product log also reports a block, so reviewers record the observations independently. Timestamps remain so a reviewer can correlate each row with the product console or local logs.
+
+`action_status` is intentionally binary because product logs often show only
+that an action was blocked, not whether the block happened before or after a
+particular execution boundary. Legacy `blocked_before_execution` and
+`blocked_after_execution` values are accepted as `blocked` when older
+workspaces are packaged.
 
 Save the module result files in place, then validate and package the workspace through Manage SCT options `[4]` and `[5]`, or run:
 
@@ -161,11 +167,12 @@ The package is written to `submissions/<control-id>.zip` and contains `control-p
 
 ### Compare products
 
-After building at least two product ZIPs, start the local, air-gap-compatible
-web application:
+After building at least two product ZIPs and completing the one-time Python
+installation in [`ai-system/README.md`](ai-system/README.md), start the local,
+air-gap-compatible web application:
 
 ```powershell
-.\ai-system\scripts\Start-SCTComparisonWeb.ps1
+.\ai-system\.venv\Scripts\python.exe -m sct_ai web
 ```
 
 The repository-owned Python engine validates each package, matches equivalent

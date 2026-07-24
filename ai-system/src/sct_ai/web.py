@@ -1,13 +1,13 @@
 """FastAPI web interface for local and trusted-network SCT comparisons."""
 
-from __future__ import annotations
-
 import hmac
 import json
+import os
 import secrets
 import shutil
 import sys
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -36,11 +36,51 @@ def validate_web_binding(host: str, port: int, shared: bool) -> None:
 
 
 def _system_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+    repository = _repository_root()
+    checkout_system = repository / "ai-system"
+    source_system = Path(__file__).resolve().parents[2]
+    if (checkout_system / "pyproject.toml").is_file():
+        return checkout_system
+    if (source_system / "pyproject.toml").is_file():
+        return source_system
+    return checkout_system
 
 
 def _repository_root() -> Path:
-    return Path(__file__).resolve().parents[3]
+    current = Path.cwd().resolve()
+    source_repository = Path(__file__).resolve().parents[3]
+    for candidate in (current, source_repository):
+        if (candidate / "scenarios").is_dir():
+            return candidate
+    return source_repository
+
+
+def _environment_path(name: str) -> Path | None:
+    value = os.environ.get(name, "").strip()
+    return Path(value).expanduser().resolve() if value else None
+
+
+def _environment_bool(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    normalized = value.strip().casefold()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise RuntimeError(f"{name} must be true or false.")
+
+
+def _environment_workers() -> int:
+    value = os.environ.get("SCT_JOB_WORKERS", "1").strip()
+    try:
+        workers = int(value)
+    except ValueError as exc:
+        raise RuntimeError("SCT_JOB_WORKERS must be an integer.") from exc
+    if not 1 <= workers <= 8:
+        raise RuntimeError("SCT_JOB_WORKERS must be between 1 and 8.")
+    return workers
 
 
 def _provider_options(path: Path | None) -> list[dict[str, str]]:
@@ -71,25 +111,50 @@ def _provider_options(path: Path | None) -> list[dict[str, str]]:
     return options
 
 
-def _default_weights(repo_root: Path) -> dict[str, float]:
-    module_ids: list[str] = []
+def _module_options(
+    repo_root: Path,
+    submitted_values: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    modules: list[dict[str, str]] = []
     for path in sorted((repo_root / "scenarios").glob("*/module.json")):
         try:
             metadata = json.loads(path.read_text(encoding="utf-8-sig"))
             module_id = str(metadata["id"])
             if len(module_id) == 2 and module_id.isdigit():
-                module_ids.append(module_id)
+                modules.append(
+                    {
+                        "module_id": module_id,
+                        "module_name": str(metadata["name"]),
+                    }
+                )
         except (OSError, ValueError, KeyError, TypeError):
             continue
-    if not module_ids:
-        return {}
-    base = round(100.0 / len(module_ids), 4)
-    weights = {module_id: base for module_id in module_ids}
-    weights[module_ids[-1]] = round(
-        100.0 - sum(weights[module_id] for module_id in module_ids[:-1]),
+    if not modules:
+        return []
+    base = round(100.0 / len(modules), 4)
+    weights = {
+        module["module_id"]: base
+        for module in modules
+    }
+    weights[modules[-1]["module_id"]] = round(
+        100.0
+        - sum(
+            weights[module["module_id"]]
+            for module in modules[:-1]
+        ),
         4,
     )
-    return weights
+    submitted_values = submitted_values or {}
+    return [
+        {
+            **module,
+            "weight": submitted_values.get(
+                module["module_id"],
+                weights[module["module_id"]],
+            ),
+        }
+        for module in modules
+    ]
 
 
 def create_app(
@@ -128,23 +193,29 @@ def create_app(
         output_root,
         max_workers=max(1, min(job_workers, 8)),
     )
+
+    @asynccontextmanager
+    async def lifespan(_: Any) -> Any:
+        try:
+            yield
+        finally:
+            manager.executor.shutdown(wait=False, cancel_futures=True)
+
     app = FastAPI(
         title="SCT comparison",
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
+        lifespan=lifespan,
     )
     app.state.repository_root = repository
     app.state.system_root = system
     app.state.output_root = output_root
     app.state.store = store
     app.state.manager = manager
+    app.state.job_workers = max(1, min(job_workers, 8))
     app.state.shared_mode = shared_mode
     app.state.provider_config_path = provider_config_path
-    app.add_event_handler(
-        "shutdown",
-        lambda: manager.executor.shutdown(wait=False, cancel_futures=True),
-    )
     app.mount(
         "/static",
         StaticFiles(directory=package_root / "static"),
@@ -232,37 +303,152 @@ def create_app(
 
         stage_dir.mkdir(parents=True, exist_ok=False)
         for upload in uploads:
-            if not str(upload.filename).lower().endswith(".zip"):
-                raise ValueError(f"Uploaded file must be a ZIP: {upload.filename}")
-            target = stage_dir / f"{uuid.uuid4().hex}.zip"
-            total = 0
-            with target.open("xb") as handle:
-                while True:
-                    chunk = await upload.read(1024 * 1024)
-                    if not chunk:
-                        break
-                    total += len(chunk)
-                    if total > MAX_PACKAGE_BYTES:
-                        raise ValueError(
-                            f"Uploaded package exceeds 100 MB: {upload.filename}"
-                        )
-                    handle.write(chunk)
-            paths.append(str(target))
+            try:
+                if not str(upload.filename).lower().endswith(".zip"):
+                    raise ValueError(
+                        f"Uploaded file must be a ZIP: {upload.filename}"
+                    )
+                target = stage_dir / f"{uuid.uuid4().hex}.zip"
+                total = 0
+                with target.open("xb") as handle:
+                    while True:
+                        chunk = await upload.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        total += len(chunk)
+                        if total > MAX_PACKAGE_BYTES:
+                            raise ValueError(
+                                "Uploaded package exceeds 100 MB: "
+                                f"{upload.filename}"
+                            )
+                        handle.write(chunk)
+                paths.append(str(target))
+            finally:
+                await upload.close()
         return paths
 
-    def parse_policy(form: Any) -> dict[str, Any]:
-        raw = str(form.get("module_weights", "")).strip()
+    def parse_number(
+        form: Any,
+        field_name: str,
+        label: str,
+        *,
+        minimum: float,
+        maximum: float,
+    ) -> float:
+        raw = str(form.get(field_name, "")).strip()
         try:
-            weights = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise ValueError("Module weights must be a valid JSON object.") from exc
-        if not isinstance(weights, dict):
-            raise ValueError("Module weights must be a JSON object.")
-        return {
+            value = float(raw)
+        except ValueError as exc:
+            raise ValueError(f"{label} must be a number.") from exc
+        if not minimum <= value <= maximum:
+            raise ValueError(
+                f"{label} must be between {minimum:g} and {maximum:g}."
+            )
+        return value
+
+    def parse_policy(
+        form: Any,
+        required_modules: set[str],
+    ) -> dict[str, Any]:
+        weights: dict[str, float] = {}
+        for module_id in sorted(required_modules):
+            weights[module_id] = parse_number(
+                form,
+                f"module_weight_{module_id}",
+                f"Module {module_id} weight",
+                minimum=0.001,
+                maximum=100,
+            )
+        if abs(sum(weights.values()) - 100.0) > 0.001:
+            raise ValueError("Module weights must total 100.")
+
+        scoring_mode = str(form.get("scoring_mode", "auto"))
+        if scoring_mode not in {
+            "auto",
+            "detect_only",
+            "prevention_first",
+            "custom",
+        }:
+            raise ValueError("Select a valid scoring mode.")
+
+        policy: dict[str, Any] = {
             "schema_version": "1.0",
             "module_weights": weights,
-            "minimum_comparable_weight": 80,
-            "tie_margin": 2,
+            "minimum_comparable_weight": parse_number(
+                form,
+                "minimum_comparable_weight",
+                "Minimum comparable weight",
+                minimum=0,
+                maximum=100,
+            ),
+            "tie_margin": parse_number(
+                form,
+                "tie_margin",
+                "Tie margin",
+                minimum=0,
+                maximum=100,
+            ),
+            "scoring_mode": scoring_mode,
+        }
+        if scoring_mode == "custom":
+            policy["detection_weight"] = parse_number(
+                form,
+                "detection_weight",
+                "Detection weight",
+                minimum=0,
+                maximum=100,
+            )
+            policy["blocking_weight"] = parse_number(
+                form,
+                "blocking_weight",
+                "Blocking weight",
+                minimum=0,
+                maximum=100,
+            )
+            if (
+                abs(
+                    policy["detection_weight"]
+                    + policy["blocking_weight"]
+                    - 100.0
+                )
+                > 0.001
+            ):
+                raise ValueError(
+                    "Detection and blocking weights must total 100."
+                )
+        return policy
+
+    def page_configuration(form: Any | None = None) -> dict[str, Any]:
+        submitted_weights = (
+            {
+                option["module_id"]: str(
+                    form.get(f"module_weight_{option['module_id']}", "")
+                )
+                for option in _module_options(repository)
+                if str(
+                    form.get(f"module_weight_{option['module_id']}", "")
+                ).strip()
+            }
+            if form is not None
+            else {}
+        )
+
+        def form_value(name: str, default: Any) -> Any:
+            if form is None:
+                return default
+            value = str(form.get(name, "")).strip()
+            return value if value else default
+
+        return {
+            "modules": _module_options(repository, submitted_weights),
+            "scoring_mode": form_value("scoring_mode", "auto"),
+            "detection_weight": form_value("detection_weight", 40),
+            "blocking_weight": form_value("blocking_weight", 60),
+            "minimum_comparable_weight": form_value(
+                "minimum_comparable_weight",
+                80,
+            ),
+            "tie_margin": form_value("tie_margin", 2),
         }
 
     @app.get("/", response_class=HTMLResponse)
@@ -275,13 +461,9 @@ def create_app(
                 "csrf_token": token,
                 "packages": existing_packages(),
                 "provider_options": _provider_options(provider_config_path),
-                "default_weights": json.dumps(
-                    _default_weights(repository),
-                    indent=2,
-                    sort_keys=True,
-                ),
                 "jobs": store.list_recent(),
                 "error": None,
+                **page_configuration(),
             },
         )
         set_csrf_cookie(response, token, is_new)
@@ -329,7 +511,13 @@ def create_app(
         stage_dir = staging_root / uuid.uuid4().hex
         try:
             paths = await stage_inputs(form, stage_dir)
-            policy = parse_policy(form)
+            packages = load_packages(paths)
+            required_modules = {
+                case.module_id
+                for package in packages
+                for case in package.cases.values()
+            }
+            policy = parse_policy(form, required_modules)
             comparison_id_value = str(form.get("comparison_id", "")).strip()
             comparison_id = (
                 validate_comparison_id(comparison_id_value)
@@ -374,9 +562,9 @@ def create_app(
                     "csrf_token": token,
                     "packages": existing_packages(),
                     "provider_options": _provider_options(provider_config_path),
-                    "default_weights": str(form.get("module_weights", "")),
                     "jobs": store.list_recent(),
                     "error": str(exc),
+                    **page_configuration(form),
                 },
                 status_code=400,
             )
@@ -515,6 +703,25 @@ def create_app(
     return app
 
 
+def create_app_from_env() -> Any:
+    """Create the ASGI application from deployment environment variables."""
+    repository_root = _environment_path("SCT_REPOSITORY_ROOT") or _repository_root()
+    if not (repository_root / "scenarios").is_dir():
+        raise RuntimeError(
+            "SCT_REPOSITORY_ROOT must point to the repository directory "
+            "containing scenarios/."
+        )
+    system_root = _environment_path("SCT_SYSTEM_ROOT")
+    provider_config_path = _environment_path("SCT_PROVIDER_CONFIG")
+    return create_app(
+        repository_root=repository_root,
+        system_root=system_root,
+        shared_mode=_environment_bool("SCT_SHARED_MODE"),
+        provider_config_path=provider_config_path,
+        job_workers=_environment_workers(),
+    )
+
+
 def run_web(
     *,
     host: str = "127.0.0.1",
@@ -522,6 +729,8 @@ def run_web(
     shared: bool = False,
     provider_config_path: str | Path | None = None,
     workers: int = 1,
+    repository_root: str | Path | None = None,
+    system_root: str | Path | None = None,
 ) -> None:
     validate_web_binding(host, port, shared)
     if shared:
@@ -539,7 +748,18 @@ def run_web(
     config_path = (
         Path(provider_config_path).resolve() if provider_config_path else None
     )
+    selected_repository = (
+        Path(repository_root).resolve() if repository_root else _repository_root()
+    )
+    if not (selected_repository / "scenarios").is_dir():
+        raise RuntimeError(
+            "The repository root must contain scenarios/. Run from the repository "
+            "root or pass --repository-root."
+        )
+    selected_system = Path(system_root).resolve() if system_root else _system_root()
     app = create_app(
+        repository_root=selected_repository,
+        system_root=selected_system,
         shared_mode=shared,
         provider_config_path=config_path,
         job_workers=workers,

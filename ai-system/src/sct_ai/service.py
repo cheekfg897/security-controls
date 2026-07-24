@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import platform
 import re
 import shutil
 from datetime import UTC, datetime
@@ -107,6 +108,7 @@ def run_comparison(
         "schema_version": "1.0",
         "comparison_id": selected_id,
         "engine_version": __version__,
+        "python_version": platform.python_version(),
         "status": "running",
         "started_at": utc_now(),
         "completed_at": None,

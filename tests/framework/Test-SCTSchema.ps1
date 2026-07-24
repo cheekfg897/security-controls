@@ -259,6 +259,15 @@ param(
         'Canonical results must use the complete shared schema.'
     Assert-True (-not $canonicalRows[0].detection_status -and -not $canonicalRows[0].action_status) `
         'New result rows must leave human review fields blank.'
+    Assert-True (
+        (ConvertTo-SCTCanonicalActionStatus -Status 'blocked') -eq 'blocked'
+    ) 'The canonical blocked status must remain blocked.'
+    Assert-True (
+        (ConvertTo-SCTCanonicalActionStatus -Status 'blocked_before_execution') -eq 'blocked'
+    ) 'Legacy blocked-before outcomes must normalize to blocked.'
+    Assert-True (
+        (ConvertTo-SCTCanonicalActionStatus -Status 'blocked_after_execution') -eq 'blocked'
+    ) 'Legacy blocked-after outcomes must normalize to blocked.'
 
     $scenariosPath = Join-Path $repoRoot 'scenarios'
     $realModules = @(Get-SCTModules -ScenariosPath $scenariosPath)

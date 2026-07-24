@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -13,7 +14,14 @@ from .service import run_comparison
 
 
 def _system_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+    configured = os.environ.get("SCT_SYSTEM_ROOT", "").strip()
+    if configured:
+        return Path(configured).expanduser().resolve()
+    checkout_system = Path.cwd().resolve() / "ai-system"
+    source_system = Path(__file__).resolve().parents[2]
+    if (checkout_system / "pyproject.toml").is_file():
+        return checkout_system
+    return source_system
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -45,6 +53,8 @@ def _parser() -> argparse.ArgumentParser:
     web.add_argument("--shared", action="store_true")
     web.add_argument("--provider-config")
     web.add_argument("--workers", type=int, default=1)
+    web.add_argument("--repository-root")
+    web.add_argument("--system-root")
     return parser
 
 
@@ -75,6 +85,8 @@ def main(argv: list[str] | None = None) -> int:
                 shared=args.shared,
                 provider_config_path=args.provider_config,
                 workers=args.workers,
+                repository_root=args.repository_root,
+                system_root=args.system_root,
             )
             return 0
 
@@ -101,6 +113,14 @@ def main(argv: list[str] | None = None) -> int:
     except SCTComparisonError as exc:
         print(f"Comparison failed: {exc}", file=sys.stderr)
         return 3
+    except RuntimeError as exc:
+        print(f"Application startup failed: {exc}", file=sys.stderr)
+        return 5
+
+
+def web_main() -> int:
+    """Console-script entry point that starts the Python web application."""
+    return main(["web", *sys.argv[1:]])
 
 
 if __name__ == "__main__":

@@ -19,6 +19,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '..\common\SCT-ReviewHelpers.ps1')
 
 $repoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+. (Join-Path $repoRoot 'core\SCT-Results.ps1')
 $profilePath = (Resolve-Path -LiteralPath $ControlProfilePath -ErrorAction Stop).Path
 $workspaceRoot = Split-Path $profilePath -Parent
 Assert-SCTWorkspaceUsesModuleFiles -WorkspaceRoot $workspaceRoot -ControlProfilePath $profilePath
@@ -69,8 +70,38 @@ if ($outputDirectory -and -not (Test-Path -LiteralPath $outputDirectory)) {
     New-Item -ItemType Directory -Path $outputDirectory -Force | Out-Null
 }
 
-Compress-Archive -LiteralPath $packagePaths `
-    -DestinationPath $resolvedOutputPath -CompressionLevel Optimal -Force:$Force
+$stagingRoot = Join-Path ([IO.Path]::GetTempPath()) `
+    ('sct-package-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $stagingRoot | Out-Null
+try {
+    $stagedPaths = @()
+    foreach ($sourcePath in $packagePaths) {
+        $targetPath = Join-Path $stagingRoot (Split-Path $sourcePath -Leaf)
+        if ((Split-Path $sourcePath -Leaf) -match '^results-module-\d{2}\.csv$') {
+            $rows = @(Import-Csv -LiteralPath $sourcePath -Encoding UTF8)
+            foreach ($row in $rows) {
+                $canonical = ConvertTo-SCTCanonicalActionStatus `
+                    -Status ([string]$row.action_status)
+                if ($null -eq $canonical -or -not $canonical) {
+                    throw "Cannot normalize action_status in: $sourcePath"
+                }
+                $row.action_status = $canonical
+            }
+            $rows | Export-Csv -LiteralPath $targetPath `
+                -NoTypeInformation -Encoding UTF8
+        } else {
+            Copy-Item -LiteralPath $sourcePath -Destination $targetPath
+        }
+        $stagedPaths += $targetPath
+    }
+
+    Compress-Archive -LiteralPath $stagedPaths `
+        -DestinationPath $resolvedOutputPath -CompressionLevel Optimal -Force:$Force
+} finally {
+    if (Test-Path -LiteralPath $stagingRoot) {
+        Remove-Item -LiteralPath $stagingRoot -Recurse -Force
+    }
+}
 
 Write-Host "Built comparison package:" -ForegroundColor Green
 Write-Host "  $resolvedOutputPath" -ForegroundColor White

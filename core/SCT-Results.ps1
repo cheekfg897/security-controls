@@ -12,6 +12,33 @@ function Get-SCTResultColumns {
     )
 }
 
+function Get-SCTAllowedActionStatuses {
+    [CmdletBinding()]
+    param()
+
+    return @(
+        'blocked',
+        'not_blocked',
+        # Legacy values remain readable and are normalized when packaging.
+        'blocked_before_execution',
+        'blocked_after_execution'
+    )
+}
+
+function ConvertTo-SCTCanonicalActionStatus {
+    [CmdletBinding()]
+    param([AllowEmptyString()] [string]$Status)
+
+    switch ($Status.Trim().ToLowerInvariant()) {
+        'blocked' { return 'blocked' }
+        'blocked_before_execution' { return 'blocked' }
+        'blocked_after_execution' { return 'blocked' }
+        'not_blocked' { return 'not_blocked' }
+        '' { return '' }
+        default { return $null }
+    }
+}
+
 function Assert-SCTResultFileSchema {
     [CmdletBinding()]
     param([Parameter(Mandatory)] [string]$Path)

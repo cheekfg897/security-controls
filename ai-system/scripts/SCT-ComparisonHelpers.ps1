@@ -2,9 +2,28 @@
 
 Set-StrictMode -Version Latest
 
+function Test-SCTSupportedPythonVersion {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)] [string]$Version)
+
+    try {
+        $parsed = [version]$Version
+    } catch {
+        return $false
+    }
+    return $parsed.Major -eq 3 -and $parsed.Minor -ge 11
+}
+
 function Get-SCTComparisonPython {
     [CmdletBinding()]
-    param([string]$SystemRoot)
+    param(
+        [string]$SystemRoot,
+        [ValidatePattern('^3\.\d+$')] [string]$PythonVersion
+    )
+
+    if ($PythonVersion -and -not (Test-SCTSupportedPythonVersion -Version $PythonVersion)) {
+        throw "Python $PythonVersion is unsupported. Use Python 3.11 or newer (Python 3.x)."
+    }
 
     $candidates = @()
     if ($SystemRoot) {
@@ -18,36 +37,84 @@ function Get-SCTComparisonPython {
     }
     $py = Get-Command py -ErrorAction SilentlyContinue
     if ($py) {
+        $launcherVersions = @()
+        if ($PythonVersion) {
+            $launcherVersions = @($PythonVersion)
+        } else {
+            try {
+                $launcherVersions = @(
+                    & $py.Source -0p 2>$null |
+                        ForEach-Object {
+                            if ([string]$_ -match '(?:-V:|-)(3\.\d+)') {
+                                $Matches[1]
+                            }
+                        } |
+                        Where-Object { Test-SCTSupportedPythonVersion -Version $_ } |
+                        Sort-Object { [version]$_ } -Descending -Unique
+                )
+            } catch {
+                $launcherVersions = @()
+            }
+        }
+        foreach ($version in $launcherVersions) {
+            $candidates += [pscustomobject]@{
+                FilePath = $py.Source
+                Prefix   = @("-$version")
+            }
+        }
         $candidates += [pscustomobject]@{
             FilePath = $py.Source
-            Prefix   = @('-3.11')
-        }
-    }
-    $python = Get-Command python -ErrorAction SilentlyContinue
-    if ($python) {
-        $candidates += [pscustomobject]@{
-            FilePath = $python.Source
             Prefix   = @()
         }
     }
+    $commandNames = @()
+    if ($PythonVersion) {
+        $commandNames += "python$PythonVersion"
+    }
+    $commandNames += @('python', 'python3')
+    foreach ($commandName in $commandNames) {
+        $python = Get-Command $commandName -ErrorAction SilentlyContinue
+        if ($python) {
+            $candidates += [pscustomobject]@{
+                FilePath = $python.Source
+                Prefix   = @()
+            }
+        }
+    }
 
+    $seen = @{}
     foreach ($candidate in $candidates) {
+        $candidateKey = "$($candidate.FilePath)|$($candidate.Prefix -join ',')"
+        if ($seen.ContainsKey($candidateKey)) {
+            continue
+        }
+        $seen[$candidateKey] = $true
         try {
             $version = & $candidate.FilePath @($candidate.Prefix) -c `
                 'import sys; print(sys.version_info[0], sys.version_info[1], sep=chr(46))' 2>$null
-            if ($LASTEXITCODE -eq 0 -and $version -eq '3.11') {
-                return $candidate
+            $version = ([string]$version).Trim()
+            if ($LASTEXITCODE -eq 0 -and
+                (Test-SCTSupportedPythonVersion -Version $version) -and
+                (-not $PythonVersion -or $version -eq $PythonVersion)) {
+                return [pscustomobject]@{
+                    FilePath = $candidate.FilePath
+                    Prefix   = @($candidate.Prefix)
+                    Version  = $version
+                }
             }
         } catch {
             continue
         }
     }
 
+    if ($PythonVersion) {
+        throw "Python $PythonVersion was requested but was not found."
+    }
     throw @"
-Python 3.11 is required for SCT comparison but was not found.
+Python 3.11 or newer (Python 3.x) is required for SCT comparison but was not found.
 
-On an air-gapped machine, install Python 3.11 x64 and the verified SCT
-wheelhouse, then run:
+On an air-gapped machine, install a supported 64-bit Python runtime matching
+the verified SCT wheelhouse, then run:
   .\ai-system\scripts\Install-SCTOfflineBundle.ps1 -BundlePath <bundle>
 "@
 }
@@ -56,10 +123,16 @@ function Invoke-SCTComparisonPython {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)] [string]$SystemRoot,
-        [Parameter(Mandatory)] [string[]]$Arguments
+        [Parameter(Mandatory)] [string[]]$Arguments,
+        [string]$PythonVersion
     )
 
-    $python = Get-SCTComparisonPython -SystemRoot $SystemRoot
+    $pythonArguments = @{ SystemRoot = $SystemRoot }
+    if ($PythonVersion) {
+        $pythonArguments.PythonVersion = $PythonVersion
+    }
+    $python = Get-SCTComparisonPython @pythonArguments
+    Write-Host "Using Python $($python.Version): $($python.FilePath)" -ForegroundColor DarkGray
     $previousPythonPath = $env:PYTHONPATH
     $packageRoot = Join-Path $SystemRoot 'src'
     $env:PYTHONPATH = if ($previousPythonPath) {

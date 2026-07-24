@@ -31,6 +31,7 @@ def package_bytes(
     cases: list[dict[str, Any]],
     *,
     display_name: str | None = None,
+    default_mode: str = "detect_and_block",
 ) -> bytes:
     profile = {
         "schema_version": "1.0",
@@ -44,7 +45,7 @@ def package_bytes(
         },
         "policy": {
             "name": "Fixture policy",
-            "default_mode": "detect_and_block",
+            "default_mode": default_mode,
             "settings": [
                 {
                     "name": "Protection",
@@ -94,11 +95,7 @@ def package_bytes(
             action = trial["action"]
             execution = trial.get("execution")
             if execution is None:
-                execution = (
-                    "not_executed"
-                    if action == "blocked_before_execution"
-                    else "executed"
-                )
+                execution = "executed"
             result_by_module.setdefault(module_id, []).append(
                 {
                     "timestamp": f"2026-07-23T01:00:{row_index:02d}+00:00",
@@ -150,12 +147,14 @@ def write_package(
     cases: list[dict[str, Any]],
     *,
     display_name: str | None = None,
+    default_mode: str = "detect_and_block",
 ) -> Path:
     path.write_bytes(
         package_bytes(
             control_id,
             cases,
             display_name=display_name,
+            default_mode=default_mode,
         )
     )
     return path

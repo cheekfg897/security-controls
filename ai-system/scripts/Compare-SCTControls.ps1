@@ -24,6 +24,7 @@ param(
     [string]$ProviderConfigPath,
     [string]$ComparisonId,
     [string]$OutputRoot,
+    [ValidatePattern('^3\.\d+$')] [string]$PythonVersion,
     [switch]$Force
 )
 
@@ -82,7 +83,10 @@ if ($Provider -ne 'none') {
 if ($ComparisonId) { $arguments += @('--comparison-id', $ComparisonId) }
 if ($Force) { $arguments += '--force' }
 
-$exitCode = Invoke-SCTComparisonPython -SystemRoot $systemRoot -Arguments $arguments
+$exitCode = Invoke-SCTComparisonPython `
+    -SystemRoot $systemRoot `
+    -Arguments $arguments `
+    -PythonVersion $PythonVersion
 if ($exitCode -ne 0) {
     throw "SCT comparison exited with code $exitCode."
 }

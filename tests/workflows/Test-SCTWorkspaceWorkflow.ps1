@@ -80,12 +80,18 @@ try {
     }
     Assert-True $pendingValidationFailed 'Unreviewed module results must not pass workspace validation.'
 
+    $reviewedRowIndex = 0
     foreach ($resultPath in @($results01, $results04)) {
         $rows = @(Import-Csv -LiteralPath $resultPath -Encoding UTF8)
         foreach ($row in $rows) {
             $row.detection_status = 'detected'
-            $row.action_status = 'not_blocked'
+            $row.action_status = switch ($reviewedRowIndex) {
+                0 { 'blocked' }
+                1 { 'blocked_after_execution' }
+                default { 'not_blocked' }
+            }
             $row.reviewer_notes = 'Reviewed in fixture.'
+            $reviewedRowIndex++
         }
         $rows | Export-Csv -LiteralPath $resultPath -NoTypeInformation -Encoding UTF8
     }
@@ -101,6 +107,19 @@ try {
     $archive = [IO.Compression.ZipFile]::OpenRead($packagePath)
     try {
         $entryNames = @($archive.Entries | ForEach-Object { $_.FullName } | Sort-Object)
+        $packagedActionStatuses = @(
+            $archive.Entries |
+                Where-Object { $_.FullName -match '^results-module-\d{2}\.csv$' } |
+                ForEach-Object {
+                    $reader = [IO.StreamReader]::new($_.Open())
+                    try {
+                        @($reader.ReadToEnd() | ConvertFrom-Csv) |
+                            ForEach-Object { [string]$_.action_status }
+                    } finally {
+                        $reader.Dispose()
+                    }
+                }
+        )
     } finally {
         $archive.Dispose()
     }
@@ -113,6 +132,13 @@ try {
     )
     Assert-True (($entryNames -join '|') -eq ($expectedEntries -join '|')) `
         'The comparison ZIP must contain only the profile and tested module pairs.'
+    Assert-True ($packagedActionStatuses -contains 'blocked') `
+        'The comparison ZIP must retain canonical blocked outcomes.'
+    Assert-True (@(
+        $packagedActionStatuses |
+            Where-Object { $_ -in @('blocked_before_execution', 'blocked_after_execution') }
+    ).Count -eq 0) `
+        'The comparison ZIP must normalize legacy blocked timing values to blocked.'
 
     # A newly authored module automatically receives stable ID-based workspace files.
     $fixtureScenarios = Join-Path $tempRoot 'fixture-scenarios'
@@ -179,6 +205,11 @@ try {
         Import-Csv -LiteralPath (Join-Path $legacyWorkspace 'results-module-04.csv')
     )
     Assert-True ($convertedRows.Count -eq 3) 'Legacy conversion must preserve every result exactly once.'
+    Assert-True (@(
+        $convertedRows |
+            Where-Object { $_.action_status -in @('blocked_before_execution', 'blocked_after_execution') }
+    ).Count -eq 0) `
+        'Legacy conversion must normalize timing-specific blocked values.'
     Assert-True (Test-Path -LiteralPath (Join-Path $legacyWorkspace 'legacy\results.csv')) `
         'Legacy conversion must preserve the original combined results.'
     Assert-True (Test-Path -LiteralPath (Join-Path $legacyWorkspace 'legacy\test-catalog.csv')) `

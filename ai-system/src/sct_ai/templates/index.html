@@ -31,13 +31,95 @@
 
   <fieldset>
     <legend>2. Module weights</legend>
-    <label class="field">JSON object; submitted module weights must total 100
-      <textarea name="module_weights" rows="7" spellcheck="false" required>{{ default_weights }}</textarea>
-    </label>
+    <p class="hint">Set how much each test module contributes to the final
+    ranking. Only modules present in the submitted packages are used, and
+    their weights must total 100%.</p>
+    <div class="weight-grid">
+      {% for module in modules %}
+      <label class="weight-field">
+        <span>Module {{ module.module_id }}</span>
+        <small>{{ module.module_name }}</small>
+        <span class="number-with-unit">
+          <input type="number" name="module_weight_{{ module.module_id }}"
+            value="{{ module.weight }}" min="0" max="100" step="0.001"
+            data-module-weight required>
+          <span>%</span>
+        </span>
+      </label>
+      {% endfor %}
+    </div>
+    <p class="weight-total" data-module-total-message>
+      Total: <output id="module-weight-total">100</output>%
+    </p>
   </fieldset>
 
   <fieldset>
-    <legend>3. Analysis mode</legend>
+    <legend>3. Detection and blocking score</legend>
+    <label class="field">Scoring mode
+      <select name="scoring_mode" id="scoring-mode">
+        <option value="auto"{% if scoring_mode == "auto" %} selected{% endif %}>Automatic from submitted policy modes</option>
+        <option value="detect_only"{% if scoring_mode == "detect_only" %} selected{% endif %}>Detection only (100% detection, 0% blocking)</option>
+        <option value="prevention_first"{% if scoring_mode == "prevention_first" %} selected{% endif %}>Prevention first (40% detection, 60% blocking)</option>
+        <option value="custom"{% if scoring_mode == "custom" %} selected{% endif %}>Custom weights</option>
+      </select>
+    </label>
+    <p class="hint" id="scoring-mode-help">Automatic mode uses detection-only
+    scoring when every submitted control profile is detect-only. Otherwise it
+    uses prevention-first scoring.</p>
+    <div class="weight-grid compact-grid">
+      <label class="weight-field">
+        <span>Detection</span>
+        <small>How often the control detected the case.</small>
+        <span class="number-with-unit">
+          <input type="number" name="detection_weight" id="detection-weight"
+            value="{{ detection_weight }}" min="0" max="100" step="0.001"
+            required>
+          <span>%</span>
+        </span>
+      </label>
+      <label class="weight-field">
+        <span>Blocking</span>
+        <small>Any logged block gets full credit; no timing distinction is required.</small>
+        <span class="number-with-unit">
+          <input type="number" name="blocking_weight" id="blocking-weight"
+            value="{{ blocking_weight }}" min="0" max="100" step="0.001"
+            required>
+          <span>%</span>
+        </span>
+      </label>
+    </div>
+    <p class="weight-total" data-scoring-total-message>
+      Total: <output id="scoring-weight-total">100</output>%
+    </p>
+  </fieldset>
+
+  <fieldset>
+    <legend>4. Decision thresholds</legend>
+    <div class="weight-grid compact-grid">
+      <label class="weight-field">
+        <span>Minimum comparable weight</span>
+        <small>Below this shared coverage, the result is provisional.</small>
+        <span class="number-with-unit">
+          <input type="number" name="minimum_comparable_weight"
+            value="{{ minimum_comparable_weight }}" min="0" max="100"
+            step="0.001" required>
+          <span>%</span>
+        </span>
+      </label>
+      <label class="weight-field">
+        <span>Tie margin</span>
+        <small>Scores this close produce no clear winner.</small>
+        <span class="number-with-unit">
+          <input type="number" name="tie_margin" value="{{ tie_margin }}"
+            min="0" max="100" step="0.001" required>
+          <span>points</span>
+        </span>
+      </label>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>5. Optional AI explanation</legend>
     <label><input type="checkbox" name="enable_ai" id="enable-ai"> Run AI evidence skills</label>
     <label class="field">Allowlisted provider and model
       <select name="provider_model">
@@ -50,6 +132,10 @@
     {% if not provider_options %}
     <p class="hint">No usable models are configured; metrics-only comparisons remain available.</p>
     {% endif %}
+  </fieldset>
+
+  <fieldset>
+    <legend>6. Run details</legend>
     <label class="field">Optional comparison ID
       <input type="text" name="comparison_id" pattern="[a-z0-9][a-z0-9._-]{0,79}" maxlength="80">
     </label>

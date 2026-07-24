@@ -1119,7 +1119,7 @@ function Invoke-SCTSubtests {
         Write-Host "  Results appended to: $ResultsPath" -ForegroundColor DarkGray
         Write-Host "  [i] [!] Marker found: execution observed" -ForegroundColor DarkGray
         Write-Host "  [i] [?] Marker absent: execution not observed; this alone does not prove a control block" -ForegroundColor DarkGray
-        Write-Host "  [i] Review detection and action directly in this module result CSV" -ForegroundColor DarkGray
+        Write-Host "  [i] Set detection_status (detected/not_detected) and action_status (blocked/not_blocked) in this module result CSV" -ForegroundColor DarkGray
     }
 
     if ($NonInteractive) {

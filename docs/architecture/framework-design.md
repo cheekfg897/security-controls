@@ -114,7 +114,7 @@ The launcher derives the `All` choices and marker filenames. Before execution it
 - `EXECUTED` means the new marker exists.
 - `BLOCKED` means the marker is absent.
 
-These are marker observations, not final security-control verdicts. In particular, `EXECUTED` does not mean `not_detected` or `not_blocked`: a control may detect the activity without preventing it, or allow initial execution and block a later step.
+These are marker observations, not final security-control verdicts. In particular, `EXECUTED` does not mean `not_detected` or `not_blocked`: execution, detection, and the product's binary blocked/not-blocked log verdict remain separate observations.
 
 Existing scripts retain `-Technique` as a backward-compatible alias, but new scripts and all SCT-facing guidance use `-Subtest`.
 
@@ -154,8 +154,8 @@ Each interactive subtest selection receives an `I<technique>-...` run ID. A non-
 There is no raw/analysis conversion or separate reviewed copy. SCT appends generated observations to the authoritative module result file and leaves the control verdict fields blank. The reviewer edits that same file and enters:
 
 - `detection_status`: `detected` or `not_detected`.
-- `action_status`: `blocked_before_execution`, `blocked_after_execution`, or `not_blocked`.
+- `action_status`: `blocked` or `not_blocked`.
 
-The reviewer may also fill `reviewer_notes`. One file or the whole workspace is checked with `Check-SCTResults.ps1`, then packaged with the profile and matching module catalogues by `Build-SCTComparisonPackage.ps1`. Keeping execution, detection, and action separate avoids inferring control behavior from a marker or process-launch result.
+The reviewer may also fill `reviewer_notes`. One file or the whole workspace is checked with `Check-SCTResults.ps1`, then packaged with the profile and matching module catalogues by `Build-SCTComparisonPackage.ps1`. Keeping execution, detection, and action separate avoids inferring control behavior from a marker or process-launch result. The action verdict is binary because logs do not reliably identify whether a block occurred before or after execution. Older timing-specific values are accepted and normalized to `blocked`.
 
 The package builder writes `submissions/<control-id>.zip`. Two products therefore produce two self-contained ZIP files for the comparison system.

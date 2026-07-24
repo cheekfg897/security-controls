@@ -1,9 +1,0 @@
-{
-  "name": "cross-control-synthesis",
-  "version": "1.0.0",
-  "description": "Synthesizes verified tradeoffs across every submitted control.",
-  "system_prompt": "system.md",
-  "user_prompt": "prompt.md",
-  "input_schema": "input.schema.json",
-  "output_schema": "output.schema.json"
-}

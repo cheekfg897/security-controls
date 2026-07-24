@@ -58,6 +58,13 @@ RESULT_NAME = re.compile(r"^results-module-(\d{2})\.csv$")
 CATALOG_NAME = re.compile(r"^test-catalog-module-(\d{2})\.csv$")
 SHA256_PATTERN = re.compile(r"^[0-9A-Fa-f]{64}$")
 CONTROL_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+ACTION_STATUSES = {
+    "blocked",
+    "not_blocked",
+    # Legacy packages remain readable; both values normalize to "blocked".
+    "blocked_before_execution",
+    "blocked_after_execution",
+}
 
 
 @dataclass(frozen=True)
@@ -324,24 +331,8 @@ def _validate_result_row(
         raise _fail(package, f"{context} has an invalid execution_status")
     if row["detection_status"] not in {"detected", "not_detected"}:
         raise _fail(package, f"{context} has an invalid detection_status")
-    if row["action_status"] not in {
-        "blocked_before_execution",
-        "blocked_after_execution",
-        "not_blocked",
-    }:
+    if row["action_status"] not in ACTION_STATUSES:
         raise _fail(package, f"{context} has an invalid action_status")
-    if (
-        row["execution_status"] == "executed"
-        and row["action_status"] == "blocked_before_execution"
-    ):
-        raise _fail(package, f"{context} cannot be executed and blocked before execution")
-    if row["action_status"] == "blocked_after_execution" and row[
-        "execution_status"
-    ] != "executed":
-        raise _fail(
-            package,
-            f"{context} can be blocked after execution only when execution occurred",
-        )
     if row["test_input_sha256"] and not SHA256_PATTERN.fullmatch(
         row["test_input_sha256"]
     ):
@@ -354,6 +345,14 @@ def _input_identity(row: dict[str, str]) -> str:
     if row["test_input"]:
         return stable_id("opaque-input", row["test_input"].strip().casefold())
     return "none"
+
+
+def _canonical_action_status(value: str) -> str:
+    return (
+        "blocked"
+        if value in {"blocked", "blocked_before_execution", "blocked_after_execution"}
+        else "not_blocked"
+    )
 
 
 def _make_case_key(
@@ -529,7 +528,7 @@ def load_package(path: str | Path) -> PackageData:
                         run_id=row["run_id"],
                         execution_status=row["execution_status"],
                         detection_status=row["detection_status"],
-                        action_status=row["action_status"],
+                        action_status=_canonical_action_status(row["action_status"]),
                     )
                 )
 

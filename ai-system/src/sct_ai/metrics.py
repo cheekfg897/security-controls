@@ -9,16 +9,19 @@ from pathlib import Path
 from statistics import fmean
 from typing import Any, Callable, Iterable
 
+from . import __version__
 from .errors import PolicyValidationError
 from .packages import NormalizedCase, PackageData
 from .util import load_json_no_duplicates, stable_id
 
 
-DETECTION_WEIGHT = 0.40
-ACTION_WEIGHT = 0.60
-ACTION_CREDIT = {
-    "blocked_before_execution": 1.0,
-    "blocked_after_execution": 0.5,
+DEFAULT_DETECTION_WEIGHT = 0.40
+DEFAULT_BLOCKING_WEIGHT = 0.60
+# Backwards-compatible names for callers that imported the original constants.
+DETECTION_WEIGHT = DEFAULT_DETECTION_WEIGHT
+ACTION_WEIGHT = DEFAULT_BLOCKING_WEIGHT
+BLOCKING_CREDIT = {
+    "blocked": 1.0,
     "not_blocked": 0.0,
 }
 
@@ -40,12 +43,16 @@ def load_policy(path: str | Path) -> dict[str, Any]:
 def validate_policy(
     policy: dict[str, Any],
     required_modules: set[str],
+    policy_modes: set[str] | None = None,
 ) -> dict[str, Any]:
     allowed = {
         "schema_version",
         "module_weights",
         "minimum_comparable_weight",
         "tie_margin",
+        "scoring_mode",
+        "detection_weight",
+        "blocking_weight",
     }
     unknown = set(policy) - allowed
     if unknown:
@@ -99,11 +106,85 @@ def validate_policy(
         ):
             raise PolicyValidationError(f"{name} must be between {lower} and {upper}.")
 
-    return {
+    scoring = resolve_scoring(policy, policy_modes or set())
+    normalized_policy = {
         "schema_version": "1.0",
         "module_weights": normalized_weights,
         "minimum_comparable_weight": float(minimum),
         "tie_margin": float(tie_margin),
+        "scoring_mode": scoring["scoring_mode"],
+    }
+    if scoring["scoring_mode"] == "custom":
+        normalized_policy["detection_weight"] = scoring["detection_weight"]
+        normalized_policy["blocking_weight"] = scoring["blocking_weight"]
+    return normalized_policy
+
+
+def resolve_scoring(
+    policy: dict[str, Any] | None,
+    policy_modes: set[str],
+) -> dict[str, Any]:
+    policy = policy or {}
+    requested_mode = policy.get("scoring_mode", "auto")
+    allowed_modes = {"auto", "detect_only", "prevention_first", "custom"}
+    if requested_mode not in allowed_modes:
+        raise PolicyValidationError(
+            "scoring_mode must be auto, detect_only, prevention_first, or custom."
+        )
+
+    supplied_weights = {
+        name: policy.get(name)
+        for name in ("detection_weight", "blocking_weight")
+        if name in policy
+    }
+    if requested_mode != "custom" and supplied_weights:
+        raise PolicyValidationError(
+            "detection_weight and blocking_weight are used only when "
+            "scoring_mode is custom."
+        )
+
+    if requested_mode == "auto":
+        resolved_mode = (
+            "detect_only"
+            if policy_modes and policy_modes == {"detect_only"}
+            else "prevention_first"
+        )
+    else:
+        resolved_mode = requested_mode
+
+    if resolved_mode == "detect_only":
+        detection = 100.0
+        blocking = 0.0
+    elif resolved_mode == "prevention_first":
+        detection = 40.0
+        blocking = 60.0
+    else:
+        if set(supplied_weights) != {"detection_weight", "blocking_weight"}:
+            raise PolicyValidationError(
+                "Custom scoring requires detection_weight and blocking_weight."
+            )
+        normalized: dict[str, float] = {}
+        for name, value in supplied_weights.items():
+            if (
+                not isinstance(value, (int, float))
+                or isinstance(value, bool)
+                or not math.isfinite(float(value))
+                or not 0 <= float(value) <= 100
+            ):
+                raise PolicyValidationError(f"{name} must be between 0 and 100.")
+            normalized[name] = float(value)
+        detection = normalized["detection_weight"]
+        blocking = normalized["blocking_weight"]
+        if not math.isclose(detection + blocking, 100.0, abs_tol=0.001):
+            raise PolicyValidationError(
+                "detection_weight and blocking_weight must total 100."
+            )
+
+    return {
+        "scoring_mode": requested_mode,
+        "resolved_scoring_mode": resolved_mode,
+        "detection_weight": detection,
+        "blocking_weight": blocking,
     }
 
 
@@ -111,25 +192,26 @@ def _rounded(value: float) -> float:
     return round(value, 4)
 
 
-def case_metrics(case: NormalizedCase) -> dict[str, Any]:
+def case_metrics(
+    case: NormalizedCase,
+    detection_weight: float = DEFAULT_DETECTION_WEIGHT,
+    blocking_weight: float = DEFAULT_BLOCKING_WEIGHT,
+) -> dict[str, Any]:
     trial_count = len(case.trials)
     detected = sum(
         trial.detection_status == "detected" for trial in case.trials
     )
-    before = sum(
-        trial.action_status == "blocked_before_execution" for trial in case.trials
-    )
-    after = sum(
-        trial.action_status == "blocked_after_execution" for trial in case.trials
+    blocked = sum(
+        trial.action_status == "blocked" for trial in case.trials
     )
     not_blocked = sum(
         trial.action_status == "not_blocked" for trial in case.trials
     )
     detection_rate = 100.0 * detected / trial_count
-    action_effectiveness = 100.0 * (before + (0.5 * after)) / trial_count
+    blocking_rate = 100.0 * blocked / trial_count
     score = (
-        DETECTION_WEIGHT * detection_rate
-        + ACTION_WEIGHT * action_effectiveness
+        detection_weight * detection_rate
+        + blocking_weight * blocking_rate
     )
     outcome_signatures = {
         (
@@ -143,30 +225,33 @@ def case_metrics(case: NormalizedCase) -> dict[str, Any]:
         "case_id": case.case_id,
         "trial_count": trial_count,
         "detection_rate": _rounded(detection_rate),
-        "blocked_before_rate": _rounded(100.0 * before / trial_count),
-        "blocked_after_rate": _rounded(100.0 * after / trial_count),
+        "blocked_rate": _rounded(blocking_rate),
         "not_blocked_rate": _rounded(100.0 * not_blocked / trial_count),
-        "action_effectiveness": _rounded(action_effectiveness),
         "score": _rounded(score),
         "inconsistent": len(outcome_signatures) > 1,
     }
 
 
-def aggregate_cases(cases: Iterable[NormalizedCase]) -> dict[str, Any]:
+def aggregate_cases(
+    cases: Iterable[NormalizedCase],
+    detection_weight: float = DEFAULT_DETECTION_WEIGHT,
+    blocking_weight: float = DEFAULT_BLOCKING_WEIGHT,
+) -> dict[str, Any]:
     materialized = list(cases)
     if not materialized:
         return {
             "case_count": 0,
             "trial_count": 0,
             "detection_rate": None,
-            "blocked_before_rate": None,
-            "blocked_after_rate": None,
+            "blocked_rate": None,
             "not_blocked_rate": None,
-            "action_effectiveness": None,
             "score": None,
             "inconsistent_case_count": 0,
         }
-    values = [case_metrics(case) for case in materialized]
+    values = [
+        case_metrics(case, detection_weight, blocking_weight)
+        for case in materialized
+    ]
 
     def mean(name: str) -> float:
         return _rounded(fmean(float(value[name]) for value in values))
@@ -175,10 +260,8 @@ def aggregate_cases(cases: Iterable[NormalizedCase]) -> dict[str, Any]:
         "case_count": len(values),
         "trial_count": sum(value["trial_count"] for value in values),
         "detection_rate": mean("detection_rate"),
-        "blocked_before_rate": mean("blocked_before_rate"),
-        "blocked_after_rate": mean("blocked_after_rate"),
+        "blocked_rate": mean("blocked_rate"),
         "not_blocked_rate": mean("not_blocked_rate"),
-        "action_effectiveness": mean("action_effectiveness"),
         "score": mean("score"),
         "inconsistent_case_count": sum(value["inconsistent"] for value in values),
     }
@@ -187,12 +270,18 @@ def aggregate_cases(cases: Iterable[NormalizedCase]) -> dict[str, Any]:
 def _breakdown(
     cases: Iterable[NormalizedCase],
     key_fn: Callable[[NormalizedCase], str],
+    detection_weight: float = DEFAULT_DETECTION_WEIGHT,
+    blocking_weight: float = DEFAULT_BLOCKING_WEIGHT,
 ) -> dict[str, dict[str, Any]]:
     groups: dict[str, list[NormalizedCase]] = defaultdict(list)
     for case in cases:
         groups[key_fn(case)].append(case)
     return {
-        key: aggregate_cases(groups[key])
+        key: aggregate_cases(
+            groups[key],
+            detection_weight,
+            blocking_weight,
+        )
         for key in sorted(groups)
     }
 
@@ -250,9 +339,19 @@ def compare_packages(
         for package in packages
         for case in package.cases.values()
     }
+    control_policy_modes = {
+        package.control_id: package.profile_summary["policy"]["default_mode"]
+        for package in packages
+    }
+    policy_modes = set(control_policy_modes.values())
     normalized_policy = (
-        validate_policy(policy, union_modules) if policy is not None else None
+        validate_policy(policy, union_modules, policy_modes)
+        if policy is not None
+        else None
     )
+    scoring_policy = resolve_scoring(normalized_policy, policy_modes)
+    detection_weight = scoring_policy["detection_weight"] / 100.0
+    blocking_weight = scoring_policy["blocking_weight"] / 100.0
 
     representative: dict[str, NormalizedCase] = {}
     for package in packages:
@@ -269,13 +368,29 @@ def compare_packages(
         comparable_cases = [
             package.cases[key] for key in sorted(shared_keys)
         ]
-        modules = _breakdown(all_cases, lambda case: case.module_id)
+        modules = _breakdown(
+            all_cases,
+            lambda case: case.module_id,
+            detection_weight,
+            blocking_weight,
+        )
         comparable_modules = _breakdown(
-            comparable_cases, lambda case: case.module_id
+            comparable_cases,
+            lambda case: case.module_id,
+            detection_weight,
+            blocking_weight,
         )
         control_metrics = {
-            "all_cases": aggregate_cases(all_cases),
-            "comparable_cases": aggregate_cases(comparable_cases),
+            "all_cases": aggregate_cases(
+                all_cases,
+                detection_weight,
+                blocking_weight,
+            ),
+            "comparable_cases": aggregate_cases(
+                comparable_cases,
+                detection_weight,
+                blocking_weight,
+            ),
             "coverage": {
                 "union_case_count": len(union_keys),
                 "present_case_count": len(package.cases),
@@ -295,8 +410,15 @@ def compare_packages(
             "techniques": _breakdown(
                 all_cases,
                 lambda case: f"{case.module_id}:{case.technique_id}",
+                detection_weight,
+                blocking_weight,
             ),
-            "stages": _breakdown(all_cases, lambda case: case.test_stage),
+            "stages": _breakdown(
+                all_cases,
+                lambda case: case.test_stage,
+                detection_weight,
+                blocking_weight,
+            ),
             "samples": _breakdown(
                 (
                     case
@@ -304,6 +426,8 @@ def compare_packages(
                     if case.input_identity != "none"
                 ),
                 lambda case: case.input_identity,
+                detection_weight,
+                blocking_weight,
             ),
         }
         product_metrics[package.control_id] = control_metrics
@@ -355,7 +479,11 @@ def compare_packages(
                 },
             )
         for key, case in sorted(package.cases.items()):
-            metrics = case_metrics(case)
+            metrics = case_metrics(
+                case,
+                detection_weight,
+                blocking_weight,
+            )
             _metric_evidence(
                 evidence,
                 evidence_ids,
@@ -373,9 +501,15 @@ def compare_packages(
         left = package_by_control[left_id]
         right = package_by_control[right_id]
         pair_keys = set(left.cases) & set(right.cases)
-        left_metrics = aggregate_cases(left.cases[key] for key in sorted(pair_keys))
+        left_metrics = aggregate_cases(
+            (left.cases[key] for key in sorted(pair_keys)),
+            detection_weight,
+            blocking_weight,
+        )
         right_metrics = aggregate_cases(
-            right.cases[key] for key in sorted(pair_keys)
+            (right.cases[key] for key in sorted(pair_keys)),
+            detection_weight,
+            blocking_weight,
         )
         score_delta = (
             _rounded(left_metrics["score"] - right_metrics["score"])
@@ -508,14 +642,17 @@ def compare_packages(
     ]
 
     result = {
-        "schema_version": "1.0",
-        "engine_version": "0.1.0",
+        "schema_version": "1.1",
+        "engine_version": __version__,
         "comparison_id": comparison_id,
         "scoring": {
-            "detection_weight": DETECTION_WEIGHT,
-            "action_weight": ACTION_WEIGHT,
-            "action_credit": ACTION_CREDIT,
+            "requested_mode": scoring_policy["scoring_mode"],
+            "resolved_mode": scoring_policy["resolved_scoring_mode"],
+            "detection_weight": detection_weight,
+            "blocking_weight": blocking_weight,
+            "blocking_credit": BLOCKING_CREDIT,
             "aggregation": "trials_within_case_then_cases_within_module",
+            "control_policy_modes": control_policy_modes,
         },
         "policy": normalized_policy,
         "coverage": {

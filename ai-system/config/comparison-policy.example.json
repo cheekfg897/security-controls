@@ -7,5 +7,6 @@
     "04": 25
   },
   "minimum_comparable_weight": 80,
-  "tie_margin": 2
+  "tie_margin": 2,
+  "scoring_mode": "auto"
 }

@@ -69,6 +69,12 @@ foreach ($catalogRow in $catalogRows) {
 
 $resultsByModule = @{}
 foreach ($resultRow in $resultRows) {
+    $canonicalAction = ConvertTo-SCTCanonicalActionStatus `
+        -Status ([string]$resultRow.action_status)
+    if ($null -eq $canonicalAction) {
+        throw "Legacy result has invalid action_status '$($resultRow.action_status)'."
+    }
+    $resultRow.action_status = $canonicalAction
     $techniqueId = [string]$resultRow.technique_id
     if (-not $moduleByTechnique.ContainsKey($techniqueId)) {
         throw "Legacy result Technique '$techniqueId' has no module mapping in test-catalog.csv."

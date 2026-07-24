@@ -18,10 +18,24 @@ def render_technical_markdown(
     comparison: dict[str, Any],
     analysis: dict[str, Any] | None = None,
 ) -> str:
+    scoring = comparison["scoring"]
     lines = [
         "# SCT technical comparison report",
         "",
         f"Comparison ID: `{comparison.get('comparison_id') or 'not-set'}`",
+        "",
+        "## Scoring configuration",
+        "",
+        f"- Requested mode: `{scoring['requested_mode']}`",
+        f"- Resolved mode: `{scoring['resolved_mode']}`",
+        (
+            "- Detection weight: "
+            f"{_fmt(100 * scoring['detection_weight'], '%')}"
+        ),
+        (
+            "- Blocking weight: "
+            f"{_fmt(100 * scoring['blocking_weight'], '%')}"
+        ),
         "",
         "## Comparable evidence",
         "",
@@ -69,8 +83,8 @@ def render_technical_markdown(
     lines.extend(["", "## Per-control metrics", ""])
     lines.extend(
         [
-            "| Control | Cases | Detection | Blocked before | Blocked after | Score | Coverage |",
-            "|---|---:|---:|---:|---:|---:|---:|",
+            "| Control | Cases | Detection | Blocked | Score | Coverage |",
+            "|---|---:|---:|---:|---:|---:|",
         ]
     )
     for control in comparison["controls"]:
@@ -79,8 +93,7 @@ def render_technical_markdown(
         lines.append(
             f"| {control['display_name']} | {metrics['case_count']} "
             f"| {_fmt(metrics['detection_rate'], '%')} "
-            f"| {_fmt(metrics['blocked_before_rate'], '%')} "
-            f"| {_fmt(metrics['blocked_after_rate'], '%')} "
+            f"| {_fmt(metrics['blocked_rate'], '%')} "
             f"| {_fmt(metrics['score'])} "
             f"| {_fmt(coverage['coverage_rate'], '%')} |"
         )
@@ -194,6 +207,7 @@ def render_executive_markdown(
     analysis: dict[str, Any] | None = None,
 ) -> str:
     ranking = comparison["ranking"]
+    scoring = comparison["scoring"]
     lines = [
         "# SCT executive summary",
         "",
@@ -207,6 +221,12 @@ def render_executive_markdown(
         f"**Decision status:** {ranking['status']}",
         "",
         ranking["reason"],
+        "",
+        (
+            f"Scoring mode: **{scoring['resolved_mode']}** "
+            f"({_fmt(100 * scoring['detection_weight'], '%')} detection, "
+            f"{_fmt(100 * scoring['blocking_weight'], '%')} blocking)."
+        ),
     ]
     if ranking["entries"]:
         lines.extend(["", "## Verified ranking", ""])
@@ -264,6 +284,7 @@ def render_standalone_html(
     analysis: dict[str, Any] | None = None,
 ) -> str:
     ranking = comparison["ranking"]
+    scoring = comparison["scoring"]
     rank_rows = [
         [entry["rank"], entry["display_name"], _fmt(entry["score"])]
         for entry in ranking["entries"]
@@ -276,8 +297,7 @@ def render_standalone_html(
                 control["display_name"],
                 metrics["case_count"],
                 _fmt(metrics["detection_rate"], "%"),
-                _fmt(metrics["blocked_before_rate"], "%"),
-                _fmt(metrics["blocked_after_rate"], "%"),
+                _fmt(metrics["blocked_rate"], "%"),
                 _fmt(metrics["score"]),
                 _fmt(control["metrics"]["coverage"]["coverage_rate"], "%"),
             ]
@@ -319,14 +339,16 @@ th,td{{border:1px solid #cbd3e1;padding:.55rem;text-align:left}}th{{background:#
 <h1>SCT comparison report</h1>
 <p>Comparison <code>{html.escape(str(comparison.get("comparison_id") or "not-set"))}</code></p>
 <div class="status"><strong>{html.escape(ranking["status"])}</strong><br>{html.escape(ranking["reason"])}</div>
+<p><strong>Scoring:</strong> {html.escape(scoring["resolved_mode"])};
+{_fmt(100 * scoring["detection_weight"], "%")} detection and
+{_fmt(100 * scoring["blocking_weight"], "%")} blocking.</p>
 <h2>Ranking</h2>
 {_html_table(["Rank", "Control", "Score"], rank_rows) if rank_rows else "<p>No ranking was calculated.</p>"}
 <h2>Per-control metrics</h2>
-{_html_table(["Control", "Cases", "Detection", "Blocked before", "Blocked after", "Score", "Coverage"], metric_rows)}
+{_html_table(["Control", "Cases", "Detection", "Blocked", "Score", "Coverage"], metric_rows)}
 {findings}
 <h2>Provenance</h2>
 <p>Metrics and rankings are deterministic. AI output cannot alter them. See <code>comparison.json</code> and <code>run-manifest.json</code> for machine-readable evidence.</p>
 </body>
 </html>
 """
-

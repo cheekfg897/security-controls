@@ -4,7 +4,9 @@
 #>
 
 [CmdletBinding()]
-param()
+param(
+    [ValidatePattern('^3\.\d+$')] [string]$PythonVersion
+)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -20,7 +22,10 @@ $arguments = @(
     '-t', $systemRoot,
     '-v'
 )
-$exitCode = Invoke-SCTComparisonPython -SystemRoot $systemRoot -Arguments $arguments
+$exitCode = Invoke-SCTComparisonPython `
+    -SystemRoot $systemRoot `
+    -Arguments $arguments `
+    -PythonVersion $PythonVersion
 if ($exitCode -ne 0) {
     throw "Python regression tests exited with code $exitCode."
 }

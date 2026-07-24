@@ -54,7 +54,7 @@ footer { padding: 2rem; text-align: center; color: var(--muted); border-top: 1px
 fieldset { border: 0; border-bottom: 1px solid var(--line); padding: 0 0 1.5rem; margin: 0 0 1.5rem; }
 legend { font-size: 1.25rem; font-weight: 700; padding: 0; margin-bottom: .8rem; }
 .field { display: grid; gap: .35rem; margin: 1rem 0; font-weight: 600; }
-input[type="text"], input[type="file"], select, textarea {
+input[type="text"], input[type="file"], input[type="number"], select, textarea {
   width: 100%;
   padding: .7rem .8rem;
   border: 1px solid #aeb8ca;
@@ -63,8 +63,30 @@ input[type="text"], input[type="file"], select, textarea {
   color: var(--ink);
   font: inherit;
 }
+input[readonly] { background: #edf1f7; color: #52617b; cursor: not-allowed; }
 textarea { font-family: ui-monospace, "Cascadia Code", monospace; }
 .check-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: .55rem; }
+.weight-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: .8rem;
+}
+.compact-grid { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+.weight-field {
+  display: grid;
+  gap: .3rem;
+  padding: .85rem;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--soft);
+  font-weight: 700;
+}
+.weight-field small { min-height: 2.7em; color: var(--muted); font-weight: 400; }
+.number-with-unit { display: flex; align-items: center; gap: .45rem; }
+.number-with-unit input { min-width: 0; }
+.number-with-unit > span { color: var(--muted); font-weight: 600; }
+.weight-total { margin: .7rem 0 0; color: #21634f; font-weight: 700; }
+.weight-total.invalid { color: var(--danger); }
 .hint, .muted { color: var(--muted); }
 .primary {
   border: 0;

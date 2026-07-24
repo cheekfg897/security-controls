@@ -20,7 +20,8 @@ if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
     throw "Offline bundle is missing bundle-manifest.json."
 }
 $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
-if ($manifest.schema_version -ne '1.0' -or $manifest.python_version -ne '3.11') {
+if ($manifest.schema_version -ne '1.0' -or
+    -not (Test-SCTSupportedPythonVersion -Version ([string]$manifest.python_version))) {
     throw "Offline bundle manifest is unsupported."
 }
 foreach ($file in @($manifest.files)) {
@@ -47,18 +48,30 @@ $resolvedVenv = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFro
 if (Test-Path -LiteralPath $resolvedVenv) {
     throw "Virtual environment already exists: $resolvedVenv"
 }
-$python = Get-SCTComparisonPython -SystemRoot $systemRoot
+$python = Get-SCTComparisonPython `
+    -SystemRoot $systemRoot `
+    -PythonVersion ([string]$manifest.python_version)
 & $python.FilePath @($python.Prefix) -m venv $resolvedVenv
 if ($LASTEXITCODE -ne 0) { throw "Could not create the Python virtual environment." }
 
 $venvPython = Join-Path $resolvedVenv 'Scripts\python.exe'
 $wheelhouse = Join-Path $bundleRoot 'wheelhouse'
 $requirements = Join-Path $bundleRoot 'requirements\all.txt'
+$buildRequirements = Join-Path $bundleRoot 'requirements\build.txt'
+& $venvPython -m pip install --no-index --find-links $wheelhouse -r $buildRequirements
+if ($LASTEXITCODE -ne 0) {
+    throw "Offline build dependency installation failed."
+}
 & $venvPython -m pip install --no-index --find-links $wheelhouse -r $requirements
 if ($LASTEXITCODE -ne 0) {
     throw "Offline dependency installation failed."
 }
+& $venvPython -m pip install --no-index --find-links $wheelhouse `
+    --no-build-isolation --no-deps --editable $systemRoot
+if ($LASTEXITCODE -ne 0) {
+    throw "Offline SCT Python package installation failed."
+}
 
-Write-Host "Installed SCT comparison dependencies:" -ForegroundColor Green
+Write-Host "Installed SCT comparison Python application:" -ForegroundColor Green
 Write-Host "  $resolvedVenv"
 Write-Host "Run comparison commands from this repository; the wrappers add ai-system\src to PYTHONPATH."

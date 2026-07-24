@@ -1,13 +1,13 @@
 [build-system]
-requires = ["setuptools>=75"]
+requires = ["setuptools==83.0.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "sct-comparison"
-version = "0.1.0"
+version = "0.2.0"
 description = "Evidence-first comparison engine and web application for SCT result packages"
 readme = "README.md"
-requires-python = ">=3.11,<3.14"
+requires-python = ">=3.11,<4"
 license = "MIT"
 dependencies = []
 
@@ -39,7 +39,8 @@ all = [
 
 [project.scripts]
 sct-compare = "sct_ai.cli:main"
-sct-compare-web = "sct_ai.web:main"
+sct-web = "sct_ai.cli:web_main"
+sct-compare-web = "sct_ai.cli:web_main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
@@ -54,6 +55,5 @@ sct_ai = [
     "static/*.css",
     "static/*.js",
     "static/*.txt",
-    "skills/*/*.json",
-    "skills/*/*.md",
+    "skills.json",
 ]

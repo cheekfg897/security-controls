@@ -386,19 +386,27 @@ def _validate_output(
 
 
 def _load_skill(skill_name: str) -> dict[str, Any]:
-    root = Path(__file__).resolve().parent / "skills" / skill_name
-    manifest_path = root / "skill.json"
-    if not manifest_path.is_file():
-        raise AIConfigurationError(f"Runtime skill is missing: {skill_name}")
+    catalog_path = Path(__file__).resolve().parent / "skills.json"
+    if not catalog_path.is_file():
+        raise AIConfigurationError("Runtime skill catalog is missing.")
     try:
-        manifest = load_json_no_duplicates(
-            manifest_path.read_text(encoding="utf-8"),
-            f"{skill_name}/skill.json",
+        catalog = load_json_no_duplicates(
+            catalog_path.read_text(encoding="utf-8"),
+            "skills.json",
         )
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         raise AIConfigurationError(str(exc)) from exc
+    if (
+        set(catalog) != {"schema_version", "output_schemas", "skills"}
+        or catalog.get("schema_version") != "1.0"
+        or not isinstance(catalog.get("output_schemas"), dict)
+        or not isinstance(catalog.get("skills"), dict)
+    ):
+        raise AIConfigurationError("Runtime skill catalog is invalid.")
+    manifest = catalog["skills"].get(skill_name)
+    if not isinstance(manifest, dict):
+        raise AIConfigurationError(f"Runtime skill is missing: {skill_name}")
     required = {
-        "name",
         "version",
         "description",
         "system_prompt",
@@ -406,27 +414,27 @@ def _load_skill(skill_name: str) -> dict[str, Any]:
         "input_schema",
         "output_schema",
     }
-    if set(manifest) != required or manifest.get("name") != skill_name:
+    if set(manifest) != required:
         raise AIConfigurationError(f"Runtime skill manifest is invalid: {skill_name}")
-    loaded = dict(manifest)
-    for key in ("system_prompt", "user_prompt", "input_schema", "output_schema"):
-        relative = Path(manifest[key])
-        if relative.is_absolute() or ".." in relative.parts:
-            raise AIConfigurationError(
-                f"Runtime skill '{skill_name}' references an unsafe path."
-            )
-        target = root / relative
-        if not target.is_file():
-            raise AIConfigurationError(
-                f"Runtime skill '{skill_name}' is missing {manifest[key]}."
-            )
-        if key.endswith("schema"):
-            loaded[key] = load_json_no_duplicates(
-                target.read_text(encoding="utf-8"),
-                f"{skill_name}/{manifest[key]}",
-            )
-        else:
-            loaded[key] = target.read_text(encoding="utf-8")
+    if (
+        not isinstance(manifest["version"], str)
+        or not isinstance(manifest["description"], str)
+        or not isinstance(manifest["system_prompt"], str)
+        or not isinstance(manifest["user_prompt"], str)
+        or not isinstance(manifest["input_schema"], dict)
+        or not isinstance(manifest["output_schema"], str)
+    ):
+        raise AIConfigurationError(f"Runtime skill manifest is invalid: {skill_name}")
+    output_schema = catalog["output_schemas"].get(manifest["output_schema"])
+    if not isinstance(output_schema, dict):
+        raise AIConfigurationError(
+            f"Runtime skill '{skill_name}' references an unknown output schema."
+        )
+    loaded = {
+        "name": skill_name,
+        **manifest,
+        "output_schema": output_schema,
+    }
     return loaded
 
 

@@ -9,11 +9,24 @@
     default, creates results\<control-id>\control-profile.json together with
     one module-specific test catalogue for every discovered SCT module.
 
+    If results-module-<id>.csv files already exist for this workspace (for
+    example, left over from a previous control tested under the same
+    control-id), an interactive run asks whether to delete them so the new
+    run starts with a clean results set. Pass -DeleteExistingResults to
+    delete them without prompting (including in -NonInteractive runs); omit
+    it to leave existing result files untouched.
+
 .EXAMPLE
     .\scripts\review\Setup-SCTControl.ps1
 
 .EXAMPLE
     .\scripts\review\Setup-SCTControl.ps1 -NonInteractive -Force `
+        -ControlId control-a -DisplayName 'Control A' -Vendor Vendor `
+        -Product Product -ProductVersion 1.0 -AgentVersion 1.0 `
+        -PolicyName 'Evaluation Policy' -DefaultMode detect_only
+
+.EXAMPLE
+    .\scripts\review\Setup-SCTControl.ps1 -NonInteractive -Force -DeleteExistingResults `
         -ControlId control-a -DisplayName 'Control A' -Vendor Vendor `
         -Product Product -ProductVersion 1.0 -AgentVersion 1.0 `
         -PolicyName 'Evaluation Policy' -DefaultMode detect_only
@@ -34,7 +47,8 @@ param(
     [string]$DefaultMode,
     [string]$Notes = '',
     [switch]$NonInteractive,
-    [switch]$Force
+    [switch]$Force,
+    [switch]$DeleteExistingResults
 )
 
 Set-StrictMode -Version Latest
@@ -142,6 +156,25 @@ if ((Test-Path -LiteralPath $resolvedPath) -and -not $Force) {
 $directory = Split-Path $resolvedPath -Parent
 if (Test-Path -LiteralPath $directory -PathType Container) {
     Assert-SCTWorkspaceUsesModuleFiles -WorkspaceRoot $directory -ControlProfilePath $resolvedPath
+
+    $existingResultPaths = @(Get-SCTWorkspaceResultPaths -WorkspaceRoot $directory)
+    if ($existingResultPaths.Count -gt 0) {
+        $shouldDelete = [bool]$DeleteExistingResults
+        if (-not $shouldDelete -and -not $NonInteractive) {
+            Write-Host ""
+            Write-Host "  Existing result file(s) found in this workspace:" -ForegroundColor Yellow
+            foreach ($existingPath in $existingResultPaths) {
+                Write-Host "    $(Split-Path $existingPath -Leaf)" -ForegroundColor DarkGray
+            }
+            $shouldDelete = Read-YesNoValue "  Delete them so this control starts with a clean results set?"
+        }
+        if ($shouldDelete) {
+            foreach ($existingPath in $existingResultPaths) {
+                Remove-Item -LiteralPath $existingPath -Force
+            }
+            Write-Host "  Deleted $($existingResultPaths.Count) existing result file(s)." -ForegroundColor Yellow
+        }
+    }
 }
 if ($directory -and -not (Test-Path -LiteralPath $directory)) {
     New-Item -ItemType Directory -Path $directory -Force | Out-Null

@@ -10,11 +10,11 @@ For interactive use, run `.\Start-SCT.ps1` and select `[M] Manage SCT`. The dire
 |---|---|---|
 | 1 | Create the product workspace and record its control policy | `.\scripts\review\Setup-SCTControl.ps1` |
 | 2 | Run tests | `.\Start-SCT.ps1` |
-| 3 | Enter detection and action status | Open each `results\<control-id>\results-module-<id>.csv` in Excel |
+| 3 | Enter `detected`/`not_detected` and `blocked`/`not_blocked` | Open each `results\<control-id>\results-module-<id>.csv` in Excel |
 | 4 | Check the completed results | `.\scripts\validation\Check-SCTResults.ps1 -ControlProfilePath .\results\<control-id>\control-profile.json` |
 | 5 | Build that product's comparison ZIP | `.\scripts\review\Build-SCTComparisonPackage.ps1 -ControlProfilePath .\results\<control-id>\control-profile.json` |
 
-There is no raw/analysis conversion step and no second review CSV. SCT writes observations to the authoritative `results-module-<id>.csv`; a person fills `detection_status`, `action_status`, and optional `reviewer_notes` directly in each tested module file because execution alone cannot determine what the control detected or blocked.
+There is no raw/analysis conversion step and no second review CSV. SCT writes observations to the authoritative `results-module-<id>.csv`; a person fills `detection_status`, binary `action_status` (`blocked` or `not_blocked`), and optional `reviewer_notes` directly in each tested module file because execution alone cannot determine what the control detected or blocked.
 
 Convert an older combined workspace with:
 
@@ -30,8 +30,8 @@ Repeat the workflow for the second product. The package builder writes `submissi
 | Purpose | Command |
 |---|---|
 | Compare two or more ZIPs | `.\ai-system\scripts\Compare-SCTControls.ps1` |
-| Start the local web app | `.\ai-system\scripts\Start-SCTComparisonWeb.ps1` |
-| Start trusted-network proof-of-concept mode | `.\ai-system\scripts\Start-SCTComparisonWeb.ps1 -Shared -ListenAddress 0.0.0.0` |
+| Start the local web app | `.\ai-system\.venv\Scripts\python.exe -m sct_ai web` |
+| Start trusted-network proof-of-concept mode | `.\ai-system\.venv\Scripts\python.exe -m sct_ai web --shared --host 0.0.0.0` |
 | Build an offline dependency/model bundle | `.\ai-system\scripts\Build-SCTOfflineBundle.ps1` |
 | Verify and install an offline bundle | `.\ai-system\scripts\Install-SCTOfflineBundle.ps1` |
 | Import an approved Ollama model | `.\ai-system\scripts\Import-SCTOllamaModel.ps1` |

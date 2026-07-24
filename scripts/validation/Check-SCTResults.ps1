@@ -3,9 +3,10 @@
     Checks one completed module result CSV or every result CSV in a workspace.
 
 .DESCRIPTION
-    Use this after filling detection_status, action_status, and optional
-    reviewer_notes directly in results-module-<id>.csv. Generated observation
-    fields must remain present and valid.
+    Use this after filling detection_status, binary action_status (blocked or
+    not_blocked), and optional reviewer_notes directly in
+    results-module-<id>.csv. Generated observation fields must remain present
+    and valid.
 
 .EXAMPLE
     .\scripts\validation\Check-SCTResults.ps1 `
@@ -49,8 +50,9 @@ $requiredColumns = @(
 $errors = @()
 $allowedExecution = @('', 'executed', 'not_executed')
 $allowedDetection = @('detected', 'not_detected')
-$allowedAction = @('blocked_before_execution', 'blocked_after_execution', 'not_blocked')
+$allowedAction = @(Get-SCTAllowedActionStatuses)
 $checkedRows = 0
+$legacyActionRows = 0
 
 foreach ($resolvedPath in $resultPaths) {
     try {
@@ -103,16 +105,9 @@ foreach ($resolvedPath in $resultPaths) {
             $errors += "$context must set detection_status to detected or not_detected."
         }
         if ($action -notin $allowedAction) {
-            $errors += "$context must set action_status to blocked_before_execution, blocked_after_execution, or not_blocked."
-        }
-        if ($execution -eq 'executed' -and $action -eq 'blocked_before_execution') {
-            $errors += "$context cannot be executed and blocked_before_execution."
-        }
-        if ($execution -eq 'not_executed' -and $action -eq 'blocked_after_execution') {
-            $errors += "$context cannot be not_executed and blocked_after_execution."
-        }
-        if ($action -eq 'blocked_after_execution' -and $execution -ne 'executed') {
-            $errors += "$context can use blocked_after_execution only when execution_status is executed."
+            $errors += "$context must set action_status to blocked or not_blocked."
+        } elseif ($action -in @('blocked_before_execution', 'blocked_after_execution')) {
+            $legacyActionRows++
         }
     }
 }
@@ -122,3 +117,9 @@ if ($errors.Count -gt 0) {
 }
 
 Write-Host "Checked $checkedRows completed result rows across $($resultPaths.Count) module file(s)." -ForegroundColor Green
+if ($legacyActionRows -gt 0) {
+    Write-Warning (
+        "$legacyActionRows row(s) use legacy blocked-before/blocked-after values. " +
+        "They are treated identically as blocked and normalized in new packages."
+    )
+}

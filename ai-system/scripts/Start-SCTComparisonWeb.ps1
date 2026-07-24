@@ -16,7 +16,8 @@ param(
     [string]$ListenAddress = '127.0.0.1',
     [ValidateRange(1, 65535)] [int]$Port = 8000,
     [ValidateRange(1, 8)] [int]$JobWorkers = 1,
-    [string]$ProviderConfigPath
+    [string]$ProviderConfigPath,
+    [ValidatePattern('^3\.\d+$')] [string]$PythonVersion
 )
 
 Set-StrictMode -Version Latest
@@ -56,7 +57,10 @@ if ($ProviderConfigPath) {
 
 Write-Host "SCT comparison web application:" -ForegroundColor Green
 Write-Host "  http://${ListenAddress}:$Port" -ForegroundColor White
-$exitCode = Invoke-SCTComparisonPython -SystemRoot $systemRoot -Arguments $arguments
+$exitCode = Invoke-SCTComparisonPython `
+    -SystemRoot $systemRoot `
+    -Arguments $arguments `
+    -PythonVersion $PythonVersion
 if ($exitCode -ne 0) {
     throw "SCT comparison web application exited with code $exitCode."
 }

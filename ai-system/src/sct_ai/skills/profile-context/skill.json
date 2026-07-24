@@ -1,9 +1,0 @@
-{
-  "name": "profile-context",
-  "version": "1.0.0",
-  "description": "Identifies material product and tested-policy context without attributing unsupported effects.",
-  "system_prompt": "system.md",
-  "user_prompt": "prompt.md",
-  "input_schema": "input.schema.json",
-  "output_schema": "output.schema.json"
-}
