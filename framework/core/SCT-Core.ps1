@@ -401,12 +401,16 @@ function Get-SCTRepositoryToolPath {
         [string]$Tool
     )
 
+    if ($Tool -eq 'ComparePackages') {
+        $repositoryRoot = Split-Path -Path $RepoRoot -Parent
+        return Join-Path $repositoryRoot 'ai-system\scripts\Compare-SCTControls.ps1'
+    }
+
     $relativePath = switch ($Tool) {
         'AddModule'             { 'scripts\authoring\Add-SCTModule.ps1' }
         'DescribeModuleTests'   { 'scripts\authoring\Describe-SCTModuleTests.ps1' }
         'SetupControl'          { 'scripts\review\Setup-SCTControl.ps1' }
         'BuildPackage'          { 'scripts\review\Build-SCTComparisonPackage.ps1' }
-        'ComparePackages'       { 'ai-system\scripts\Compare-SCTControls.ps1' }
         'CheckControlProfile'   { 'scripts\validation\Check-SCTControlProfile.ps1' }
         'CheckModules'          { 'scripts\validation\Check-SCTModules.ps1' }
         'CheckResults'          { 'scripts\validation\Check-SCTResults.ps1' }
@@ -716,8 +720,9 @@ function Get-SCTTechniqueWorkflow {
 
 # =============================================================================
 # WORKFLOW: staged sample batch
-# Extracts a ZIP from samples/ to C:\Temp\SCT-Staging\, then calls the
-# script with -SourcePath and -Control. Supports -DryRun.
+# Extracts ZIPs from samples/ to C:\Temp\SCT-Staging\, including nested ZIPs
+# when the operator opts in, then calls the script with -SourcePath and
+# -Control. Supports -DryRun.
 # =============================================================================
 
 function Invoke-SampleBatchTechnique {
@@ -726,7 +731,7 @@ function Invoke-SampleBatchTechnique {
 
     Write-Host ""
     Write-Host "  Delivers and optionally executes malware/tool samples from the samples/ folder." -ForegroundColor White
-    Write-Host "  Drop any ZIP of executables into samples/ - no manifest required." -ForegroundColor DarkGray
+    Write-Host "  Drop a ZIP of samples, or a ZIP containing sample ZIPs, into samples/." -ForegroundColor DarkGray
     Write-Host ""
 
     $stagingRoot = 'C:\Temp\SCT-Staging'
@@ -762,7 +767,8 @@ function Invoke-SampleBatchTechnique {
         if ($zipChoice -ieq 'A') {
             $zipPassword = (Read-Host "  ZIP password for all archives (press Enter if none)").Trim()
             Write-Host ""
-            $sourcePath = Merge-StagingFromZips -Zips $zips -StagingRoot $stagingRoot -Password $zipPassword
+            $sourcePath = Merge-StagingFromZips -Zips $zips -StagingRoot $stagingRoot `
+                -Password $zipPassword -PromptForNestedArchives
         } elseif ($zipChoice -ieq 'M') {
             $sourcePath = (Read-Host "  Full path to already-extracted folder").Trim()
             if (-not $sourcePath) { return }
@@ -770,19 +776,16 @@ function Invoke-SampleBatchTechnique {
             $zipIdx = $zipChoice -as [int]
             if ($zipIdx -ge 1 -and $zipIdx -le $zips.Count) {
                 $chosenZip = $zips[$zipIdx - 1]
-                $baseName  = [System.IO.Path]::GetFileNameWithoutExtension($chosenZip.Name)
-                $destDir   = Join-Path $stagingRoot $baseName
                 $zipPassword = (Read-Host "  ZIP password (press Enter if none)").Trim()
                 Write-Host ""
-                Write-Host "  [*] Extracting $($chosenZip.Name)..." -ForegroundColor Yellow
                 try {
-                    Invoke-ZipExtraction -ZipPath $chosenZip.FullName -DestPath $destDir -Password $zipPassword
+                    $sourcePath = Merge-StagingFromZips -Zips @($chosenZip) `
+                        -StagingRoot $stagingRoot -Password $zipPassword -PromptForNestedArchives
                 } catch {
                     Write-Host "  [!] Extraction failed: $($_.Exception.Message)" -ForegroundColor Red
                     Read-Host "`n  Press Enter to return"
                     return
                 }
-                $sourcePath = $destDir
             } else {
                 Write-Host "  Invalid selection." -ForegroundColor Yellow
                 Read-Host "`n  Press Enter to return"
@@ -1373,11 +1376,11 @@ function Invoke-ZipExtraction {
 }
 
 # =============================================================================
-# MULTI-ZIP STAGING
-# Extracts every ZIP in $Zips to its own subfolder under $StagingRoot, then
-# copies every file into a single combined-TIMESTAMP folder so v1.1 can test
-# them all in one batch. Filenames that collide across ZIPs are prefixed
-# with their ZIP's base name to keep them distinct.
+# ZIP SAMPLE STAGING
+# Extracts every ZIP in $Zips to an isolated subfolder, optionally discovers
+# and extracts ZIPs found inside those archives, and writes a bundle manifest
+# for v1.1. Each archive keeps its original directory structure and supporting
+# files. Nested extraction is bounded by archive count and depth.
 # =============================================================================
 
 function Merge-StagingFromZips {
@@ -1385,24 +1388,77 @@ function Merge-StagingFromZips {
     param(
         [Parameter(Mandatory)][array]$Zips,
         [Parameter(Mandatory)][string]$StagingRoot,
-        [string]$Password = ''
+        [string]$Password = '',
+        [switch]$PromptForNestedArchives,
+        [switch]$ExpandNestedArchives,
+        [AllowEmptyString()][string]$NestedPassword = '',
+        [ValidateRange(1, 10)][int]$MaxArchiveDepth = 3,
+        [ValidateRange(1, 1000)][int]$MaxArchiveCount = 100
     )
 
+    if ($PromptForNestedArchives -and $ExpandNestedArchives) {
+        throw 'Use either -PromptForNestedArchives or -ExpandNestedArchives, not both.'
+    }
+
     $timestamp   = Get-Date -Format 'yyyyMMdd-HHmmss'
-    $combinedDir = Join-Path $StagingRoot "combined-$timestamp"
+    $runSuffix   = [guid]::NewGuid().ToString('N').Substring(0, 6)
+    $combinedDir = Join-Path $StagingRoot "combined-$timestamp-$runSuffix"
     New-Item -ItemType Directory -Path $combinedDir -Force | Out-Null
 
-    $seenNames  = @{}
-    $totalFiles = 0
-    $warnings   = @()
+    $recognisedExtensionPattern = '\.(exe|dll|com|bat|cmd|ps1|vbs|js|hta|jar|py)$'
+    $bundleRecords      = @()
+    $recognisedFiles    = 0
+    $supportFiles       = 0
+    $warnings           = @()
+    $archiveCount       = 0
+    $topLevelCount      = 0
+    $nestedArchiveCount = 0
+    $queue              = New-Object System.Collections.Queue
+    $expandNested       = $ExpandNestedArchives.IsPresent
+    $nestedDecision     = $ExpandNestedArchives.IsPresent
+    $nestedPasswordValue = if ($PSBoundParameters.ContainsKey('NestedPassword')) {
+        $NestedPassword
+    } else {
+        $Password
+    }
 
     foreach ($zip in $Zips) {
-        $baseName = [System.IO.Path]::GetFileNameWithoutExtension($zip.Name)
-        $destDir  = Join-Path $StagingRoot $baseName
+        $queue.Enqueue([pscustomobject]@{
+            File     = $zip
+            Depth    = 0
+            Password = $Password
+        })
+    }
 
-        Write-Host "  [*] Extracting $($zip.Name)..." -ForegroundColor Yellow
+    while ($queue.Count -gt 0) {
+        if ($archiveCount -ge $MaxArchiveCount) {
+            $warnings += "Stopped after $MaxArchiveCount archives (safety limit)."
+            break
+        }
+
+        $item = $queue.Dequeue()
+        $zip = $item.File
+        if (-not (Test-Path -LiteralPath $zip.FullName -PathType Leaf)) {
+            $msg = "Skipped missing archive: $($zip.FullName)"
+            $warnings += $msg
+            Write-Host "  [!] $msg" -ForegroundColor Red
+            continue
+        }
+
+        $archiveCount++
+        if ($item.Depth -eq 0) {
+            $topLevelCount++
+        } else {
+            $nestedArchiveCount++
+        }
+        $baseName = [System.IO.Path]::GetFileNameWithoutExtension($zip.Name)
+        $destName = '{0:D3}-{1}' -f $archiveCount, $baseName
+        $destDir  = Join-Path $combinedDir $destName
+
+        $depthLabel = if ($item.Depth -gt 0) { " (nested depth $($item.Depth))" } else { '' }
+        Write-Host "  [*] Extracting $($zip.Name)$depthLabel..." -ForegroundColor Yellow
         try {
-            Invoke-ZipExtraction -ZipPath $zip.FullName -DestPath $destDir -Password $Password
+            Invoke-ZipExtraction -ZipPath $zip.FullName -DestPath $destDir -Password $item.Password
         } catch {
             $msg = "Skipped $($zip.Name): $($_.Exception.Message)"
             $warnings += $msg
@@ -1410,27 +1466,99 @@ function Merge-StagingFromZips {
             continue
         }
 
-        $sampleFiles = @(Get-ChildItem -Path $destDir -File)
-        Write-Host "    $($sampleFiles.Count) file(s) extracted" -ForegroundColor DarkGray
+        $extractedFiles = @(Get-ChildItem -LiteralPath $destDir -File -Recurse -ErrorAction SilentlyContinue)
+        $nestedZips = @($extractedFiles | Where-Object { $_.Extension -ieq '.zip' })
+        $nonZipFiles = @($extractedFiles | Where-Object { $_.Extension -ine '.zip' })
+        $sampleFiles = @($nonZipFiles | Where-Object { $_.Extension -match $recognisedExtensionPattern })
+        $bundleSupportFiles = @($nonZipFiles | Where-Object { $_.Extension -notmatch $recognisedExtensionPattern })
+        $recognisedFiles += $sampleFiles.Count
+        $supportFiles += $bundleSupportFiles.Count
+        Write-Host (
+            "    $($sampleFiles.Count) recognised sample file(s), " +
+            "$($bundleSupportFiles.Count) supporting/other file(s), " +
+            "$($nestedZips.Count) nested ZIP(s)"
+        ) -ForegroundColor DarkGray
 
-        foreach ($f in $sampleFiles) {
-            # Keep filenames unique across the combined set
-            $name = $f.Name
-            if ($seenNames.ContainsKey($name)) {
-                $newName = "$baseName-$name"
-                $warnings += "Duplicate filename '$name' (from $($zip.Name)) renamed to '$newName'"
-                $name = $newName
+        if ($sampleFiles.Count -gt 0) {
+            $relativeCandidates = @(
+                $sampleFiles | ForEach-Object {
+                    $_.FullName.Substring($destDir.Length).TrimStart('\', '/')
+                }
+            )
+            $archiveHash = ''
+            try {
+                $archiveHash = (Get-FileHash -LiteralPath $zip.FullName -Algorithm SHA256).Hash
+            } catch {
+                $warnings += "Could not hash archive $($zip.Name): $($_.Exception.Message)"
             }
-            $seenNames[$name] = $true
+            $bundleRecords += [pscustomobject]@{
+                id                  = $destName
+                name                = $baseName
+                relative_path       = $destName
+                archive_name        = $zip.Name
+                archive_sha256      = $archiveHash
+                depth               = $item.Depth
+                recognised_files    = @($relativeCandidates)
+                supporting_files    = $bundleSupportFiles.Count
+            }
+        }
 
-            Copy-Item -Path $f.FullName -Destination (Join-Path $combinedDir $name) -Force
-            $totalFiles++
+        if ($nestedZips.Count -eq 0) {
+            continue
+        }
+
+        if ($item.Depth -ge $MaxArchiveDepth) {
+            $warnings += "Ignored $($nestedZips.Count) nested ZIP(s) in $($zip.Name): maximum depth $MaxArchiveDepth reached."
+            continue
+        }
+
+        if (-not $nestedDecision) {
+            Write-Host ""
+            Write-Host "  [!] Found $($nestedZips.Count) ZIP archive(s) inside $($zip.Name):" -ForegroundColor Yellow
+            foreach ($nestedZip in $nestedZips) {
+                Write-Host "      $($nestedZip.Name)" -ForegroundColor DarkGray
+            }
+            Write-Host ""
+            $nestedChoice = (Read-Host "  Extract nested ZIPs and include their samples? [Y/N]").Trim()
+            $expandNested = $nestedChoice -ieq 'Y'
+            $nestedDecision = $true
+
+            if ($expandNested) {
+                $enteredPassword = (Read-Host "  Password for nested ZIPs (Enter reuses the outer ZIP password)").Trim()
+                $nestedPasswordValue = if ($enteredPassword) { $enteredPassword } else { $item.Password }
+            }
+            Write-Host ""
+        }
+
+        if ($expandNested) {
+            foreach ($nestedZip in $nestedZips) {
+                $queue.Enqueue([pscustomobject]@{
+                    File     = $nestedZip
+                    Depth    = $item.Depth + 1
+                    Password = $nestedPasswordValue
+                })
+            }
+        } else {
+            $warnings += "Ignored $($nestedZips.Count) nested ZIP(s) found in $($zip.Name) at operator request."
         }
     }
 
+    $manifestPath = Join-Path $combinedDir '.sct-bundles.json'
+    [pscustomobject]@{
+        schema_version = 1
+        created_at     = (Get-Date).ToUniversalTime().ToString('o')
+        bundles        = @($bundleRecords)
+    } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+
     Write-Host ""
-    Write-Host "  [+] Combined staging : $combinedDir" -ForegroundColor Green
-    Write-Host "  [+] Total samples    : $totalFiles from $($Zips.Count) ZIP(s)" -ForegroundColor Green
+    Write-Host "  [+] Bundle staging   : $combinedDir" -ForegroundColor Green
+    Write-Host "  [+] Malware bundles : $($bundleRecords.Count)" -ForegroundColor Green
+    Write-Host "  [+] Recognised files: $recognisedFiles" -ForegroundColor Green
+    Write-Host "  [+] Support/other    : $supportFiles (preserved inside bundles)" -ForegroundColor DarkGray
+    Write-Host (
+        "  [+] ZIPs processed   : $archiveCount " +
+        "($topLevelCount selected/top-level, $nestedArchiveCount nested)"
+    ) -ForegroundColor Green
 
     if ($warnings) {
         Write-Host ""

@@ -17,5 +17,6 @@ the source of truth and can be used to rebuild the index.
 
 Generated comparison data is gitignored because profiles and results may
 contain environment-sensitive information. Source packages under
-`submissions/` and authoritative workspaces under `results/` are never
+`framework/submissions/` and authoritative workspaces under
+`framework/results/` are never
 modified by the comparison workflow.

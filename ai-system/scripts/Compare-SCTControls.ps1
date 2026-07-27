@@ -4,12 +4,12 @@
 
 .EXAMPLE
     .\ai-system\scripts\Compare-SCTControls.ps1 `
-        -PackagePath .\submissions\control-a.zip,.\submissions\control-b.zip `
+        -PackagePath .\framework\submissions\control-a.zip,.\framework\submissions\control-b.zip `
         -PolicyPath .\ai-system\config\config.local.comparison.json
 
 .EXAMPLE
     .\ai-system\scripts\Compare-SCTControls.ps1 `
-        -PackagePath .\submissions\control-a.zip,.\submissions\control-b.zip `
+        -PackagePath .\framework\submissions\control-a.zip,.\framework\submissions\control-b.zip `
         -PolicyPath .\ai-system\config\config.local.comparison.json `
         -Provider local-ollama -Model approved-model `
         -ProviderConfigPath .\ai-system\config\config.local.ai.json
@@ -34,9 +34,10 @@ $ErrorActionPreference = 'Stop'
 
 $systemRoot = Split-Path $PSScriptRoot -Parent
 $repoRoot = Split-Path $systemRoot -Parent
+$frameworkRoot = Join-Path $repoRoot 'framework'
 if (-not $PackagePath -or $PackagePath.Count -eq 0) {
     $PackagePath = @(
-        Select-SCTComparisonPackages -SubmissionsRoot (Join-Path $repoRoot 'submissions')
+        Select-SCTComparisonPackages -SubmissionsRoot (Join-Path $frameworkRoot 'submissions')
     )
 }
 if ($PackagePath.Count -lt 2) {

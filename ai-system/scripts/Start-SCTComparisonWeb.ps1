@@ -25,6 +25,11 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'SCT-ComparisonHelpers.ps1')
 
 $systemRoot = Split-Path $PSScriptRoot -Parent
+$repoRoot = Split-Path $systemRoot -Parent
+$frameworkRoot = Join-Path $repoRoot 'framework'
+if (-not (Test-Path -LiteralPath (Join-Path $frameworkRoot 'scenarios') -PathType Container)) {
+    throw "Framework scenarios directory not found: $frameworkRoot"
+}
 if (-not $Shared -and $ListenAddress -notin @('127.0.0.1', '::1', 'localhost')) {
     throw "A non-loopback ListenAddress requires -Shared."
 }
@@ -39,7 +44,8 @@ $arguments = @(
     '-m', 'sct_ai', 'web',
     '--host', $ListenAddress,
     '--port', [string]$Port,
-    '--workers', [string]$JobWorkers
+    '--workers', [string]$JobWorkers,
+    '--repository-root', $frameworkRoot
 )
 if ($Shared) { $arguments += '--shared' }
 if (-not $ProviderConfigPath) {

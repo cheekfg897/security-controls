@@ -168,7 +168,7 @@ connected Windows machine.
 PowerShell wrapper for `python -m sct_ai compare`.
 
 - Accepts package paths or interactively selects packages from the
-  repository's `submissions\` directory when none are supplied.
+  framework's `framework\submissions\` directory when none are supplied.
 - Resolves package, policy, and provider-configuration paths before invoking
   Python.
 - Passes the output directory, optional comparison ID, Python version, and
@@ -217,7 +217,7 @@ Shared support library dot-sourced by the other PowerShell scripts.
 - `Invoke-SCTComparisonPython` temporarily adds `ai-system\src` to
   `PYTHONPATH`, invokes the selected interpreter, returns its exit code, and
   restores the previous environment.
-- `Select-SCTComparisonPackages` lists ZIPs under `submissions\` and validates
+- `Select-SCTComparisonPackages` lists ZIPs under `framework\submissions\` and validates
   an interactive selection of at least two distinct menu entries.
 
 This is a library file; it is not normally run directly.

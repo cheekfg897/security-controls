@@ -66,7 +66,7 @@ To install and start the application, you need:
   [air-gapped installation](#air-gapped-installation) bundle.
 
 To perform a comparison, you also need at least two valid SCT result ZIPs.
-These can already be present under `submissions\` or be uploaded through the
+These can already be present under `framework\submissions\` or be uploaded through the
 web application.
 
 AI is optional. Metrics, scoring, ranking, and deterministic reports work
@@ -152,7 +152,7 @@ The home page is arranged in the same order as a comparison run.
 
 ### Step 1: Select result packages
 
-Select existing ZIPs from `submissions\`, upload additional ZIPs, or combine
+Select existing ZIPs from `framework\submissions\`, upload additional ZIPs, or combine
 both methods.
 
 Requirements:
@@ -168,12 +168,12 @@ Use **Validate packages** before running a comparison. The preflight result
 shows each control ID, case count, trial count, and submitted module IDs.
 
 Uploads are copied to a generated staging directory. They are removed when the
-job finishes. ZIPs already stored under `submissions\` are never modified.
+job finishes. ZIPs already stored under `framework\submissions\` are never modified.
 
 ### Step 2: Set module weights
 
 The module display is not fixed to four entries. The page discovers every
-valid `scenarios\*\module.json` file and creates one numeric field for each
+valid `framework\scenarios\*\module.json` file and creates one numeric field for each
 module. The current repository has:
 
 - Module 01: Malware Delivery
@@ -602,8 +602,8 @@ Run metrics and ranking:
 
 ```powershell
 .\ai-system\.venv\Scripts\python.exe -m sct_ai compare `
-    --package .\submissions\control-a.zip `
-    --package .\submissions\control-b.zip `
+    --package .\framework\submissions\control-a.zip `
+    --package .\framework\submissions\control-b.zip `
     --policy .\ai-system\config\config.local.comparison.json
 ```
 
@@ -611,8 +611,8 @@ Add local AI analysis:
 
 ```powershell
 .\ai-system\.venv\Scripts\python.exe -m sct_ai compare `
-    --package .\submissions\control-a.zip `
-    --package .\submissions\control-b.zip `
+    --package .\framework\submissions\control-a.zip `
+    --package .\framework\submissions\control-b.zip `
     --policy .\ai-system\config\config.local.comparison.json `
     --provider local-ollama `
     --model sct-approved `
@@ -674,7 +674,7 @@ Configuration:
 
 | Variable | Purpose |
 |---|---|
-| `SCT_REPOSITORY_ROOT` | Repository directory containing `scenarios/` and `submissions/` |
+| `SCT_REPOSITORY_ROOT` | Framework directory containing `scenarios/` and `submissions/` |
 | `SCT_SYSTEM_ROOT` | Writable persistent directory for `comparisons/` and the SQLite index |
 | `SCT_SHARED_MODE` | Set to `true` for a non-loopback deployment |
 | `SCT_PROVIDER_CONFIG` | Optional path to the server-side AI provider configuration |
@@ -807,7 +807,7 @@ the web surface, and AI evidence validation.
 
 ## Security boundary
 
-- Source ZIPs under `submissions\` and workspaces under `results\` are treated
+- Source ZIPs under `framework\submissions\` and workspaces under `framework\results\` are treated
   as read-only.
 - Uploads receive generated staging names and are deleted after their job.
 - Web forms use same-site double-submit CSRF protection.

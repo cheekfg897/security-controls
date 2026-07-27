@@ -16,8 +16,8 @@ Compare two or more generated ZIPs through Manage SCT option `[6]`, or start
 the local web application:
 
 ```powershell
-.\ai-system\scripts\Start-SCTComparisonWeb.ps1
+..\ai-system\scripts\Start-SCTComparisonWeb.ps1
 ```
 
 The application reads these archives without changing them and writes generated
-metrics and reports under `ai-system/comparisons/`.
+metrics and reports under `../ai-system/comparisons/`.

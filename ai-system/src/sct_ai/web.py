@@ -36,23 +36,28 @@ def validate_web_binding(host: str, port: int, shared: bool) -> None:
 
 
 def _system_root() -> Path:
-    repository = _repository_root()
-    checkout_system = repository / "ai-system"
+    current = Path.cwd().resolve()
     source_system = Path(__file__).resolve().parents[2]
-    if (checkout_system / "pyproject.toml").is_file():
-        return checkout_system
+    for checkout_system in (current / "ai-system", current.parent / "ai-system"):
+        if (checkout_system / "pyproject.toml").is_file():
+            return checkout_system
     if (source_system / "pyproject.toml").is_file():
         return source_system
-    return checkout_system
+    return current / "ai-system"
 
 
 def _repository_root() -> Path:
     current = Path.cwd().resolve()
     source_repository = Path(__file__).resolve().parents[3]
-    for candidate in (current, source_repository):
+    for candidate in (
+        current,
+        current / "framework",
+        source_repository / "framework",
+        source_repository,
+    ):
         if (candidate / "scenarios").is_dir():
             return candidate
-    return source_repository
+    return source_repository / "framework"
 
 
 def _environment_path(name: str) -> Path | None:
@@ -708,7 +713,7 @@ def create_app_from_env() -> Any:
     repository_root = _environment_path("SCT_REPOSITORY_ROOT") or _repository_root()
     if not (repository_root / "scenarios").is_dir():
         raise RuntimeError(
-            "SCT_REPOSITORY_ROOT must point to the repository directory "
+            "SCT_REPOSITORY_ROOT must point to the framework directory "
             "containing scenarios/."
         )
     system_root = _environment_path("SCT_SYSTEM_ROOT")
@@ -753,8 +758,8 @@ def run_web(
     )
     if not (selected_repository / "scenarios").is_dir():
         raise RuntimeError(
-            "The repository root must contain scenarios/. Run from the repository "
-            "root or pass --repository-root."
+            "The framework root must contain scenarios/. Run from the repository "
+            "root or pass --repository-root framework."
         )
     selected_system = Path(system_root).resolve() if system_root else _system_root()
     app = create_app(

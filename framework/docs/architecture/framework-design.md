@@ -1,6 +1,9 @@
 # Framework Design
 
-SCT is metadata-driven. The launcher discovers `scenarios/*/module.json`, validates each file, shows the module and technique menus, infers how a script must be launched, and records normalized results.
+SCT is metadata-driven. All framework-owned files live under `framework/`.
+The launcher discovers `scenarios/*/module.json` relative to that directory,
+validates each file, shows the module and technique menus, infers how a script
+must be launched, and records normalized results.
 
 ## Naming hierarchy
 

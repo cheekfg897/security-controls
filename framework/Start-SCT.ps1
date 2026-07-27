@@ -25,7 +25,7 @@
 
 .PARAMETER SamplesPath
     Override the default samples/ folder used for malware ZIP archives.
-    Defaults to <repo-root>\samples\.
+    Defaults to <framework-root>\samples\.
 
 .EXAMPLE
     .\Start-SCT.ps1

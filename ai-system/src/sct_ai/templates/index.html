@@ -21,7 +21,7 @@
       {% endfor %}
     </div>
     {% else %}
-    <p class="muted">No ZIPs are currently stored under <code>submissions/</code>.</p>
+    <p class="muted">No ZIPs are currently stored under <code>framework/submissions/</code>.</p>
     {% endif %}
     <label class="field">Upload additional ZIPs
       <input type="file" name="uploads" accept=".zip,application/zip" multiple>
@@ -32,7 +32,7 @@
   <fieldset>
     <legend>2. Module weights</legend>
     <p class="hint">Set how much each test module contributes to the final
-    ranking. Modules are discovered from <code>scenarios/*/module.json</code>,
+    ranking. Modules are discovered from <code>framework/scenarios/*/module.json</code>,
     so newly added modules appear here automatically. Only modules present in
     the submitted packages are used, and their weights must total 100%.</p>
     <div class="weight-grid">

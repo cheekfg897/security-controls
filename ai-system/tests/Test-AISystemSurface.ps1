@@ -11,6 +11,7 @@ $ErrorActionPreference = 'Stop'
 
 $systemRoot = Split-Path $PSScriptRoot -Parent
 $repoRoot = Split-Path $systemRoot -Parent
+$frameworkRoot = Join-Path $repoRoot 'framework'
 $script:Assertions = 0
 function Assert-True {
     param([bool]$Condition, [string]$Message)
@@ -80,8 +81,8 @@ foreach ($skillName in @(
         "Runtime skill catalog must include $skillName."
 }
 
-. (Join-Path $repoRoot 'core\SCT-Core.ps1')
-$comparisonTool = Get-SCTRepositoryToolPath -RepoRoot $repoRoot -Tool 'ComparePackages'
+. (Join-Path $frameworkRoot 'core\SCT-Core.ps1')
+$comparisonTool = Get-SCTRepositoryToolPath -RepoRoot $frameworkRoot -Tool 'ComparePackages'
 Assert-True ($comparisonTool -eq (Join-Path $repoRoot 'ai-system\scripts\Compare-SCTControls.ps1')) `
     'Manage SCT must resolve the comparison CLI wrapper.'
 

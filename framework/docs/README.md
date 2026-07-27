@@ -1,6 +1,9 @@
 # Documentation
 
-Use this page as the entry point for SCT documentation. The root [README](../README.md) covers installation and the normal operator workflow.
+Use this page as the entry point for SCT framework documentation. The
+framework [README](../README.md) covers installation and the normal operator
+workflow. The repository-level [README](../../README.md) describes the
+framework/AI boundary.
 
 ## Architecture
 
@@ -9,7 +12,7 @@ Use this page as the entry point for SCT documentation. The root [README](../REA
 ## Guides
 
 - [Project structure](guides/project-structure.md) explains where code and metadata belong and how to add modules or techniques.
-- [AI-assisted control comparison](../ai-system/README.md) explains deterministic scoring, runtime skills, the local/shared web app, providers, and offline installation.
+- [AI-assisted control comparison](../../ai-system/README.md) explains deterministic scoring, runtime skills, the local/shared web app, providers, and offline installation.
 
 ## Reference
 

@@ -19,65 +19,64 @@ security-controls/
 |   |       `-- static/
 |   `-- tests/
 |       `-- python/
-|-- Start-SCT.ps1
-|-- config/
-|   |-- control-profile.example.json
-|   `-- control-profile.schema.json
-|-- core/
-|   |-- SCT-Core.ps1
-|   `-- SCT-Results.ps1
-|-- docs/
-|   |-- README.md
-|   |-- architecture/
-|   |-- guides/
-|   `-- reference/
-|-- results/
-|   `-- <control-id>/
-|       |-- control-profile.json
-|       |-- results-module-01.csv
-|       |-- test-catalog-module-01.csv
-|       |-- results-module-02.csv
-|       `-- test-catalog-module-02.csv
-|-- samples/
-|-- sanity_checks/
-|-- scenarios/
-|   |-- 01-malware-delivery/
-|   |-- 02-exploitation/
-|   |-- 03-privilege-escalation/
-|   `-- 04-persistence/
-|-- scripts/
-|   |-- authoring/
-|   |-- common/
-|   |-- review/
-|   `-- validation/
-|-- submissions/
-|   `-- <control-id>.zip
-`-- tests/
-    |-- framework/
-    |-- workflows/
-    `-- Run-Tests.ps1
+`-- framework/
+    |-- Start-SCT.ps1
+    |-- config/
+    |   |-- control-profile.example.json
+    |   `-- control-profile.schema.json
+    |-- core/
+    |   |-- SCT-Core.ps1
+    |   `-- SCT-Results.ps1
+    |-- docs/
+    |   |-- README.md
+    |   |-- architecture/
+    |   |-- guides/
+    |   `-- reference/
+    |-- results/
+    |   `-- <control-id>/
+    |       |-- control-profile.json
+    |       |-- results-module-01.csv
+    |       `-- test-catalog-module-01.csv
+    |-- samples/
+    |-- sanity_checks/
+    |-- scenarios/
+    |   |-- 01-malware-delivery/
+    |   |-- 02-exploitation/
+    |   |-- 03-privilege-escalation/
+    |   `-- 04-persistence/
+    |-- scripts/
+    |   |-- authoring/
+    |   |-- common/
+    |   |-- review/
+    |   `-- validation/
+    |-- submissions/
+    |   `-- <control-id>.zip
+    `-- tests/
+        |-- framework/
+        |-- workflows/
+        `-- Run-Tests.ps1
 ```
 
 | Content | Location |
 |---|---|
-| Launcher parameters and startup | `Start-SCT.ps1` |
-| Discovery, validation, execution, markers, and summaries | `core/SCT-Core.ps1` |
-| Module metadata | `scenarios/<module>/module.json` |
-| Per-test descriptions | `scenarios/<module>/test-catalog.csv` |
+| Launcher parameters and startup | `framework/Start-SCT.ps1` |
+| Discovery, validation, execution, markers, and summaries | `framework/core/SCT-Core.ps1` |
+| Module metadata | `framework/scenarios/<module>/module.json` |
+| Per-test descriptions | `framework/scenarios/<module>/test-catalog.csv` |
 | Technique scripts and local guidance | Inside the relevant module folder |
-| Local malware archives | `samples/` |
-| Pre-test control checks | `sanity_checks/` |
-| Product configuration and generated outputs | `results/<control-id>/` |
-| Architecture, contributor guides, and reference material | `docs/` |
+| Local malware archives | `framework/samples/` |
+| Pre-test control checks | `framework/sanity_checks/` |
+| Product configuration and generated outputs | `framework/results/<control-id>/` |
+| Architecture, contributor guides, and reference material | `framework/docs/` |
 | Comparison engine, web app, config, generated reports, scripts, and tests | `ai-system/` |
 | Model adapters and runtime skills | `ai-system/src/sct_ai/` |
 | Generated reports and the local web job index | `ai-system/comparisons/` |
-| Module and catalogue authoring utilities | `scripts/authoring/` |
+| Module and catalogue authoring utilities | `framework/scripts/authoring/` |
 | Comparison, web, model-import, and offline-bundle utilities | `ai-system/scripts/` |
-| Control-workspace setup and comparison packaging | `scripts/review/` |
-| Profile, module, catalogue, and result validators | `scripts/validation/` |
-| Shared script implementation | `scripts/common/` |
-| Dependency-free framework and workflow regression tests | `tests/` |
+| Control-workspace setup and comparison packaging | `framework/scripts/review/` |
+| Profile, module, catalogue, and result validators | `framework/scripts/validation/` |
+| Shared script implementation | `framework/scripts/common/` |
+| Dependency-free framework and workflow regression tests | `framework/tests/` |
 
 Real malware samples and generated results should not be committed.
 
@@ -144,7 +143,7 @@ Use `"status": "planned"` for an unavailable technique. The script path may be r
 
 ## Adding a module
 
-Run the guided generator from the repository root:
+Run the guided generator from the `framework` directory:
 
 ```powershell
 .\scripts\authoring\Add-SCTModule.ps1

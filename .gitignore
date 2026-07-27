@@ -1,7 +1,7 @@
 # Per-control test workspaces (may contain sensitive data)
-results/*
-!results/README.md
-submissions/*.zip
+framework/results/*
+!framework/results/README.md
+framework/submissions/*.zip
 *.log
 *.evtx
 
@@ -36,12 +36,12 @@ Thumbs.db
 desktop.ini
 
 # Malware sample archives (never commit real malware)
-samples/*.zip
-samples/*.7z
-samples/*.tar.gz
+framework/samples/*.zip
+framework/samples/*.7z
+framework/samples/*.tar.gz
 
 # Locally built Office macro test documents
-scenarios/02-exploitation/v2.1-malicious-macro/*.docm
+framework/scenarios/02-exploitation/v2.1-malicious-macro/*.docm
 
 # VM / lab artifacts
 *.vmdk
