@@ -1,5 +1,10 @@
 # Technique 4.1: Registry Run Keys / Startup Folder Persistence (T1547.001)
 
+## Contents
+
+- [How to run](#how-to-run)
+- [Subtests](#subtests)
+
 ## How to run
 
 For complete coverage of both HKCU and HKLM, open PowerShell as Administrator on VM1. The HKCU and user-startup subtests do not require elevation, but the two HKLM subtests do.

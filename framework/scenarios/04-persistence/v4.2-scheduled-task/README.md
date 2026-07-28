@@ -1,5 +1,10 @@
 # Technique 4.2: Scheduled Task Persistence (T1053.005)
 
+## Contents
+
+- [How to run](#how-to-run)
+- [Subtests](#subtests)
+
 ## How to run
 
 On VM1, open PowerShell:

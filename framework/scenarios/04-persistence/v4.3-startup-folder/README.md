@@ -1,5 +1,10 @@
 # Technique 4.3: Startup Folder / Advanced Logon Persistence (T1547.001)
 
+## Contents
+
+- [How to run](#how-to-run)
+- [Subtests](#subtests)
+
 ## How to run
 
 On VM1, open PowerShell:

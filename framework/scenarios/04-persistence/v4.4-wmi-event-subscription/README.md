@@ -1,5 +1,11 @@
 # Technique 4.4: WMI Event Subscription Persistence (T1546.003)
 
+## Contents
+
+- [How to run](#how-to-run)
+- [Subtests](#subtests)
+- [Interpreting results](#interpreting-results)
+
 This technique creates real permanent WMI event subscriptions in `root\subscription`, triggers them once with a benign `ping.exe` process, and verifies execution through marker files. It is adapted from the Atomic Red Team T1546.003 CommandLineEventConsumer and ActiveScriptEventConsumer tests.
 
 > Run this technique from an Administrator PowerShell session on an isolated Windows 10/11 lab VM.

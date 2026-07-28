@@ -1,5 +1,11 @@
 # Technique 3.3: Living-off-the-Land Signed Binary Proxy Execution (T1218)
 
+## Contents
+
+- [How to run](#how-to-run)
+- [Subtests](#subtests)
+- [Cleanup](#cleanup)
+
 ## How to run
 
 On VM1, open PowerShell from this folder:
