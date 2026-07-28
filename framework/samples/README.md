@@ -30,8 +30,10 @@ recognized payload files (`.exe .dll .com .bat .cmd .ps1 .vbs .js .hta .jar
 
 By default the launcher only **copies** each complete bundle to
 `C:\Temp\SCT-Bundles\` and does not run it. If execution is enabled, a bundle
-with one runnable entry point selects it automatically; a bundle with several
-prompts for the exact file or files to launch. DLLs are delivery-only.
+opens a file picker rooted at its extracted directory on every run. The
+operator browses the nested folders and explicitly selects one or more files
+to launch; nothing is selected automatically. Cancelling makes that bundle
+delivery-only. DLLs are delivery-only.
 
 ---
 
@@ -106,5 +108,5 @@ press Enter at the nested-password prompt to reuse the outer ZIP password.
 - This folder is `.gitignore`d to prevent accidental commits of real malware
 - Only copy ZIPs into a running, isolated lab VM
 - Never extract on a production machine or networked host
-- The launcher asks **"Execute samples after delivery?"** before running; bundles with multiple runnable files then require explicit entry-point selection
+- The launcher asks **"Execute samples after delivery?"** before running; if enabled, every extracted bundle requires explicit file-picker selection
 - After testing, extracted files remain under `C:\Temp\SCT-Staging\combined-*\` — delete the batch folder when review is complete

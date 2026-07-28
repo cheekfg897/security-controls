@@ -56,7 +56,8 @@ Set-Location framework
 |---|---|
 | Run the security tests | `.\Start-SCT.ps1` |
 | Open module, review, and validation tools | `.\Start-SCT.ps1`, then select `[M] Manage SCT` |
-| Create a product workspace | `.\Start-SCT.ps1`, then select `[M]` → `[3]` |
+| Create a product configuration/workspace | `.\Start-SCT.ps1`, then select `[N]` |
+| Select an existing configuration | `.\Start-SCT.ps1`, then select `[C]` |
 | Fill detected/not-detected and blocked/not-blocked status | Edit `results/<control-id>/results-module-<id>.csv` directly |
 | Check the completed results | `.\Start-SCT.ps1`, then select `[M]` -> `[4]` |
 | Build a comparison ZIP | `.\Start-SCT.ps1`, then select `[M]` -> `[5]` |
@@ -76,9 +77,24 @@ directory, run:
 .\Start-SCT.ps1
 ```
 
-SCT displays the module menu immediately. Before testing a new product, select `[M] Manage SCT` and then `[3] Create or update a control workspace`. Setup records the product and policy configuration in `results/<control-id>/control-profile.json` and creates one `test-catalog-module-<id>.csv` per discovered module. SCT routes each observation to that module's `results-module-<id>.csv`.
+SCT displays the module menu immediately. A configuration must be active before
+a module can run. The menu shows this requirement prominently when none is
+selected:
 
-When more than one workspace exists, select `[C] Select Control Workspace` before testing. You can also select one at launch:
+- Choose `[C] Select Existing Configuration` to activate a configuration already
+  under `results/`.
+- Choose `[N] Create New Configuration` for a new product. Only its display name
+  is required. Press Enter to accept the derived control id and skip optional
+  vendor, product, version, agent, policy, mode, setting, exclusion, log, and
+  notes fields.
+
+Skipped text details are stored as `Not recorded`, and a skipped policy mode is
+stored as `custom`, keeping the profile valid. Setup writes the configuration
+to `results/<control-id>/control-profile.json` and creates one
+`test-catalog-module-<id>.csv` per discovered module. SCT routes each
+observation to that module's `results-module-<id>.csv`.
+
+You can also select an existing configuration at launch:
 
 ```powershell
 .\Start-SCT.ps1 -ControlProfilePath .\results\sentinelone\control-profile.json
@@ -121,7 +137,8 @@ This runs all 19 persistence subtests, including the HKCU and HKLM Run/RunOnce a
 
 Run this workflow for each product. It uses PowerShell only; Python, Docker, and an AI model are not required.
 
-Create the workspace through Manage SCT option `[3]`, or run:
+Create the workspace through Main Menu option `[N]`, Manage SCT option `[3]`,
+or run:
 
 ```powershell
 .\scripts\review\Setup-SCTControl.ps1

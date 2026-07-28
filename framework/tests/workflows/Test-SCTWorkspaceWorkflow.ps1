@@ -49,6 +49,59 @@ try {
     Assert-True (@($catalogRows | Where-Object { -not $_.module_id -or -not $_.module_name }).Count -eq 0) `
         'Every workspace catalogue row must identify its module.'
 
+    $quickResultsRoot = Join-Path $tempRoot 'quick-results'
+    $quickProfilePath = Join-Path (Join-Path $quickResultsRoot 'quick-control') 'control-profile.json'
+    $global:SCTTestReadResponses = New-Object 'System.Collections.Generic.Queue[string]'
+    foreach ($response in @(
+        'Quick Control',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        ''
+    )) {
+        $global:SCTTestReadResponses.Enqueue($response)
+    }
+    $global:SCTTestReadPrompts = @()
+    function global:Read-Host {
+        param([string]$Prompt)
+        $global:SCTTestReadPrompts += $Prompt
+        if ($global:SCTTestReadResponses.Count -gt 0) { return $global:SCTTestReadResponses.Dequeue() }
+        throw "Unexpected Read-Host prompt: $Prompt"
+    }
+    try {
+        & (Join-Path $repoRoot 'scripts\review\Setup-SCTControl.ps1') `
+            -ResultsRoot $quickResultsRoot -ScenariosPath (Join-Path $repoRoot 'scenarios')
+    } finally {
+        $quickRemainingResponses = $global:SCTTestReadResponses.Count
+        $quickReadPrompts = @($global:SCTTestReadPrompts)
+        Remove-Item -LiteralPath 'Function:\global:Read-Host' -ErrorAction SilentlyContinue
+        Remove-Variable -Name SCTTestReadResponses -Scope Global -ErrorAction SilentlyContinue
+        Remove-Variable -Name SCTTestReadPrompts -Scope Global -ErrorAction SilentlyContinue
+    }
+    Assert-True ($quickRemainingResponses -eq 0) `
+        'Quick configuration setup must allow Enter for every optional field.'
+    Assert-True (@($quickReadPrompts | Where-Object { $_ -like '*Enter to skip*' }).Count -ge 6) `
+        'Optional configuration prompts must explicitly advertise Enter-to-skip.'
+    Assert-True (Test-Path -LiteralPath $quickProfilePath -PathType Leaf) `
+        'Quick setup must derive a control id from the required display name.'
+    $quickProfile = Get-Content -LiteralPath $quickProfilePath -Raw -Encoding UTF8 | ConvertFrom-Json
+    Assert-True ($quickProfile.control.display_name -eq 'Quick Control') `
+        'Quick setup must preserve the required display name.'
+    Assert-True ($quickProfile.control.vendor -eq 'Not recorded' -and `
+        $quickProfile.control.product -eq 'Not recorded' -and `
+        $quickProfile.control.product_version -eq 'Not recorded' -and `
+        $quickProfile.control.agent_version -eq 'Not recorded') `
+        'Skipped optional control details must use valid Not recorded placeholders.'
+    Assert-True ($quickProfile.policy.name -eq 'Not recorded' -and $quickProfile.policy.default_mode -eq 'custom') `
+        'Skipped optional policy details must use valid placeholder values.'
+
     Write-SCTResultRow -Path $results04 -Timestamp (Get-Date) -RunId 'run-a' `
         -TechniqueId '4.1' -TechniqueName 'Registry Run Keys' -Subtest 'HKCURunKey' `
         -TestScript 'v4.1-registry-run-key/v4.1-registry-run-key.ps1' `

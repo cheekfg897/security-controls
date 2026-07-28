@@ -3,11 +3,14 @@
     Sets up the JSON profile for the security control tested in this VM.
 
 .DESCRIPTION
-    Prompts for the common control and policy fields, then optionally collects
-    vendor-specific settings, exclusions, and local log locations. Use
-    -NonInteractive with the named parameters for automation and tests. By
-    default, creates results\<control-id>\control-profile.json together with
-    one module-specific test catalogue for every discovered SCT module.
+    Prompts for a configuration display name and derives a control id, then
+    optionally collects product, policy, exclusion, and local-log details.
+    Press Enter to skip optional interactive fields. Skipped text fields are
+    recorded as "Not recorded", and a skipped default mode uses "custom", so
+    the saved profile remains valid. Use -NonInteractive with all named
+    parameters for automation and tests. By default, creates
+    results\<control-id>\control-profile.json together with one module-specific
+    test catalogue for every discovered SCT module.
 
     If results-module-<id>.csv files already exist for this workspace (for
     example, left over from a previous control tested under the same
@@ -76,22 +79,90 @@ function Read-YesNoValue {
     }
 }
 
+function ConvertTo-SCTControlId {
+    param([Parameter(Mandatory)] [string]$Value)
+
+    $candidate = $Value.Trim().ToLowerInvariant()
+    $candidate = [regex]::Replace($candidate, '[^a-z0-9._-]+', '-')
+    $candidate = $candidate.Trim([char[]]'._-')
+    if (-not $candidate) {
+        $candidate = 'control-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
+    }
+    return $candidate
+}
+
+function Read-InteractiveControlId {
+    param([string]$Current, [Parameter(Mandatory)] [string]$DisplayName)
+
+    if ($Current -and $Current -match '^[a-z0-9][a-z0-9._-]*$') { return $Current }
+    $suggested = ConvertTo-SCTControlId -Value $DisplayName
+    while ($true) {
+        $value = (Read-Host "Control id [$suggested] (Enter to accept)").Trim()
+        if (-not $value) { $value = $suggested }
+        if ($value -match '^[a-z0-9][a-z0-9._-]*$') { return $value }
+        Write-Host '  Use lowercase letters, digits, dots, underscores, or hyphens.' -ForegroundColor Yellow
+    }
+}
+
+function Read-OptionalTextValue {
+    param(
+        [Parameter(Mandatory)] [string]$Prompt,
+        [string]$Current,
+        [string]$SkippedValue = 'Not recorded'
+    )
+
+    if ($Current) { return $Current }
+    $value = (Read-Host "$Prompt (optional; Enter to skip)").Trim()
+    if ($value) { return $value }
+    return $SkippedValue
+}
+
+function Read-InteractiveDefaultMode {
+    param([string]$Current)
+
+    if ($Current -in @('detect_only', 'detect_and_block', 'custom')) { return $Current }
+    while ($true) {
+        $value = (Read-Host 'Default mode: detect_only, detect_and_block, or custom [custom] (Enter to skip)').Trim()
+        if (-not $value) { return 'custom' }
+        if ($value -in @('detect_only', 'detect_and_block', 'custom')) { return $value }
+        Write-Host '  Enter detect_only, detect_and_block, custom, or press Enter to skip.' -ForegroundColor Yellow
+    }
+}
+
 $repoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 if (-not $ResultsRoot) { $ResultsRoot = Join-Path $repoRoot 'results' }
 if (-not $ScenariosPath) { $ScenariosPath = Join-Path $repoRoot 'scenarios' }
 
-$ControlId = Read-RequiredValue 'Control id' $ControlId `
-    { param($value) $value -match '^[a-z0-9][a-z0-9._-]*$' } `
-    'Use lowercase letters, digits, dots, underscores, or hyphens.'
-$DisplayName = Read-RequiredValue 'Control display name' $DisplayName $null 'Enter a display name.'
-$Vendor = Read-RequiredValue 'Vendor' $Vendor $null 'Enter a vendor.'
-$Product = Read-RequiredValue 'Product' $Product $null 'Enter a product.'
-$ProductVersion = Read-RequiredValue 'Product version' $ProductVersion $null 'Enter a product version.'
-$AgentVersion = Read-RequiredValue 'Agent version' $AgentVersion $null 'Enter an agent version.'
-$PolicyName = Read-RequiredValue 'Policy name' $PolicyName $null 'Enter a policy name.'
-$DefaultMode = Read-RequiredValue 'Default mode (detect_only, detect_and_block, or custom)' $DefaultMode `
-    { param($value) $value -in @('detect_only', 'detect_and_block', 'custom') } `
-    'Enter detect_only, detect_and_block, or custom.'
+if ($NonInteractive) {
+    $ControlId = Read-RequiredValue 'Control id' $ControlId `
+        { param($value) $value -match '^[a-z0-9][a-z0-9._-]*$' } `
+        'Use lowercase letters, digits, dots, underscores, or hyphens.'
+    $DisplayName = Read-RequiredValue 'Control display name' $DisplayName $null 'Enter a display name.'
+    $Vendor = Read-RequiredValue 'Vendor' $Vendor $null 'Enter a vendor.'
+    $Product = Read-RequiredValue 'Product' $Product $null 'Enter a product.'
+    $ProductVersion = Read-RequiredValue 'Product version' $ProductVersion $null 'Enter a product version.'
+    $AgentVersion = Read-RequiredValue 'Agent version' $AgentVersion $null 'Enter an agent version.'
+    $PolicyName = Read-RequiredValue 'Policy name' $PolicyName $null 'Enter a policy name.'
+    $DefaultMode = Read-RequiredValue 'Default mode (detect_only, detect_and_block, or custom)' $DefaultMode `
+        { param($value) $value -in @('detect_only', 'detect_and_block', 'custom') } `
+        'Enter detect_only, detect_and_block, or custom.'
+} else {
+    Write-Host ""
+    Write-Host "  Create or update a control configuration" -ForegroundColor Cyan
+    Write-Host "  Only the display name is required." -ForegroundColor White
+    Write-Host "  Press Enter to accept the suggested id or skip any optional field." -ForegroundColor White
+    Write-Host "  Skipped details are saved as 'Not recorded'; skipped mode becomes 'custom'." -ForegroundColor Gray
+    Write-Host ""
+
+    $DisplayName = Read-RequiredValue 'Configuration display name (required)' $DisplayName $null 'Enter a display name.'
+    $ControlId = Read-InteractiveControlId -Current $ControlId -DisplayName $DisplayName
+    $Vendor = Read-OptionalTextValue -Prompt 'Vendor' -Current $Vendor
+    $Product = Read-OptionalTextValue -Prompt 'Product' -Current $Product
+    $ProductVersion = Read-OptionalTextValue -Prompt 'Product version' -Current $ProductVersion
+    $AgentVersion = Read-OptionalTextValue -Prompt 'Agent version' -Current $AgentVersion
+    $PolicyName = Read-OptionalTextValue -Prompt 'Policy name' -Current $PolicyName
+    $DefaultMode = Read-InteractiveDefaultMode -Current $DefaultMode
+}
 
 $OutputPath = Join-Path (Join-Path $ResultsRoot $ControlId) 'control-profile.json'
 

@@ -292,6 +292,24 @@ param(
         -Destination $fixtureProfilePath
     $discoveredProfiles = @(Get-SCTControlProfilePaths -ResultsRoot $fixtureResultsRoot)
     Assert-True ($discoveredProfiles.Count -eq 1) 'Control workspace discovery must find one profile per product folder.'
+    $script:ReadResponses = New-Object 'System.Collections.Generic.Queue[string]'
+    $script:ReadResponses.Enqueue('1')
+    $script:ReadPrompts = @()
+    function Read-Host {
+        param([string]$Prompt)
+        $script:ReadPrompts += $Prompt
+        if ($script:ReadResponses.Count -gt 0) { return $script:ReadResponses.Dequeue() }
+        throw "Unexpected Read-Host prompt: $Prompt"
+    }
+    try {
+        $explicitlySelectedProfile = Select-SCTControlProfilePath -ResultsRoot $fixtureResultsRoot
+    } finally {
+        Remove-Item -LiteralPath 'Function:\Read-Host' -ErrorAction SilentlyContinue
+    }
+    Assert-True ($explicitlySelectedProfile -eq $fixtureProfilePath) `
+        'Selecting existing configuration must work even when only one profile exists.'
+    Assert-True ($script:ReadResponses.Count -eq 0 -and $script:ReadPrompts.Count -eq 1) `
+        'The existing-configuration action must show a choice instead of silently returning one profile.'
     $fixtureWorkspace = Get-SCTControlWorkspace -RepoRoot $tempRoot -ProfilePath $fixtureProfilePath
     Assert-True ($fixtureWorkspace.ControlId -eq 'example-control') 'The workspace must use the profile control id.'
     Assert-True ((Get-SCTModuleResultsPath -WorkspaceRoot $fixtureWorkspaceRoot -ModuleId '01') -eq `

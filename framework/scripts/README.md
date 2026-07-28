@@ -16,6 +16,11 @@ For interactive use, run `.\Start-SCT.ps1` and select `[M] Manage SCT`. The dire
 
 There is no raw/analysis conversion step and no second review CSV. SCT writes observations to the authoritative `results-module-<id>.csv`; a person fills `detection_status`, binary `action_status` (`blocked` or `not_blocked`), and optional `reviewer_notes` directly in each tested module file because execution alone cannot determine what the control detected or blocked.
 
+For interactive setup, only the configuration display name is required.
+Press Enter to accept the derived control id or skip an optional field.
+Skipped text values are recorded as `Not recorded`, while a skipped policy
+mode is recorded as `custom`, so the resulting profile remains valid.
+
 Convert an older combined workspace with:
 
 ```powershell

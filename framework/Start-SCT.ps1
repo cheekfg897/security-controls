@@ -102,6 +102,9 @@ if ($workspace) {
         Write-Warning "Ignoring -Control '$Control'; the selected profile identifies '$($workspace.ControlName)'."
     }
     $Control = $workspace.ControlName
+} else {
+    # A deprecated free-text -Control value is not a selected configuration.
+    $Control = $null
 }
 
 # ---------------------------------------------------------------------------
@@ -118,11 +121,17 @@ if ($NonInteractive -and -not $ControlProfilePath) {
 
 Write-Host ""
 if ($workspace) {
-    Write-Host "  Control       : $($workspace.ControlName) [$($workspace.ControlId)]" -ForegroundColor Green
+    Write-Host "  Configuration : $($workspace.ControlName) [$($workspace.ControlId)]" -ForegroundColor Green
     Write-Host "  Workspace     : $($workspace.WorkspaceRoot)" -ForegroundColor DarkGray
 } else {
-    Write-Host "  Control       : no workspace selected" -ForegroundColor Yellow
-    Write-Host "  Setup         : [M] Manage SCT -> [3] Create a control workspace" -ForegroundColor DarkGray
+    $startupConfigurationCount = @(Get-SCTControlProfilePaths -ResultsRoot $resultsRoot).Count
+    Write-Host "  Configuration : none selected - required before a module can run" -ForegroundColor Yellow
+    if ($startupConfigurationCount -gt 0) {
+        Write-Host "  Next step     : choose [C] to select one of $startupConfigurationCount existing configuration(s)" -ForegroundColor White
+    } else {
+        Write-Host "  Next step     : choose [N] to create a configuration" -ForegroundColor White
+    }
+    Write-Host "                  Only display name is required; press Enter to skip optional fields." -ForegroundColor White
 }
 Write-Host "  Samples       : $SamplesPath" -ForegroundColor DarkGray
 
@@ -171,7 +180,8 @@ if ($RunModule) {
 # Main menu loop
 # ---------------------------------------------------------------------------
 while ($true) {
-    Show-SCTMainMenu -Modules $modules -Control $Control
+    $configurationCount = @(Get-SCTControlProfilePaths -ResultsRoot $resultsRoot).Count
+    Show-SCTMainMenu -Modules $modules -Control $Control -ConfigurationCount $configurationCount
 
     $choice = (Read-Host "  Selection").Trim()
 
@@ -219,19 +229,45 @@ while ($true) {
                 $Control = $workspace.ControlName
             }
         }
+        'N' {
+            try {
+                $profilesBefore = @(Get-SCTControlProfilePaths -ResultsRoot $resultsRoot)
+                Invoke-SCTRepositoryTool -RepoRoot $PSScriptRoot -Tool 'SetupControl'
+                $profilesAfter = @(Get-SCTControlProfilePaths -ResultsRoot $resultsRoot)
+                $newProfiles = @($profilesAfter | Where-Object { $profilesBefore -notcontains $_ })
+                $selectedProfile = if ($newProfiles.Count -eq 1) {
+                    $newProfiles[0]
+                } elseif ($profilesAfter.Count -gt 0) {
+                    Select-SCTControlProfilePath -ResultsRoot $resultsRoot
+                } else {
+                    $null
+                }
+                if ($selectedProfile) {
+                    $workspace = Get-SCTControlWorkspace -RepoRoot $PSScriptRoot -ProfilePath $selectedProfile
+                    [void](Sync-SCTWorkspaceCatalogs -ScenariosPath $scenariosPath -WorkspaceRoot $workspace.WorkspaceRoot)
+                    $Control = $workspace.ControlName
+                    Write-Host "  Active configuration: $($workspace.ControlName) [$($workspace.ControlId)]" -ForegroundColor Green
+                }
+            } catch {
+                Write-Host "  Configuration was not created: $($_.Exception.Message)" -ForegroundColor Yellow
+            }
+        }
         'C' {
             $selectedProfile = Select-SCTControlProfilePath -ResultsRoot $resultsRoot
             if ($selectedProfile) {
                 $workspace = Get-SCTControlWorkspace -RepoRoot $PSScriptRoot -ProfilePath $selectedProfile
                 [void](Sync-SCTWorkspaceCatalogs -ScenariosPath $scenariosPath -WorkspaceRoot $workspace.WorkspaceRoot)
                 $Control = $workspace.ControlName
-                Write-Host "  Active workspace: $($workspace.ControlName) [$($workspace.ControlId)]" -ForegroundColor Green
+                Write-Host "  Active configuration: $($workspace.ControlName) [$($workspace.ControlId)]" -ForegroundColor Green
             }
         }
         default {
             $idx = $choice -as [int]
             if ($idx -ge 1 -and $idx -le $modules.Count) {
                 if (-not $workspace) {
+                    Write-Host ""
+                    Write-Host "  A configuration is required before this module can run." -ForegroundColor Yellow
+                    Write-Host "  Select an existing configuration below, or cancel and choose [N] to create one." -ForegroundColor White
                     $selectedProfile = Select-SCTControlProfilePath -ResultsRoot $resultsRoot
                     if ($selectedProfile) {
                         $workspace = Get-SCTControlWorkspace -RepoRoot $PSScriptRoot -ProfilePath $selectedProfile
@@ -249,7 +285,7 @@ while ($true) {
                     -ResultsPath (Get-SCTModuleResultsPath -WorkspaceRoot $workspace.WorkspaceRoot `
                         -ModuleId $modules[$idx - 1].id)
             } else {
-                Write-Host "  Invalid selection. Enter 1-$($modules.Count), [C], [M], [V], or [Q]." -ForegroundColor Yellow
+                Write-Host "  Invalid selection. Enter 1-$($modules.Count), [C], [N], [M], [V], or [Q]." -ForegroundColor Yellow
                 Start-Sleep -Milliseconds 600
             }
         }

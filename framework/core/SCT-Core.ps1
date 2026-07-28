@@ -261,7 +261,9 @@ function Show-SCTMainMenu {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][array]$Modules,
-        [string]$Control
+        [string]$Control,
+        [ValidateRange(0, 2147483647)]
+        [int]$ConfigurationCount = 0
     )
 
     Write-Host ""
@@ -273,6 +275,17 @@ function Show-SCTMainMenu {
     }
     Write-Host "  +----------------------------------------------------------------------------+" -ForegroundColor Cyan
     Write-Host ""
+    if (-not $Control) {
+        Write-Host "  [!] CONFIGURATION REQUIRED BEFORE A MODULE CAN RUN" -ForegroundColor Yellow
+        if ($ConfigurationCount -gt 0) {
+            Write-Host "      Choose [C] to select one of $ConfigurationCount existing configuration(s)." -ForegroundColor White
+        } else {
+            Write-Host "      No existing configurations were found." -ForegroundColor White
+        }
+        Write-Host "      Choose [N] to create one; only a display name is required." -ForegroundColor White
+        Write-Host "      During setup, press Enter to skip any optional field." -ForegroundColor White
+        Write-Host ""
+    }
     Write-Host "  What would you like to do?" -ForegroundColor White
     Write-Host ""
 
@@ -287,7 +300,10 @@ function Show-SCTMainMenu {
         Write-Host ""
     }
 
-    Write-Host "  [C]   Select Control Workspace" -ForegroundColor Yellow
+    $configurationAction = if ($Control) { 'Select or switch configuration' } else { 'Select existing configuration' }
+    Write-Host "  [C]   $configurationAction ($ConfigurationCount available)" -ForegroundColor Yellow
+    Write-Host "  [N]   Create new configuration" -ForegroundColor Yellow
+    Write-Host "        Only display name is required; press Enter to skip optional fields." -ForegroundColor Gray
     Write-Host "  [M]   Manage SCT" -ForegroundColor Yellow
     Write-Host "  [V]   View Results Summary" -ForegroundColor Yellow
     Write-Host "  [Q]   Quit" -ForegroundColor Yellow
@@ -356,15 +372,14 @@ function Select-SCTControlProfilePath {
     $profilePaths = @(Get-SCTControlProfilePaths -ResultsRoot $ResultsRoot)
     if ($profilePaths.Count -eq 0) {
         Write-Host ""
-        Write-Host "  No control workspaces exist yet." -ForegroundColor Yellow
-        Write-Host "  Use [M] Manage SCT -> [3] Create a new control workspace." -ForegroundColor DarkGray
+        Write-Host "  No existing configurations were found." -ForegroundColor Yellow
+        Write-Host "  Use [N] Create New Configuration on the Main Menu." -ForegroundColor White
+        Write-Host "  Only a display name is required; press Enter to skip optional setup fields." -ForegroundColor White
         return $null
     }
 
-    if ($profilePaths.Count -eq 1) { return $profilePaths[0] }
-
     Write-Host ""
-    Write-Host "  Select a control workspace:" -ForegroundColor White
+    Write-Host "  Select an existing configuration:" -ForegroundColor White
     for ($index = 0; $index -lt $profilePaths.Count; $index++) {
         $label = Split-Path (Split-Path $profilePaths[$index] -Parent) -Leaf
         try {
@@ -377,15 +392,15 @@ function Select-SCTControlProfilePath {
     }
     Write-Host "  [0]  Cancel" -ForegroundColor Yellow
 
-    $choice = (Read-Host "`n  Control workspace").Trim()
-    if (-not $choice -or $choice -eq '0') { return $null }
-    $selectedIndex = $choice -as [int]
-    if ($selectedIndex -ge 1 -and $selectedIndex -le $profilePaths.Count) {
-        return $profilePaths[$selectedIndex - 1]
+    while ($true) {
+        $choice = (Read-Host "`n  Existing configuration").Trim()
+        if (-not $choice -or $choice -eq '0') { return $null }
+        $selectedIndex = $choice -as [int]
+        if ($selectedIndex -ge 1 -and $selectedIndex -le $profilePaths.Count) {
+            return $profilePaths[$selectedIndex - 1]
+        }
+        Write-Host "  Invalid configuration selection. Enter 1-$($profilePaths.Count), or 0 to cancel." -ForegroundColor Yellow
     }
-
-    Write-Host "  Invalid control workspace selection." -ForegroundColor Yellow
-    return $null
 }
 
 function Get-SCTRepositoryToolPath {
@@ -494,17 +509,18 @@ function Invoke-SCTManagementMenu {
         Write-Host "  |  MANAGE SCT                                                                |" -ForegroundColor Magenta
         Write-Host "  +----------------------------------------------------------------------------+" -ForegroundColor Magenta
         Write-Host ""
-        Write-Host "  Authoring" -ForegroundColor DarkGray
+        Write-Host "  Authoring" -ForegroundColor Cyan
         Write-Host "  [1]  Add a new SCT module" -ForegroundColor White
         Write-Host "  [2]  Add or repair a module's test descriptions" -ForegroundColor White
         Write-Host ""
-        Write-Host "  Product workflow" -ForegroundColor DarkGray
-        Write-Host "  [3]  Create or update a control workspace" -ForegroundColor White
+        Write-Host "  Product workflow" -ForegroundColor Cyan
+        Write-Host "  [3]  Create or update a control configuration/workspace" -ForegroundColor Yellow
+        Write-Host "       Only display name is required; press Enter to skip optional fields." -ForegroundColor Gray
         Write-Host "  [4]  Check completed module results" -ForegroundColor White
         Write-Host "  [5]  Build comparison ZIP" -ForegroundColor White
         Write-Host "  [6]  Compare two or more result ZIPs" -ForegroundColor White
         Write-Host ""
-        Write-Host "  Repository validation" -ForegroundColor DarkGray
+        Write-Host "  Repository validation" -ForegroundColor Cyan
         Write-Host "  [7]  Check modules and test descriptions" -ForegroundColor White
         Write-Host "  [8]  Check a control profile" -ForegroundColor White
         Write-Host ""

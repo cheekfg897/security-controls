@@ -12,7 +12,13 @@ results/
     `-- test-catalog-module-02.csv
 ```
 
-Create a workspace through `.\Start-SCT.ps1` -> `[M] Manage SCT` -> `[3] Create or update a control workspace`. Setup creates one catalogue per discovered module. The launcher creates and appends to `results-module-<id>.csv` when that module first records an observation. Use `[C] Select Control Workspace` to switch between products.
+Create a workspace through `.\Start-SCT.ps1` -> `[N] Create New
+Configuration`, or through `[M] Manage SCT` -> `[3] Create or update a control
+configuration/workspace`. Only the display name is required during interactive
+setup; press Enter to accept the generated id and skip optional details. Setup
+creates one catalogue per discovered module. The launcher creates and appends
+to `results-module-<id>.csv` when that module first records an observation.
+Use `[C] Select Existing Configuration` to choose or switch between products.
 
 If `results-module-<id>.csv` files already exist under the target `control-id` (for example, left over from a previous control tested in the same workspace), Setup asks whether to delete them before continuing, so the new control starts from a clean results set instead of inheriting the previous product's observations. Answer no (or just re-run without confirming) to keep appending to the existing files instead.
 
