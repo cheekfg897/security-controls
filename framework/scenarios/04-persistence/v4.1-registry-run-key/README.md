@@ -27,7 +27,7 @@ For complete coverage of both HKCU and HKLM, open PowerShell as Administrator on
 .\v4.1-registry-run-key.ps1 -CheckHKLMWriteAccess
 ```
 
-Have the EDR console visible before running. Each subtest writes a marker file to `C:\Windows\Temp\art-v4.1-<SubtestName>.txt`. If it is missing, that subtest was blocked or could not run with the current permissions.
+Have the EDR console visible before running. Each subtest writes a marker file to `C:\Windows\Temp\art-v4.1-<SubtestName>.txt`. A missing marker means the payload was not observed; use the security-console evidence to determine whether it was blocked or failed for another reason.
 
 The Run and RunOnce subtests execute their benign payload immediately to simulate the next-login trigger; SCT does not log out or reboot the VM. Choose cleanup when prompted to remove the test values. The complete non-interactive Module 4 run performs this cleanup automatically.
 

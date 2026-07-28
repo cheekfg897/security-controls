@@ -1099,22 +1099,61 @@ function Invoke-SCTSubtests {
     Write-Host ""
 
     $startTime = Get-Date
-    Start-Process -FilePath 'powershell.exe' -ArgumentList $scriptArgs -Wait -NoNewWindow
+    $launchError = ''
+    $processExitCode = $null
+    try {
+        $process = Start-Process -FilePath 'powershell.exe' -ArgumentList $scriptArgs `
+            -Wait -NoNewWindow -PassThru -ErrorAction Stop
+        $processExitCode = $process.ExitCode
+        if ($processExitCode -ne 0) {
+            Write-Host "  [!] Technique script exited with code $processExitCode." -ForegroundColor Yellow
+        }
+    } catch {
+        $launchError = $_.Exception.Message
+        Write-Host "  [!] Technique script could not be launched: $launchError" -ForegroundColor Red
+    }
 
     if ($ResultsPath) {
         Write-Host ""
         Write-Host "  [*] Checking results..." -ForegroundColor Cyan
         Write-Host ""
 
+        # A launched technique can leave a short-lived child process that writes
+        # its marker just after the parent script exits. Wait once for the batch,
+        # not once per subtest.
+        if (-not $launchError) {
+            Start-Sleep -Milliseconds 800
+        }
+
         $executedCount = 0
         foreach ($subtest in $toCheck) {
             $markerPath = Get-SCTMarkerPath -TechniqueId $Technique.id -Subtest $subtest
             $executed   = Test-SCTMarkerFile -Path $markerPath
-            $outcome    = if ($executed) { 'EXECUTED' } else { 'BLOCKED' }
-            $displayOutcome = if ($executed) { 'EXECUTED' } else { 'NOT EXECUTED' }
-            $notes      = if ($executed) { "marker found: $markerPath" } else { "marker absent after test: $markerPath" }
-            $icon       = if ($executed) { '[!]' } else { '[?]' }
-            $color      = if ($executed) { 'Yellow' } else { 'Gray' }
+            if ($executed) {
+                $outcome = 'EXECUTED'
+                $displayOutcome = 'EXECUTED'
+                $notes = "marker found: $markerPath"
+                $icon = '[!]'
+                $color = 'Yellow'
+            } elseif ($launchError) {
+                $outcome = 'ERROR'
+                $displayOutcome = 'ERROR'
+                $notes = "technique launch error: $launchError; marker absent: $markerPath"
+                $icon = '[X]'
+                $color = 'Red'
+            } elseif ($processExitCode -ne 0) {
+                $outcome = 'ERROR'
+                $displayOutcome = 'ERROR'
+                $notes = "technique script exit code: $processExitCode; marker absent: $markerPath"
+                $icon = '[X]'
+                $color = 'Red'
+            } else {
+                $outcome = 'NOT_EXECUTED'
+                $displayOutcome = 'NOT EXECUTED'
+                $notes = "marker absent after test: $markerPath"
+                $icon = '[?]'
+                $color = 'Gray'
+            }
 
             if ($executed) { $executedCount++ }
             Write-Host ("  {0}  {1,-28}  {2}" -f $icon, $subtest, $displayOutcome) -ForegroundColor $color
@@ -1138,11 +1177,22 @@ function Invoke-SCTSubtests {
         Write-Host "  Results appended to: $ResultsPath" -ForegroundColor DarkGray
         Write-Host "  [i] [!] Marker found: execution observed" -ForegroundColor DarkGray
         Write-Host "  [i] [?] Marker absent: execution not observed; this alone does not prove a control block" -ForegroundColor DarkGray
+        Write-Host "  [i] [X] Script error: fix the test prerequisite or launch failure before comparison" -ForegroundColor DarkGray
         Write-Host "  [i] Set detection_status (detected/not_detected) and action_status (blocked/not_blocked) in this module result CSV" -ForegroundColor DarkGray
     }
 
     if ($NonInteractive) {
         return $runResults
+    }
+
+    $cleanupParameters = @('CleanupOnly', 'NoCleanupPrompt', 'NoPause', 'NoReport')
+    $supportsManagedCleanup = @(
+        $cleanupParameters |
+            Where-Object { -not (Test-SCTScriptSupportsParameter -ScriptPath $ScriptPath -ParameterName $_) }
+    ).Count -eq 0
+    if ($supportsManagedCleanup) {
+        Write-Host "  [*] Cleaning up after results were recorded..." -ForegroundColor DarkGray
+        Invoke-SCTTechniqueCleanup -ScriptPath $ScriptPath
     }
 
     Read-Host "`n  Press Enter to return"
@@ -1197,20 +1247,22 @@ function Show-SCTModuleRunSummary {
 
     $total    = $Results.Count
     $executed = @($Results | Where-Object { $_.outcome -eq 'EXECUTED' }).Count
-    $markerAbsent = @($Results | Where-Object { $_.outcome -eq 'BLOCKED' }).Count
+    $markerAbsent = @($Results | Where-Object { $_.outcome -in @('NOT_EXECUTED', 'BLOCKED') }).Count
+    $errors = @($Results | Where-Object { $_.outcome -eq 'ERROR' }).Count
 
     Write-Host ""
     Write-Host "  ============================================================================" -ForegroundColor Cyan
     Write-Host "  MODULE 04 RUN COMPLETE" -ForegroundColor Cyan
     Write-Host "  ============================================================================" -ForegroundColor Cyan
     Write-Host "  Run ID   : $RunId" -ForegroundColor White
-    Write-Host "  Results  : $total total | $executed marker found | $markerAbsent marker absent" -ForegroundColor White
+    Write-Host "  Results  : $total total | $executed marker found | $markerAbsent marker absent | $errors errors" -ForegroundColor White
     Write-Host "  CSV      : $ResultsPath" -ForegroundColor DarkGray
 
     foreach ($group in ($Results | Group-Object technique_id | Sort-Object Name)) {
         $groupExecuted = @($group.Group | Where-Object { $_.outcome -eq 'EXECUTED' }).Count
-        $groupMarkerAbsent = @($group.Group | Where-Object { $_.outcome -eq 'BLOCKED' }).Count
-        Write-Host ("  Technique {0}: {1} total | {2} marker found | {3} marker absent" -f $group.Name, $group.Count, $groupExecuted, $groupMarkerAbsent) -ForegroundColor White
+        $groupMarkerAbsent = @($group.Group | Where-Object { $_.outcome -in @('NOT_EXECUTED', 'BLOCKED') }).Count
+        $groupErrors = @($group.Group | Where-Object { $_.outcome -eq 'ERROR' }).Count
+        Write-Host ("  Technique {0}: {1} total | {2} marker found | {3} marker absent | {4} errors" -f $group.Name, $group.Count, $groupExecuted, $groupMarkerAbsent, $groupErrors) -ForegroundColor White
     }
 }
 
@@ -1308,25 +1360,49 @@ function Invoke-DirectTechnique {
     Write-Host ""
 
     $startTime = Get-Date
-    Start-Process -FilePath 'powershell.exe' -ArgumentList $scriptArgs -Wait -NoNewWindow
+    $launchError = ''
+    $processExitCode = $null
+    try {
+        $process = Start-Process -FilePath 'powershell.exe' -ArgumentList $scriptArgs `
+            -Wait -NoNewWindow -PassThru -ErrorAction Stop
+        $processExitCode = $process.ExitCode
+    } catch {
+        $launchError = $_.Exception.Message
+    }
 
     if ($ResultsPath) {
-        Write-Host ""
-        Write-Host "  Record the observed execution result:" -ForegroundColor White
-        Write-Host "  [E] Executed    [N] Not executed    [S] Skip" -ForegroundColor DarkGray
-        $answer = (Read-Host "  Result").Trim().ToUpperInvariant()
-        if ($answer -in @('E', 'N')) {
-            $notes = (Read-Host "  Notes (optional)").Trim()
-            $outcome = if ($answer -eq 'E') { 'EXECUTED' } else { 'NOT_EXECUTED' }
+        if ($launchError -or $processExitCode -ne 0) {
+            $failure = if ($launchError) {
+                "technique launch error: $launchError"
+            } else {
+                "technique script exit code: $processExitCode"
+            }
             $runId = "I$($Technique.id -replace '[^0-9A-Za-z]', '')-" +
                 (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' +
                 ([guid]::NewGuid().ToString('N').Substring(0, 6))
             Write-SCTResult -Path $ResultsPath -Timestamp $startTime -RunId $runId `
                 -TechniqueId $Technique.id -TechniqueName $Technique.name -Subtest '' `
-                -TestScript ([string]$Technique.script) -Outcome $outcome -Notes $notes
-            Write-Host "  Result appended to: $ResultsPath" -ForegroundColor DarkGray
+                -TestScript ([string]$Technique.script) -Outcome 'ERROR' -Notes $failure
+            Write-Host "  [!] $failure" -ForegroundColor Red
+            Write-Host "  Error result appended to: $ResultsPath" -ForegroundColor DarkGray
         } else {
-            Write-Host "  No result row was written." -ForegroundColor DarkGray
+            Write-Host ""
+            Write-Host "  Record the observed execution result:" -ForegroundColor White
+            Write-Host "  [E] Executed    [N] Not executed    [S] Skip" -ForegroundColor DarkGray
+            $answer = (Read-Host "  Result").Trim().ToUpperInvariant()
+            if ($answer -in @('E', 'N')) {
+                $notes = (Read-Host "  Notes (optional)").Trim()
+                $outcome = if ($answer -eq 'E') { 'EXECUTED' } else { 'NOT_EXECUTED' }
+                $runId = "I$($Technique.id -replace '[^0-9A-Za-z]', '')-" +
+                    (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' +
+                    ([guid]::NewGuid().ToString('N').Substring(0, 6))
+                Write-SCTResult -Path $ResultsPath -Timestamp $startTime -RunId $runId `
+                    -TechniqueId $Technique.id -TechniqueName $Technique.name -Subtest '' `
+                    -TestScript ([string]$Technique.script) -Outcome $outcome -Notes $notes
+                Write-Host "  Result appended to: $ResultsPath" -ForegroundColor DarkGray
+            } else {
+                Write-Host "  No result row was written." -ForegroundColor DarkGray
+            }
         }
     }
     Read-Host "`n  Press Enter to return"
@@ -1617,8 +1693,8 @@ function Write-SCTResult {
 
 # =============================================================================
 # MARKER FILE CHECK  -  returns $true if the expected marker file exists.
-# Invoke-SCTSubtests removes expected markers before launch, so presence
-# after the script exits is proof that the current run wrote the marker.
+# Invoke-SCTSubtests removes expected markers before launch and performs one
+# batch-level grace wait, so presence proves that the current run wrote it.
 # =============================================================================
 
 function Test-SCTMarkerFile {
@@ -1627,7 +1703,6 @@ function Test-SCTMarkerFile {
         [Parameter(Mandatory)] [string]$Path
     )
 
-    Start-Sleep -Milliseconds 800
     return (Test-Path -LiteralPath $Path)
 }
 

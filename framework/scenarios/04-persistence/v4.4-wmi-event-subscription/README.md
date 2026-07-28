@@ -54,6 +54,6 @@ Creates an `ActiveScriptEventConsumer` containing VBScript that writes the marke
 ## Interpreting results
 
 - `EXECUTED`: the WMI consumer created its expected marker.
-- `BLOCKED`: the marker was absent because subscription creation or consumer execution failed or was blocked.
+- `NOT EXECUTED`: the marker was absent. Review the script output and control telemetry to distinguish a block from a failed prerequisite or unsupported behavior.
 
 Review the endpoint-control console even when the result is `EXECUTED`; a product can detect the behavior without blocking it.

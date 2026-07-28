@@ -315,6 +315,11 @@ param(
     Assert-True ((Get-SCTModuleResultsPath -WorkspaceRoot $fixtureWorkspaceRoot -ModuleId '01') -eq `
         (Join-Path $fixtureWorkspaceRoot 'results-module-01.csv')) `
         'Module 01 observations must use the stable module result filename.'
+    foreach ($moduleId in @('02', '03', '04')) {
+        Assert-True ((Get-SCTModuleResultsPath -WorkspaceRoot $fixtureWorkspaceRoot -ModuleId $moduleId) -eq `
+            (Join-Path $fixtureWorkspaceRoot "results-module-$moduleId.csv")) `
+            "Module $moduleId observations must use results-module-$moduleId.csv."
+    }
     Assert-True ((Get-SCTModuleCatalogPath -WorkspaceRoot $fixtureWorkspaceRoot -ModuleId '02') -eq `
         (Join-Path $fixtureWorkspaceRoot 'test-catalog-module-02.csv')) `
         'Module 02 descriptions must use the stable module catalogue filename.'
@@ -326,6 +331,14 @@ param(
     $technique14Path = Join-Path $module1.ScriptDir $technique14.script
     Assert-True (Test-SCTScriptSupportsParameter -ScriptPath $technique14Path -ParameterName 'Subtest') `
         'Technique 1.4 must use the standard subtest runner contract.'
+
+    $module2 = @($realModules | Where-Object { $_.id -eq '02' })[0]
+    $technique21 = @($module2.techniques | Where-Object { $_.id -eq '2.1' })[0]
+    $technique22 = @($module2.techniques | Where-Object { $_.id -eq '2.2' })[0]
+    Assert-True (($technique21.subtests -join '|') -eq 'WordVBA') `
+        'Technique 2.1 must expose its WordVBA marker observation.'
+    Assert-True ($null -eq $technique22.PSObject.Properties['subtests']) `
+        'Technique 2.2 must use the direct/manual result-attestation path.'
     foreach ($sampleTechniqueId in @('1.1', '1.2', '1.3')) {
         $sampleTechnique = @($module1.techniques | Where-Object { $_.id -eq $sampleTechniqueId })[0]
         $sampleScriptPath = Join-Path $module1.ScriptDir $sampleTechnique.script
@@ -349,6 +362,7 @@ param(
     foreach ($registrySubtest in @('HKCURunKey','HKCURunOnce','HKLMRunKey','HKLMRunOnce')) {
         Assert-True ($technique41.subtests -contains $registrySubtest) "Technique 4.1 must include $registrySubtest."
     }
+    $technique41Path = Join-Path $module4.ScriptDir $technique41.script
     $technique44 = @($module4.techniques | Where-Object { $_.id -eq '4.4' })[0]
     foreach ($wmiSubtest in @('CommandLineConsumer','ActiveScriptConsumer')) {
         Assert-True ($technique44.subtests -contains $wmiSubtest) "Technique 4.4 must include $wmiSubtest."
@@ -358,7 +372,58 @@ param(
         Assert-True (Test-SCTScriptSupportsParameter -ScriptPath $technique44Path -ParameterName $requiredParameter) `
             "Technique 4.4 must accept -$requiredParameter."
     }
+    $technique42 = @($module4.techniques | Where-Object { $_.id -eq '4.2' })[0]
+    $technique42Path = Join-Path $module4.ScriptDir $technique42.script
+    $technique42Text = Get-Content -LiteralPath $technique42Path -Raw
+    Assert-True ($technique42Text -match 'TaskName\s*=\s*\$tn') `
+        'Technique 4.2 HiddenXML registration must pass the task name to RegisterByXml.'
+    Assert-True ($technique42Text -match "TaskPath\s*=\s*'\\'") `
+        'Technique 4.2 HiddenXML registration must pass an explicit root task path.'
+    Assert-True ($technique42Text -match 'Xml\s*=\s*\$xmlContent') `
+        'Technique 4.2 HiddenXML registration must pass the task XML to RegisterByXml.'
+    $technique41Text = Get-Content -LiteralPath $technique41Path -Raw
+    Assert-True ($technique41Text -match 'Test-SCTOwnedRunValue') `
+        'Technique 4.1 cleanup must identify SCT-owned Run values before removing them.'
+    Assert-True ($technique41Text -match 'Refusing to overwrite existing registry value') `
+        'Technique 4.1 must preserve pre-existing Run values.'
+    $technique43 = @($module4.techniques | Where-Object { $_.id -eq '4.3' })[0]
+    $technique43Path = Join-Path $module4.ScriptDir $technique43.script
+    $technique43Text = Get-Content -LiteralPath $technique43Path -Raw
+    Assert-True ($technique43Text -match 'SCT-Startup-Backup-v4\.3') `
+        'Technique 4.3 must use a dedicated backup for the current Startup-folder value.'
+    Assert-True ($technique43Text -match 'SCT-Userinit-Backup-v4\.3') `
+        'Technique 4.3 must use a dedicated Winlogon Userinit backup.'
+    Assert-True ($technique43Text -notmatch 'Remove-Item\s+\$redirectDir\s+-Recurse') `
+        'Technique 4.3 cleanup must not recursively remove the redirect directory.'
     Assert-True (@($module4.techniques | ForEach-Object { $_.subtests }).Count -eq 19) 'Module 04 must expose all 19 persistence subtests.'
+
+    $module3 = @($realModules | Where-Object { $_.id -eq '03' })[0]
+    $technique31 = @($module3.techniques | Where-Object { $_.id -eq '3.1' })[0]
+    Assert-True ($technique31.status -eq 'planned') `
+        'Technique 3.1 must remain explicitly planned until it has executable result logic.'
+    Assert-True (@($module3.techniques | ForEach-Object {
+        if ($_.PSObject.Properties['subtests']) { $_.subtests }
+    }).Count -eq 8) `
+        'Module 03 must expose all 8 implemented subtest observations.'
+    $technique32 = @($module3.techniques | Where-Object { $_.id -eq '3.2' })[0]
+    $technique32Path = Join-Path $module3.ScriptDir $technique32.script
+    $technique32Text = Get-Content -LiteralPath $technique32Path -Raw
+    Assert-True ($technique32Text -match "\[EnvironmentVariableTarget\]::User") `
+        'Technique 3.2 SilentCleanup must set the current-user windir value seen by Task Scheduler.'
+    Assert-True ($technique32Text -notmatch '\$env:windir\s*=') `
+        'Technique 3.2 must not rely on a process-local windir override.'
+    Assert-True ($technique32Text -match 'IsInRole\(\[Security\.Principal\.WindowsBuiltInRole\]::Administrator\)') `
+        'Technique 3.2 must reject an already elevated Administrator token.'
+    Assert-True ($technique32Text -match 'Refusing to overwrite an existing per-user class override') `
+        'Technique 3.2 must preserve pre-existing per-user class overrides.'
+    Assert-True ($technique32Text -notmatch 'Remove-Item\s+["'']HKCU:\\Software\\Classes\\(?:ms-settings|mscfile)["'']') `
+        'Technique 3.2 must not recursively delete an entire per-user class branch.'
+    $technique33 = @($module3.techniques | Where-Object { $_.id -eq '3.3' })[0]
+    $technique33Path = Join-Path $module3.ScriptDir $technique33.script
+    foreach ($requiredParameter in @('Subtest','NoPause','NoReport','CleanupOnly','NoCleanupPrompt')) {
+        Assert-True (Test-SCTScriptSupportsParameter -ScriptPath $technique33Path -ParameterName $requiredParameter) `
+            "Technique 3.3 must accept -$requiredParameter for managed launch and cleanup."
+    }
 
     # Exercise the interactive subtest-to-CSV path without launching a technique.
     $interactiveScript = Write-FixtureScript -Directory $tempRoot -Name 'interactive.ps1' -Content @'
@@ -366,7 +431,9 @@ param(
     [ValidateSet('One','All')]
     [string]$Subtest,
     [switch]$NoCleanupPrompt,
-    [switch]$NoReport
+    [switch]$NoReport,
+    [switch]$NoPause,
+    [switch]$CleanupOnly
 )
 '@
     $interactiveCsv = Join-Path $tempRoot 'interactive-results.csv'
@@ -389,9 +456,18 @@ param(
                 [string]$FilePath,
                 [object[]]$ArgumentList,
                 [switch]$Wait,
-                [switch]$NoNewWindow
+                [switch]$NoNewWindow,
+                [switch]$PassThru,
+                [System.Management.Automation.ActionPreference]$ErrorAction
             )
+            if ($ArgumentList -contains '-CleanupOnly') {
+                $script:MockCleanupCalls++
+                return [pscustomobject]@{ ExitCode = 0 }
+            }
+            return [pscustomobject]@{ ExitCode = $script:MockProcessExitCode }
         }
+        $script:MockProcessExitCode = 0
+        $script:MockCleanupCalls = 0
 
         function Test-SCTMarkerFile {
             param([string]$Path)
@@ -417,6 +493,25 @@ param(
             'Interactive CSV rows must have a run_id.'
         Assert-True ($interactiveRows[0].execution_status -eq 'not_executed') `
             'A missing marker must be captured as not_executed.'
+        Assert-True ($interactiveRows[0].source_result -eq 'NOT_EXECUTED') `
+            'A missing marker must not be mislabeled as a confirmed control block.'
+        Assert-True ($script:MockCleanupCalls -eq 1) `
+            'Interactive managed subtests must clean up only after their CSV result is recorded.'
+
+        $errorCsv = Join-Path $tempRoot 'interactive-error-results.csv'
+        $script:MockProcessExitCode = 2
+        $script:ReadResponses = New-Object 'System.Collections.Generic.Queue[string]'
+        foreach ($response in @('1', '', '')) { $script:ReadResponses.Enqueue($response) }
+        Invoke-SCTSubtests -Technique $interactiveTechnique -ScriptPath $interactiveScript `
+            -Control 'FixtureControl' -ResultsPath $errorCsv
+        $errorRows = @(Import-Csv -LiteralPath $errorCsv)
+        Assert-True ($errorRows.Count -eq 1 -and $errorRows[0].source_result -eq 'ERROR') `
+            'A nonzero technique exit must append an ERROR row instead of claiming a block.'
+        Assert-True ($errorRows[0].notes -like '*exit code: 2*') `
+            'An ERROR result must retain the technique process exit code.'
+        Assert-True ($script:MockCleanupCalls -eq 2) `
+            'Managed cleanup must still run after a failed interactive technique.'
+        $script:MockProcessExitCode = 0
 
         # Direct/manual techniques must also append an authoritative result row.
         $directCsv = Join-Path $tempRoot 'results-module-05.csv'
@@ -436,18 +531,28 @@ param(
         Invoke-DirectTechnique -Technique $directTechnique -ScriptPath (Join-Path $tempRoot 'direct.ps1') `
             -ResultsPath $directCsv
 
+        $script:MockProcessExitCode = 9
+        $script:ReadResponses = New-Object 'System.Collections.Generic.Queue[string]'
+        foreach ($response in @('', '')) { $script:ReadResponses.Enqueue($response) }
+        Invoke-DirectTechnique -Technique $directTechnique -ScriptPath (Join-Path $tempRoot 'direct.ps1') `
+            -ResultsPath $directCsv
+        $script:MockProcessExitCode = 0
+
         $script:ReadResponses = New-Object 'System.Collections.Generic.Queue[string]'
         foreach ($response in @('', 'S', '')) { $script:ReadResponses.Enqueue($response) }
         Invoke-DirectTechnique -Technique $directTechnique -ScriptPath (Join-Path $tempRoot 'direct.ps1') `
             -ResultsPath $directCsv
 
         $directRows = @(Import-Csv -LiteralPath $directCsv)
-        Assert-True ($directRows.Count -eq 2) 'Skipping a direct result must not append a row.'
+        Assert-True ($directRows.Count -eq 3) 'Skipping a direct result must not append a row.'
         Assert-True ($directRows[0].execution_status -eq 'executed') `
             'An executed direct result must use execution_status executed.'
         Assert-True ($directRows[1].source_result -eq 'NOT_EXECUTED' -and
             $directRows[1].execution_status -eq 'not_executed') `
             'A not-executed direct result must not claim that the control blocked it.'
+        Assert-True ($directRows[2].source_result -eq 'ERROR' -and
+            $directRows[2].notes -like '*exit code: 9*') `
+            'A failed direct technique must append an ERROR row automatically.'
     } finally {
         $env:SystemRoot = $originalSystemRoot
     }

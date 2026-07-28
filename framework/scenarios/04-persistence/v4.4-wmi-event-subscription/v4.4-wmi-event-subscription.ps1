@@ -193,7 +193,7 @@ function Invoke-SCTWmiConsumer {
             return $true
         }
 
-        Write-Host "[-] FAILED: Marker was not created (consumer blocked or unsupported)." -ForegroundColor Red
+        Write-Host "[?] NOT OBSERVED: Marker was not created; review the control telemetry for the verdict." -ForegroundColor Yellow
         return $false
     } catch {
         Write-Host "  RESULT: WMI subscription creation or execution failed - $($_.Exception.Message)" -ForegroundColor Red
@@ -311,8 +311,8 @@ function Write-Report {
     Write-Host '|                         EXECUTION REPORT                                    |' -ForegroundColor Cyan
     Write-Host '+==============================================================================+' -ForegroundColor Cyan
     foreach ($result in $Results) {
-        $label = if ($result.Success) { 'EXECUTED' } else { 'BLOCKED ' }
-        $color = if ($result.Success) { 'Green' } else { 'Red' }
+        $label = if ($result.Success) { 'EXECUTED' } else { 'NOT EXECUTED' }
+        $color = if ($result.Success) { 'Green' } else { 'Yellow' }
         Write-Host "  [$label] $($result.Name)" -ForegroundColor $color
     }
     $executed = @($Results | Where-Object { $_.Success }).Count
@@ -357,8 +357,8 @@ switch ($Subtest) {
             'ActiveScriptConsumer' { Test-ActiveScriptConsumer }
         }
 
-        $color = if ($success) { 'Green' } else { 'Red' }
-        $outcome = if ($success) { 'EXECUTED' } else { 'BLOCKED' }
+        $color = if ($success) { 'Green' } else { 'Yellow' }
+        $outcome = if ($success) { 'EXECUTED' } else { 'NOT EXECUTED' }
         Write-Host "`n[RESULT] Subtest '$Subtest': $outcome" -ForegroundColor $color
         if (-not $NoCleanupPrompt) {
             $choice = Read-Host 'Clean marker file now? (Y/N)'

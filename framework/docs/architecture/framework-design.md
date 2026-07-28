@@ -115,7 +115,8 @@ C:\Windows\Temp\art-v<technique-id>-<subtest>.txt
 The launcher derives the `All` choices and marker filenames. Before execution it removes only the expected markers for the selected run. After execution:
 
 - `EXECUTED` means the new marker exists.
-- `BLOCKED` means the marker is absent.
+- `NOT_EXECUTED` means the marker is absent; it does not by itself prove a control block.
+- `ERROR` means the technique script failed or rejected a prerequisite.
 
 These are marker observations, not final security-control verdicts. In particular, `EXECUTED` does not mean `not_detected` or `not_blocked`: execution, detection, and the product's binary blocked/not-blocked log verdict remain separate observations.
 

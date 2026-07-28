@@ -60,8 +60,13 @@ $tempDir         = "C:\Windows\Temp"
 $userStartup     = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup"
 $allUsersStartup = "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp"
 $redirectDir     = "$env:TEMP\sct-startup-redirect"
+$redirectPayload = "$redirectDir\sct-redirect-payload.bat"
+$redirectOwnerPath = "$redirectDir\.sct-owner"
+$redirectOwnerValue = 'SecurityControlsTesting-v4.3'
 $winlogonPath    = "HKLM:\Software\Microsoft\Windows NT\CurrentVersion\Winlogon"
 $shellFolderPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders"
+$shellFolderBackupName = 'SCT-Startup-Backup-v4.3'
+$winlogonBackupName    = 'SCT-Userinit-Backup-v4.3'
 
 # ==============================================================================
 # HELPERS
@@ -83,9 +88,85 @@ function Test-ExecutionResult {
         Write-Host "[+] SUCCESS: Payload executed - $marker" -ForegroundColor Green
         return $true
     } else {
-        Write-Host "[-] FAILED: Payload did not execute (or was blocked)" -ForegroundColor Red
+        Write-Host "[?] NOT OBSERVED: Payload marker is absent; review control telemetry for the verdict." -ForegroundColor Yellow
         return $false
     }
+}
+
+function Test-SCTArtifactAvailable {
+    param([Parameter(Mandatory)][string]$Path)
+    if (Test-Path -LiteralPath $Path) {
+        Write-Host "  RESULT: Refusing to overwrite existing artifact: $Path" -ForegroundColor Yellow
+        return $false
+    }
+    return $true
+}
+
+function Test-SCTEncodedPayload {
+    param([AllowNull()][string]$Arguments)
+    if ($Arguments -match '(?i)-EncodedCommand\s+([A-Za-z0-9+/=]+)') {
+        try {
+            $decoded = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($Matches[1]))
+            return ($decoded -match '(?i)art-v4\.3-')
+        } catch {
+            return $false
+        }
+    }
+    return $false
+}
+
+function Remove-SCTTextArtifact {
+    param([Parameter(Mandatory)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return
+    }
+    $content = Get-Content -LiteralPath $Path -Raw -ErrorAction SilentlyContinue
+    if ($content -match '(?i)art-v4\.3-') {
+        Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+    } else {
+        Write-Host "[!] Preserving file not identifiable as an SCT artifact: $Path" -ForegroundColor Yellow
+    }
+}
+
+function Remove-SCTLnkArtifact {
+    param([Parameter(Mandatory)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return
+    }
+    try {
+        $shortcut = (New-Object -ComObject WScript.Shell -ErrorAction Stop).CreateShortcut($Path)
+        if (Test-SCTEncodedPayload -Arguments $shortcut.Arguments) {
+            Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
+        } else {
+            Write-Host "[!] Preserving shortcut not identifiable as an SCT artifact: $Path" -ForegroundColor Yellow
+        }
+    } catch {
+        Write-Host "[!] Could not verify shortcut ownership; preserving $Path." -ForegroundColor Yellow
+    }
+}
+
+function Restore-SCTShellFolderStartup {
+    $key = Get-Item -LiteralPath $shellFolderPath -ErrorAction SilentlyContinue
+    if (-not $key -or $key.GetValueNames() -notcontains $shellFolderBackupName) {
+        return
+    }
+
+    $backup = Get-ItemPropertyValue -LiteralPath $shellFolderPath -Name $shellFolderBackupName -ErrorAction Stop
+    Set-ItemProperty -LiteralPath $shellFolderPath -Name 'Startup' -Value $backup -ErrorAction Stop
+    Remove-ItemProperty -LiteralPath $shellFolderPath -Name $shellFolderBackupName -Force -ErrorAction SilentlyContinue
+    Write-Host "    Startup folder value restored from the SCT backup." -ForegroundColor DarkGray
+}
+
+function Restore-SCTWinlogonUserinit {
+    $key = Get-Item -LiteralPath $winlogonPath -ErrorAction SilentlyContinue
+    if (-not $key -or $key.GetValueNames() -notcontains $winlogonBackupName) {
+        return
+    }
+
+    $backup = Get-ItemPropertyValue -LiteralPath $winlogonPath -Name $winlogonBackupName -ErrorAction Stop
+    Set-ItemProperty -LiteralPath $winlogonPath -Name 'Userinit' -Value $backup -ErrorAction Stop
+    Remove-ItemProperty -LiteralPath $winlogonPath -Name $winlogonBackupName -Force -ErrorAction SilentlyContinue
+    Write-Host "    Userinit restored from the SCT backup." -ForegroundColor DarkGray
 }
 
 function Invoke-Cleanup {
@@ -93,20 +174,22 @@ function Invoke-Cleanup {
     foreach ($n in $Names) {
         Remove-Item "$tempDir\art-v4.3-$n.txt" -Force -ErrorAction Ignore
     }
-    Remove-Item "$userStartup\sct-jse-test.jse"          -Force -ErrorAction Ignore
-    Remove-Item "$userStartup\sct-lnk-test.lnk"          -Force -ErrorAction Ignore
-    Remove-Item "$allUsersStartup\sct-allusers-test.bat"  -Force -ErrorAction Ignore
-    # Restore ShellFolderRedirect if not already restored
-    $defaultStartup = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup"
-    Set-ItemProperty -Path $shellFolderPath -Name "Startup" -Value $defaultStartup -ErrorAction Ignore
-    Remove-Item $redirectDir -Recurse -Force -ErrorAction Ignore
-    # Restore WinlogonUserinit from backup value if not already restored
-    $backup = Get-ItemPropertyValue -Path $winlogonPath -Name "Userinit-backup" -ErrorAction Ignore
-    if ($backup) {
-        Set-ItemProperty -Path $winlogonPath -Name "Userinit" -Value $backup -ErrorAction Ignore
-        Remove-ItemProperty -Path $winlogonPath -Name "Userinit-backup" -Force -ErrorAction Ignore
-        Write-Host "    Userinit restored from backup." -ForegroundColor DarkGray
+    Remove-SCTTextArtifact -Path "$userStartup\sct-jse-test.jse"
+    Remove-SCTLnkArtifact -Path "$userStartup\sct-lnk-test.lnk"
+    Remove-SCTTextArtifact -Path "$allUsersStartup\sct-allusers-test.bat"
+    Restore-SCTShellFolderStartup
+    if (Test-Path -LiteralPath $redirectDir) {
+        $owner = [string](Get-Content -LiteralPath $redirectOwnerPath -Raw -ErrorAction SilentlyContinue)
+        if ($owner.Trim() -eq $redirectOwnerValue) {
+            Remove-SCTTextArtifact -Path $redirectPayload
+            Remove-Item -LiteralPath $redirectOwnerPath -Force -ErrorAction Ignore
+            # Non-recursive removal preserves unexpected unrelated content.
+            Remove-Item -LiteralPath $redirectDir -Force -ErrorAction Ignore
+        } else {
+            Write-Host "[!] Preserving redirect directory not owned by SCT: $redirectDir" -ForegroundColor Yellow
+        }
     }
+    Restore-SCTWinlogonUserinit
     Write-Host "[+] Cleanup complete" -ForegroundColor Green
 }
 
@@ -142,6 +225,9 @@ f.Close();
     Write-Host "`n[*] Dropping .jse to user startup folder: $jsePath" -ForegroundColor Yellow
     Write-Host "    Content: JScript FileSystemObject writes marker file" -ForegroundColor DarkGray
     Write-Host "    [Detection: Sysmon 11 - FileCreate .jse in startup folder]" -ForegroundColor DarkGray
+    if (-not (Test-SCTArtifactAvailable -Path $jsePath)) {
+        return $false
+    }
     try {
         Set-Content -Path $jsePath -Value $jseContent -Encoding UTF8 -ErrorAction Stop
         Write-Host "    File written: $jsePath" -ForegroundColor Green
@@ -191,6 +277,9 @@ function Test-LNKShortcut {
     Write-Host "    WindowStyle: 7 (minimised)" -ForegroundColor DarkGray
     Write-Host "    [Detection: Sysmon 11 - FileCreate .lnk in startup folder]" -ForegroundColor DarkGray
 
+    if (-not (Test-SCTArtifactAvailable -Path $lnkPath)) {
+        return $false
+    }
     try {
         $wsh             = New-Object -ComObject WScript.Shell -ErrorAction Stop
         $lnk             = $wsh.CreateShortcut($lnkPath)
@@ -246,6 +335,9 @@ function Test-AllUsersBAT {
 
     Write-Host "`n[*] Dropping BAT to AllUsers startup folder: $batPath" -ForegroundColor Yellow
     Write-Host "    [Detection: Sysmon 11 - FileCreate .bat in C:\ProgramData\...\StartUp]" -ForegroundColor DarkGray
+    if (-not (Test-SCTArtifactAvailable -Path $batPath)) {
+        return $false
+    }
     try {
         Set-Content -Path $batPath -Value $batContent -Encoding ASCII -ErrorAction Stop
         Write-Host "    File written: $batPath" -ForegroundColor Green
@@ -288,19 +380,37 @@ function Test-ShellFolderRedirect {
     $marker      = "$tempDir\art-v4.3-ShellFolderRedirect.txt"
     $command     = "Set-Content -Path '$marker' -Value ('[' + (Get-Date) + '] ShellFolderRedirect executed')"
     $encoded     = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
-    $batPayload  = "$redirectDir\sct-redirect-payload.bat"
+    $batPayload  = $redirectPayload
     $batContent  = "@echo off`r`npowershell.exe -NoProfile -WindowStyle Hidden -EncodedCommand $encoded"
 
     Write-Host "`n[*] Reading current Startup value (for restore)..." -ForegroundColor Yellow
-    $originalStartup = (Get-ItemProperty -Path $shellFolderPath -Name "Startup" -ErrorAction Ignore).Startup
+    $shellFolderKey = Get-Item -LiteralPath $shellFolderPath -ErrorAction SilentlyContinue
+    if (-not $shellFolderKey -or $shellFolderKey.GetValueNames() -notcontains 'Startup') {
+        Write-Host "  RESULT: Current Startup value is unavailable; refusing to change it." -ForegroundColor Yellow
+        return $false
+    }
+    if ($shellFolderKey.GetValueNames() -contains $shellFolderBackupName) {
+        Write-Host "  RESULT: An SCT Startup backup already exists; run cleanup before retrying." -ForegroundColor Yellow
+        return $false
+    }
+    $originalStartup = Get-ItemPropertyValue -LiteralPath $shellFolderPath -Name 'Startup' -ErrorAction Stop
     Write-Host "    Current: $originalStartup" -ForegroundColor DarkGray
 
     Write-Host "`n[*] Creating redirect directory and BAT payload: $redirectDir" -ForegroundColor Yellow
     try {
-        New-Item -ItemType Directory -Path $redirectDir -Force | Out-Null
+        if (Test-Path -LiteralPath $redirectDir) {
+            throw "Refusing to reuse existing directory: $redirectDir"
+        }
+        New-Item -ItemType Directory -Path $redirectDir -ErrorAction Stop | Out-Null
+        Set-Content -LiteralPath $redirectOwnerPath -Value $redirectOwnerValue -Encoding ASCII -ErrorAction Stop
         Set-Content -Path $batPayload -Value $batContent -Encoding ASCII -ErrorAction Stop
+        New-ItemProperty -LiteralPath $shellFolderPath -Name $shellFolderBackupName `
+            -Value $originalStartup -PropertyType String -ErrorAction Stop | Out-Null
         Write-Host "    Redirect dir + payload created." -ForegroundColor Green
     } catch {
+        Remove-Item -LiteralPath $batPayload -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $redirectOwnerPath -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $redirectDir -Force -ErrorAction SilentlyContinue
         Write-Host "  RESULT: Redirect dir/payload creation blocked - $($_.Exception.Message)" -ForegroundColor Green
         return $false
     }
@@ -315,6 +425,7 @@ function Test-ShellFolderRedirect {
         Set-ItemProperty -Path $shellFolderPath -Name "Startup" -Value $redirectDir -ErrorAction Stop
         Write-Host "    Registry value updated." -ForegroundColor Green
     } catch {
+        Restore-SCTShellFolderStartup
         Write-Host "  RESULT: Registry write blocked - $($_.Exception.Message)" -ForegroundColor Green
         return $false
     }
@@ -329,14 +440,14 @@ function Test-ShellFolderRedirect {
         Start-Process cmd.exe -ArgumentList ('/c ""{0}""' -f $batPayload) -Wait -ErrorAction Stop
     } catch {
         Write-Host "  Execution blocked: $($_.Exception.Message)" -ForegroundColor Green
-        Set-ItemProperty -Path $shellFolderPath -Name "Startup" -Value $originalStartup -ErrorAction Ignore
+        Restore-SCTShellFolderStartup
         return $false
     }
 
     $result = Test-ExecutionResult -Name "ShellFolderRedirect"
 
     Write-Host "`n[*] Restoring Startup value immediately..." -ForegroundColor Yellow
-    Set-ItemProperty -Path $shellFolderPath -Name "Startup" -Value $originalStartup -ErrorAction Ignore
+    Restore-SCTShellFolderStartup
     Write-Host "    Restored to: $originalStartup" -ForegroundColor DarkGray
 
     return $result
@@ -369,16 +480,22 @@ function Test-WinlogonUserinit {
 
     Write-Host "`n[*] Reading and backing up current Userinit value..." -ForegroundColor Yellow
     try {
+        $winlogonKey = Get-Item -LiteralPath $winlogonPath -ErrorAction Stop
+        if ($winlogonKey.GetValueNames() -contains $winlogonBackupName) {
+            throw 'An SCT Userinit backup already exists; run cleanup before retrying.'
+        }
         $oldValue = Get-ItemPropertyValue -Path $winlogonPath -Name "Userinit" -ErrorAction Stop
         Write-Host "    Current Userinit : $oldValue" -ForegroundColor DarkGray
-        Set-ItemProperty -Path $winlogonPath -Name "Userinit-backup" -Value $oldValue -ErrorAction Stop
-        Write-Host "    Backup written   : Winlogon\Userinit-backup" -ForegroundColor DarkGray
+        New-ItemProperty -LiteralPath $winlogonPath -Name $winlogonBackupName -Value $oldValue `
+            -PropertyType String -ErrorAction Stop | Out-Null
+        Write-Host "    Backup written   : Winlogon\$winlogonBackupName" -ForegroundColor DarkGray
     } catch {
         Write-Host "  RESULT: Cannot read/backup Userinit (elevation required) - $($_.Exception.Message)" -ForegroundColor Green
         return $false
     }
 
-    $newValue = $oldValue + " $payload"
+    $separator = if ($oldValue.TrimEnd().EndsWith(',')) { ' ' } else { ', ' }
+    $newValue = $oldValue + $separator + $payload
 
     Write-Host "`n[*] Appending payload to Userinit..." -ForegroundColor Yellow
     Write-Host "    Key  : $winlogonPath" -ForegroundColor DarkGray
@@ -391,7 +508,7 @@ function Test-WinlogonUserinit {
         Write-Host "    Userinit updated." -ForegroundColor Green
     } catch {
         Write-Host "  RESULT: Userinit write blocked - $($_.Exception.Message)" -ForegroundColor Green
-        Remove-ItemProperty -Path $winlogonPath -Name "Userinit-backup" -Force -ErrorAction Ignore
+        Remove-ItemProperty -LiteralPath $winlogonPath -Name $winlogonBackupName -Force -ErrorAction Ignore
         return $false
     }
 
@@ -407,8 +524,7 @@ function Test-WinlogonUserinit {
         ) -Wait -ErrorAction Stop
     } catch {
         Write-Host "  Execution blocked: $($_.Exception.Message)" -ForegroundColor Green
-        Set-ItemProperty -Path $winlogonPath -Name "Userinit" -Value $oldValue -ErrorAction Ignore
-        Remove-ItemProperty -Path $winlogonPath -Name "Userinit-backup" -Force -ErrorAction Ignore
+        Restore-SCTWinlogonUserinit
         return $false
     }
 
@@ -416,8 +532,7 @@ function Test-WinlogonUserinit {
 
     # Restore immediately - broken Userinit = broken logon
     Write-Host "`n[*] Restoring Userinit to original value..." -ForegroundColor Yellow
-    Set-ItemProperty -Path $winlogonPath -Name "Userinit" -Value $oldValue -ErrorAction Ignore
-    Remove-ItemProperty -Path $winlogonPath -Name "Userinit-backup" -Force -ErrorAction Ignore
+    Restore-SCTWinlogonUserinit
     Write-Host "    Restored: $oldValue" -ForegroundColor DarkGray
 
     return $result
@@ -461,8 +576,8 @@ function Write-Report {
     Write-Host "|                         EXECUTION REPORT                                    |" -ForegroundColor Cyan
     Write-Host "+==============================================================================+" -ForegroundColor Cyan
     foreach ($r in $Results) {
-        $label = if ($r.Success) { "EXECUTED" } else { "BLOCKED " }
-        $color = if ($r.Success) { 'Green' }   else { 'Red' }
+        $label = if ($r.Success) { "EXECUTED" } else { "NOT EXECUTED" }
+        $color = if ($r.Success) { 'Green' }   else { 'Yellow' }
         Write-Host "  [$label] $($r.Name)" -ForegroundColor $color
     }
     $ok    = ($Results | Where-Object { $_.Success }).Count
@@ -500,8 +615,10 @@ switch ($Subtest) {
         Write-Host "+==============================================================================+" -ForegroundColor Cyan
         Write-Host "|   SINGLE SUBTEST: $Subtest" -ForegroundColor Cyan
         Write-Host "+==============================================================================+" -ForegroundColor Cyan
-        Write-Host "`n[!] Have EDR/AV console visible before proceeding." -ForegroundColor Yellow
-        Read-Host "    Press Enter to start"
+        if (-not $NoPause) {
+            Write-Host "`n[!] Have EDR/AV console visible before proceeding." -ForegroundColor Yellow
+            [void](Read-Host "    Press Enter to start")
+        }
 
         $success = switch ($Subtest) {
             'JSEStartup'          { Test-JSEStartup          }
@@ -511,8 +628,8 @@ switch ($Subtest) {
             'WinlogonUserinit'    { Test-WinlogonUserinit    }
         }
 
-        $color = if ($success) { 'Green' } else { 'Red' }
-        Write-Host "`n[RESULT] Subtest '$Subtest': $(if ($success) { 'EXECUTED' } else { 'BLOCKED' })" -ForegroundColor $color
+        $color = if ($success) { 'Green' } else { 'Yellow' }
+        Write-Host "`n[RESULT] Subtest '$Subtest': $(if ($success) { 'EXECUTED' } else { 'NOT EXECUTED' })" -ForegroundColor $color
         if (-not $NoCleanupPrompt) {
             $c = Read-Host "Clean up now? (Y/N)"
             if ($c -eq 'Y' -or $c -eq 'y') { Invoke-Cleanup -Names @($Subtest) }

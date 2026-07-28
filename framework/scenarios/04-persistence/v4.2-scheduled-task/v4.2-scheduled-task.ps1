@@ -25,7 +25,7 @@
     Subtest 5 (HiddenXML)       - Registers a task via Invoke-CimMethod (WMI class
                                     PS_ScheduledTask.RegisterByXml) from inline XML with
                                     Hidden=true - mirrors TrickBot/Industroyer2 persistence;
-                                    task is invisible to schtasks /query and Task Scheduler GUI.
+                                    hides it from default GUI views, but it remains queryable.
                                     Requires local admin.
 
     All subtests write a marker file to C:\Windows\Temp\ as proof-of-execution.
@@ -83,7 +83,7 @@ function Test-ExecutionResult {
         Write-Host "[+] SUCCESS: Payload executed - $marker" -ForegroundColor Green
         return $true
     } else {
-        Write-Host "[-] FAILED: Payload did not execute (or was blocked)" -ForegroundColor Red
+        Write-Host "[?] NOT OBSERVED: Payload marker is absent; review control telemetry for the verdict." -ForegroundColor Yellow
         return $false
     }
 }
@@ -358,9 +358,9 @@ function Test-HiddenXML {
     Write-Header "Hidden Scheduled Task via WMI XML Import (Atomic Test #8 - TrickBot/Industroyer2 Pattern)" "HIGH"
     Write-Host "`nTask   : $($taskNames.HiddenXML)"
     Write-Host "Method : Invoke-CimMethod (WMI class PS_ScheduledTask.RegisterByXml) registers a"
-    Write-Host "         task from inline XML containing [Hidden]true[/Hidden]. The task is NOT"
-    Write-Host "         visible in 'schtasks /query' or the Task Scheduler GUI. No schtasks.exe"
-    Write-Host "         process is spawned. Author/Description masquerade as Microsoft. Requires admin."
+    Write-Host "         task from inline XML containing [Hidden]true[/Hidden]. Hidden metadata suppresses"
+    Write-Host "         the task in default GUI views, but an exact-name query can still find it."
+    Write-Host "         No schtasks.exe process is spawned during registration. Requires admin."
     Write-Host "`nDetection:"
     Write-Host "  Event 4698 - Task created; XML body contains [Hidden]true[/Hidden]"
     Write-Host "  Sysmon 20  - WmiEvent: PS_ScheduledTask.RegisterByXml method invoked"
@@ -434,7 +434,12 @@ function Test-HiddenXML {
         $cimResult = Invoke-CimMethod -ClassName PS_ScheduledTask `
             -NameSpace "Root\Microsoft\Windows\TaskScheduler" `
             -MethodName "RegisterByXml" `
-            -Arguments @{ Force = $true; Xml = $xmlContent } `
+            -Arguments @{
+                Force    = $true
+                TaskName = $tn
+                TaskPath = '\'
+                Xml      = $xmlContent
+            } `
             -ErrorAction Stop
         if ($cimResult.ReturnValue -ne 0) {
             throw "RegisterByXml returned error code: $($cimResult.ReturnValue)"
@@ -445,12 +450,12 @@ function Test-HiddenXML {
         return $false
     }
 
-    Write-Host "`n[*] Demonstrating task is invisible to schtasks /query..." -ForegroundColor Yellow
+    Write-Host "`n[*] Verifying registration with an exact-name schtasks query..." -ForegroundColor Yellow
     $schtasksOut = schtasks /query /tn $tn /fo LIST 2>&1
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "    schtasks /query: task NOT found - Hidden=true confirmed." -ForegroundColor Cyan
+        Write-Host "    Exact-name query did not find the task; confirming through CIM next." -ForegroundColor Yellow
     } else {
-        Write-Host "    schtasks /query returned output (Hidden may not have taken effect): $schtasksOut"
+        Write-Host "    Exact-name query found the hidden task, as expected: $schtasksOut" -ForegroundColor Cyan
     }
 
     Write-Host "`n[*] Confirming task exists via Get-ScheduledTask (CIM-based query)..." -ForegroundColor Yellow
@@ -512,8 +517,8 @@ function Write-Report {
     Write-Host "|                         EXECUTION REPORT                                    |" -ForegroundColor Cyan
     Write-Host "+==============================================================================+" -ForegroundColor Cyan
     foreach ($r in $Results) {
-        $label = if ($r.Success) { "EXECUTED" } else { "BLOCKED " }
-        $color = if ($r.Success) { 'Green' }   else { 'Red' }
+        $label = if ($r.Success) { "EXECUTED" } else { "NOT EXECUTED" }
+        $color = if ($r.Success) { 'Green' }   else { 'Yellow' }
         Write-Host "  [$label] $($r.Name)" -ForegroundColor $color
     }
     $ok    = ($Results | Where-Object { $_.Success }).Count
@@ -551,8 +556,10 @@ switch ($Subtest) {
         Write-Host "+==============================================================================+" -ForegroundColor Cyan
         Write-Host "|   SINGLE SUBTEST: $Subtest" -ForegroundColor Cyan
         Write-Host "+==============================================================================+" -ForegroundColor Cyan
-        Write-Host "`n[!] Have EDR/AV console visible before proceeding." -ForegroundColor Yellow
-        Read-Host "    Press Enter to start"
+        if (-not $NoPause) {
+            Write-Host "`n[!] Have EDR/AV console visible before proceeding." -ForegroundColor Yellow
+            [void](Read-Host "    Press Enter to start")
+        }
 
         $success = switch ($Subtest) {
             'SchtasksOnLogon' { Test-SchtasksOnLogon }
@@ -562,8 +569,8 @@ switch ($Subtest) {
             'HiddenXML'       { Test-HiddenXML       }
         }
 
-        $color = if ($success) { 'Green' } else { 'Red' }
-        Write-Host "`n[RESULT] Subtest '$Subtest': $(if ($success) { 'EXECUTED' } else { 'BLOCKED' })" -ForegroundColor $color
+        $color = if ($success) { 'Green' } else { 'Yellow' }
+        Write-Host "`n[RESULT] Subtest '$Subtest': $(if ($success) { 'EXECUTED' } else { 'NOT EXECUTED' })" -ForegroundColor $color
         if (-not $NoCleanupPrompt) {
             $c = Read-Host "Clean up now? (Y/N)"
             if ($c -eq 'Y' -or $c -eq 'y') { Invoke-Cleanup -Names @($Subtest) }

@@ -29,7 +29,7 @@ You can also run it through the main launcher:
 
 Select Module 3, then Technique 3.3.
 
-Have the EDR console visible before running. Each subtest writes a marker file to `C:\Windows\Temp\art-v3.3-<SubtestName>.txt` as proof of execution. If the marker is missing, that subtest was blocked or unsupported.
+Have the EDR console visible before running. Each subtest writes a marker file to `C:\Windows\Temp\art-v3.3-<SubtestName>.txt` as proof of execution. A missing marker means the payload was not observed; use the security-console evidence to decide whether a control blocked it.
 
 This technique is self-contained for offline submission. It does not download Atomic Red Team payloads and does not require the Atomic Red Team folder at runtime. Temporary HTA, SCT, and INF payload files are generated under `%TEMP%\sct-v3.3-lolbin`.
 

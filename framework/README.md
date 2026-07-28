@@ -102,7 +102,7 @@ You can also select an existing configuration at launch:
 
 > Start with a standard PowerShell session unless the selected technique says it requires Administrator rights. Do not run Technique 3.2 (UAC Bypass) from an already elevated session because existing elevation invalidates the test.
 
-Choose a module, then a technique, then a subtest when the technique provides them. `EXECUTED` means the expected execution marker was created; `BLOCKED` means it was not created. These labels describe the test observation only. They do not prove whether the security control detected the activity, blocked it before execution, or blocked it after execution. Press `V` in the main menu to view the result summary.
+Choose a module, then a technique, then a subtest when the technique provides them. `EXECUTED` means the expected execution marker was created; `NOT_EXECUTED` means it was absent; `ERROR` means the technique script failed or rejected a prerequisite. Marker absence does not prove that the security control blocked the activity. Record the control decision separately in `action_status`, and press `V` in the main menu to view the result summary.
 
 Results are appended directly to `results/<control-id>/results-module-<id>.csv`. The generated observation fields and the human review fields live in the same CSV; there is no raw/analysis copy step. Running a subtest technique directly produces console output and markers but does not invoke the central writer unless that script accepts and is given `-ResultsPath`.
 

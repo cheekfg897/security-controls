@@ -38,11 +38,16 @@ param(
     [ValidateSet('MshtaHTA','Regsvr32SCT','Rundll32Advpack','InfDefaultInstall','All')]
     [Alias('Technique')]
     [string]$Subtest = 'MshtaHTA',
-    [switch]$NoCleanupPrompt
+    [switch]$NoCleanupPrompt,
+    [switch]$NoPause,
+    [switch]$NoReport,
+    [switch]$CleanupOnly
 )
 
 $tempDir    = "C:\Windows\Temp"
 $payloadDir = Join-Path $env:TEMP "sct-v3.3-lolbin"
+$payloadOwnerPath = Join-Path $payloadDir '.sct-owner'
+$payloadOwnerValue = 'SecurityControlsTesting-v3.3'
 
 # ==============================================================================
 # HELPERS
@@ -62,9 +67,16 @@ function Get-EncodedCommand {
 }
 
 function New-PayloadDirectory {
-    if (-not (Test-Path $payloadDir)) {
-        New-Item -Path $payloadDir -ItemType Directory -Force | Out-Null
+    if (Test-Path -LiteralPath $payloadDir) {
+        $owner = [string](Get-Content -LiteralPath $payloadOwnerPath -Raw -ErrorAction SilentlyContinue)
+        if ($owner.Trim() -ne $payloadOwnerValue) {
+            throw "Refusing to use existing directory not owned by SCT: $payloadDir"
+        }
+        return
     }
+
+    New-Item -Path $payloadDir -ItemType Directory -ErrorAction Stop | Out-Null
+    Set-Content -LiteralPath $payloadOwnerPath -Value $payloadOwnerValue -Encoding ASCII -ErrorAction Stop
 }
 
 function Test-ExecutionResult {
@@ -75,7 +87,7 @@ function Test-ExecutionResult {
         Write-Host "[+] SUCCESS: Signed binary proxied payload execution - $marker" -ForegroundColor Green
         return $true
     } else {
-        Write-Host "[-] FAILED: Marker file not found (payload blocked or subtest unsupported)" -ForegroundColor Red
+        Write-Host "[?] NOT OBSERVED: Marker file not found; review the control telemetry for the verdict." -ForegroundColor Yellow
         return $false
     }
 }
@@ -85,7 +97,25 @@ function Invoke-Cleanup {
     foreach ($n in $Names) {
         Remove-Item "$tempDir\art-v3.3-$n.txt" -Force -ErrorAction Ignore
     }
-    Remove-Item $payloadDir -Recurse -Force -ErrorAction Ignore
+
+    if (Test-Path -LiteralPath $payloadDir) {
+        $owner = [string](Get-Content -LiteralPath $payloadOwnerPath -Raw -ErrorAction SilentlyContinue)
+        if ($owner.Trim() -eq $payloadOwnerValue) {
+            foreach ($payloadName in @(
+                'sct-v3.3-mshta.hta',
+                'sct-v3.3-regsvr32.sct',
+                'sct-v3.3-rundll32.inf',
+                'sct-v3.3-infdefaultinstall.inf'
+            )) {
+                Remove-Item -LiteralPath (Join-Path $payloadDir $payloadName) -Force -ErrorAction Ignore
+            }
+            Remove-Item -LiteralPath $payloadOwnerPath -Force -ErrorAction Ignore
+            # Non-recursive removal preserves unexpected unrelated content.
+            Remove-Item -LiteralPath $payloadDir -Force -ErrorAction Ignore
+        } else {
+            Write-Host "[!] Preserving payload directory not owned by SCT: $payloadDir" -ForegroundColor Yellow
+        }
+    }
     Write-Host "[+] Cleanup complete" -ForegroundColor Green
 }
 
@@ -350,8 +380,10 @@ function Test-All {
     $results = @()
     foreach ($t in $tests) {
         $results += @{ Name = $t.Name; Success = (& $t.Fn) }
-        Write-Host "`n[!] Check EDR/AV console before continuing." -ForegroundColor Yellow
-        [void](Read-Host "    Press Enter for next subtest")
+        if (-not $NoPause) {
+            Write-Host "`n[!] Check EDR/AV console before continuing." -ForegroundColor Yellow
+            [void](Read-Host "    Press Enter for next subtest")
+        }
     }
     return $results
 }
@@ -366,8 +398,8 @@ function Write-Report {
     Write-Host "|                         EXECUTION REPORT                                    |" -ForegroundColor Cyan
     Write-Host "+==============================================================================+" -ForegroundColor Cyan
     foreach ($r in $Results) {
-        $label = if ($r.Success) { "EXECUTED" } else { "BLOCKED " }
-        $color = if ($r.Success) { 'Green' } else { 'Red' }
+        $label = if ($r.Success) { "EXECUTED" } else { "NOT EXECUTED" }
+        $color = if ($r.Success) { 'Green' } else { 'Yellow' }
         Write-Host "  [$label] $($r.Name)" -ForegroundColor $color
     }
     $ok    = ($Results | Where-Object { $_.Success }).Count
@@ -379,13 +411,20 @@ function Write-Report {
 # MAIN
 # ==============================================================================
 
+if ($CleanupOnly) {
+    Invoke-Cleanup -Names @('MshtaHTA','Regsvr32SCT','Rundll32Advpack','InfDefaultInstall')
+    exit 0
+}
+
 Write-Host "`n[TEST] Living-off-the-Land Signed Binary Proxy Execution (Technique 3.3)" -ForegroundColor Cyan
 Write-Host "  MITRE: T1218  |  Phase 3  |  Privilege Escalation / Defense Evasion`n"
 
 switch ($Subtest) {
     'All' {
         $results = Test-All
-        Write-Report -Results $results
+        if (-not $NoReport) {
+            Write-Report -Results $results
+        }
         Write-Host "`n[*] Marker files in $tempDir (art-v3.3-*.txt) left for review." -ForegroundColor Yellow
         if (-not $NoCleanupPrompt) {
             $c = Read-Host "Clean up now? (Y/N)"
@@ -398,8 +437,10 @@ switch ($Subtest) {
         Write-Host "+==============================================================================+" -ForegroundColor Cyan
         Write-Host "|   SINGLE SUBTEST: $Subtest" -ForegroundColor Cyan
         Write-Host "+==============================================================================+" -ForegroundColor Cyan
-        Write-Host "`n[!] Have EDR/AV console visible before proceeding." -ForegroundColor Yellow
-        Read-Host "    Press Enter to start"
+        if (-not $NoPause) {
+            Write-Host "`n[!] Have EDR/AV console visible before proceeding." -ForegroundColor Yellow
+            [void](Read-Host "    Press Enter to start")
+        }
 
         $success = switch ($Subtest) {
             'MshtaHTA'          { Test-MshtaHTA          }
@@ -408,8 +449,8 @@ switch ($Subtest) {
             'InfDefaultInstall' { Test-InfDefaultInstall }
         }
 
-        $color = if ($success) { 'Green' } else { 'Red' }
-        Write-Host "`n[RESULT] Subtest '$Subtest': $(if ($success) { 'EXECUTED' } else { 'BLOCKED' })" -ForegroundColor $color
+        $color = if ($success) { 'Green' } else { 'Yellow' }
+        Write-Host "`n[RESULT] Subtest '$Subtest': $(if ($success) { 'EXECUTED' } else { 'NOT EXECUTED' })" -ForegroundColor $color
         if (-not $NoCleanupPrompt) {
             $c = Read-Host "Clean up now? (Y/N)"
             if ($c -eq 'Y' -or $c -eq 'y') { Invoke-Cleanup -Names @($Subtest) }

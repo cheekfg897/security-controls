@@ -80,8 +80,82 @@ function Test-ExecutionResult {
         Write-Host "[+] SUCCESS: Payload executed - $marker" -ForegroundColor Green
         return $true
     } else {
-        Write-Host "[-] FAILED: Payload did not execute (or was blocked)" -ForegroundColor Red
+        Write-Host "[?] NOT OBSERVED: Payload marker is absent; review control telemetry for the verdict." -ForegroundColor Yellow
         return $false
+    }
+}
+
+function Test-SCTRegistryValueAvailable {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Name
+    )
+
+    $key = Get-Item -LiteralPath $Path -ErrorAction SilentlyContinue
+    if ($key -and $key.GetValueNames() -contains $Name) {
+        Write-Host "  RESULT: Refusing to overwrite existing registry value '$Name' at $Path." -ForegroundColor Yellow
+        return $false
+    }
+    return $true
+}
+
+function Test-SCTOwnedRunValue {
+    param([AllowNull()][object]$Value)
+
+    $text = [string]$Value
+    if ($text -match '(?i)sct-systembc-payload\.ps1') {
+        return $true
+    }
+    if ($text -match '(?i)-EncodedCommand\s+([A-Za-z0-9+/=]+)') {
+        try {
+            $decoded = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($Matches[1]))
+            return ($decoded -match '(?i)art-v4\.1-')
+        } catch {
+            return $false
+        }
+    }
+    return $false
+}
+
+function Remove-SCTRunValue {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Name
+    )
+
+    $key = Get-Item -LiteralPath $Path -ErrorAction SilentlyContinue
+    if (-not $key -or $key.GetValueNames() -notcontains $Name) {
+        return
+    }
+
+    $value = Get-ItemPropertyValue -LiteralPath $Path -Name $Name -ErrorAction SilentlyContinue
+    if (Test-SCTOwnedRunValue -Value $value) {
+        Remove-ItemProperty -LiteralPath $Path -Name $Name -Force -ErrorAction SilentlyContinue
+    } else {
+        Write-Host "[!] Preserving registry value not owned by SCT: $Path\$Name" -ForegroundColor Yellow
+    }
+}
+
+function Test-SCTFileAvailable {
+    param([Parameter(Mandatory)][string]$Path)
+    if (Test-Path -LiteralPath $Path) {
+        Write-Host "  RESULT: Refusing to overwrite existing file: $Path" -ForegroundColor Yellow
+        return $false
+    }
+    return $true
+}
+
+function Remove-SCTTextArtifact {
+    param([Parameter(Mandatory)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return
+    }
+
+    $content = Get-Content -LiteralPath $Path -Raw -ErrorAction SilentlyContinue
+    if ($content -match '(?i)art-v4\.1-') {
+        Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+    } else {
+        Write-Host "[!] Preserving file not identifiable as an SCT artifact: $Path" -ForegroundColor Yellow
     }
 }
 
@@ -90,15 +164,15 @@ function Invoke-Cleanup {
     foreach ($n in $Names) {
         Remove-Item "$tempDir\art-v4.1-$n.txt" -Force -ErrorAction Ignore
         switch ($n) {
-            'HKCURunKey'  { Remove-ItemProperty "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"     -Name $valueName         -Force -ErrorAction Ignore }
-            'HKCURunOnce' { Remove-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce" -Name $valueName         -Force -ErrorAction Ignore }
-            'HKLMRunKey'  { Remove-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"     -Name $valueName         -Force -ErrorAction Ignore }
-            'HKLMRunOnce' { Remove-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\RunOnce" -Name $valueName         -Force -ErrorAction Ignore }
-            'StartupVBS'  { Remove-Item "$startupDir\sct-vbs-test.vbs"      -Force -ErrorAction Ignore }
-            'StartupBAT'  { Remove-Item "$startupDir\sct-bat-test.bat"      -Force -ErrorAction Ignore }
+            'HKCURunKey'  { Remove-SCTRunValue -Path "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"     -Name $valueName }
+            'HKCURunOnce' { Remove-SCTRunValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce" -Name $valueName }
+            'HKLMRunKey'  { Remove-SCTRunValue -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"     -Name $valueName }
+            'HKLMRunOnce' { Remove-SCTRunValue -Path "HKLM:\Software\Microsoft\Windows\CurrentVersion\RunOnce" -Name $valueName }
+            'StartupVBS'  { Remove-SCTTextArtifact -Path "$startupDir\sct-vbs-test.vbs" }
+            'StartupBAT'  { Remove-SCTTextArtifact -Path "$startupDir\sct-bat-test.bat" }
             'SystemBC' {
-                Remove-ItemProperty "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name "socks5_powershell" -Force -ErrorAction Ignore
-                Remove-Item "$tempDir\sct-systembc-payload.ps1" -Force -ErrorAction Ignore
+                Remove-SCTRunValue -Path "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name "socks5_powershell"
+                Remove-SCTTextArtifact -Path "$tempDir\sct-systembc-payload.ps1"
             }
         }
     }
@@ -168,6 +242,9 @@ function Test-HKCURunKey {
     Write-Host "    Data : powershell.exe -NoProfile -WindowStyle Hidden -EncodedCommand [base64]" -ForegroundColor DarkGray
     Write-Host "    [Detection: Sysmon 13 - RegistryEvent (Value Set)]" -ForegroundColor DarkGray
 
+    if (-not (Test-SCTRegistryValueAvailable -Path "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name $valueName)) {
+        return $false
+    }
     $regOut = reg add "HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" /V $valueName /t REG_SZ /F /D "$runVal" 2>&1
     if ($LASTEXITCODE -ne 0) {
         Write-Host "  RESULT: Registry write blocked or failed - $regOut" -ForegroundColor Green
@@ -220,6 +297,9 @@ function Test-HKCURunOnce {
     Write-Host "    Value: powershell.exe -NoProfile -WindowStyle Hidden -EncodedCommand [base64]" -ForegroundColor DarkGray
     Write-Host "    [Detection: Sysmon 13 - RegistryEvent (Value Set)]" -ForegroundColor DarkGray
 
+    if (-not (Test-SCTRegistryValueAvailable -Path $runOncePath -Name $valueName)) {
+        return $false
+    }
     try {
         Set-ItemProperty -Path $runOncePath -Name $valueName -Value $runVal -ErrorAction Stop
         Write-Host "    Write succeeded." -ForegroundColor Green
@@ -273,6 +353,9 @@ function Test-HKLMRunKey {
     Write-Host "    Data : powershell.exe -NoProfile -WindowStyle Hidden -EncodedCommand [base64]" -ForegroundColor DarkGray
     Write-Host "    [Detection: Sysmon 13 - RegistryEvent (Value Set)]" -ForegroundColor DarkGray
 
+    if (-not (Test-SCTRegistryValueAvailable -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name $valueName)) {
+        return $false
+    }
     $regOut = reg add $runPath /V $valueName /t REG_SZ /F /D "$runVal" 2>&1
     if ($LASTEXITCODE -ne 0) {
         Write-Host "  RESULT: HKLM registry write blocked, failed, or was not elevated - $regOut" -ForegroundColor Green
@@ -325,6 +408,9 @@ function Test-HKLMRunOnce {
     Write-Host "    Value: powershell.exe -NoProfile -WindowStyle Hidden -EncodedCommand [base64]" -ForegroundColor DarkGray
     Write-Host "    [Detection: Sysmon 13 - RegistryEvent (Value Set)]" -ForegroundColor DarkGray
 
+    if (-not (Test-SCTRegistryValueAvailable -Path $runOncePath -Name $valueName)) {
+        return $false
+    }
     try {
         Set-ItemProperty -Path $runOncePath -Name $valueName -Value $runVal -ErrorAction Stop
         Write-Host "    Write succeeded." -ForegroundColor Green
@@ -377,6 +463,9 @@ f.Close
 
     Write-Host "`n[*] Dropping VBS to startup folder: $vbsPath" -ForegroundColor Yellow
     Write-Host "    [Detection: Sysmon 11 - FileCreate in startup folder]" -ForegroundColor DarkGray
+    if (-not (Test-SCTFileAvailable -Path $vbsPath)) {
+        return $false
+    }
     try {
         Set-Content -Path $vbsPath -Value $vbsContent -Encoding UTF8 -ErrorAction Stop
         Write-Host "    File written: $vbsPath" -ForegroundColor Green
@@ -419,6 +508,9 @@ function Test-StartupBAT {
 
     Write-Host "`n[*] Dropping BAT to startup folder: $batPath" -ForegroundColor Yellow
     Write-Host "    [Detection: Sysmon 11 - FileCreate in startup folder]" -ForegroundColor DarkGray
+    if (-not (Test-SCTFileAvailable -Path $batPath)) {
+        return $false
+    }
     try {
         Set-Content -Path $batPath -Value $batContent -Encoding ASCII -ErrorAction Stop
         Write-Host "    File written: $batPath" -ForegroundColor Green
@@ -464,6 +556,10 @@ function Test-SystemBC {
     $ps1Content = "Set-Content -Path '$marker' -Value `"[`$(Get-Date)] SystemBC payload executed`""
 
     Write-Host "`n[*] Writing payload script to disk: $payloadScript" -ForegroundColor Yellow
+    if (-not (Test-SCTFileAvailable -Path $payloadScript) -or
+        -not (Test-SCTRegistryValueAvailable -Path $runKeyPath -Name $runKeyName)) {
+        return $false
+    }
     try {
         Set-Content -Path $payloadScript -Value $ps1Content -Encoding UTF8 -ErrorAction Stop
         Write-Host "    Script written." -ForegroundColor Green
@@ -545,8 +641,8 @@ function Write-Report {
     Write-Host "|                         EXECUTION REPORT                                    |" -ForegroundColor Cyan
     Write-Host "+==============================================================================+" -ForegroundColor Cyan
     foreach ($r in $Results) {
-        $label = if ($r.Success) { "EXECUTED" } else { "BLOCKED " }
-        $color = if ($r.Success) { 'Green' }   else { 'Red' }
+        $label = if ($r.Success) { "EXECUTED" } else { "NOT EXECUTED" }
+        $color = if ($r.Success) { 'Green' }   else { 'Yellow' }
         Write-Host "  [$label] $($r.Name)" -ForegroundColor $color
     }
     $ok    = ($Results | Where-Object { $_.Success }).Count
@@ -589,8 +685,10 @@ switch ($Subtest) {
         Write-Host "+==============================================================================+" -ForegroundColor Cyan
         Write-Host "|   SINGLE SUBTEST: $Subtest" -ForegroundColor Cyan
         Write-Host "+==============================================================================+" -ForegroundColor Cyan
-        Write-Host "`n[!] Have EDR/AV console visible before proceeding." -ForegroundColor Yellow
-        Read-Host "    Press Enter to start"
+        if (-not $NoPause) {
+            Write-Host "`n[!] Have EDR/AV console visible before proceeding." -ForegroundColor Yellow
+            [void](Read-Host "    Press Enter to start")
+        }
 
         $success = switch ($Subtest) {
             'HKCURunKey'  { Test-HKCURunKey  }
@@ -602,8 +700,8 @@ switch ($Subtest) {
             'SystemBC'    { Test-SystemBC     }
         }
 
-        $color = if ($success) { 'Green' } else { 'Red' }
-        Write-Host "`n[RESULT] Subtest '$Subtest': $(if ($success) { 'EXECUTED' } else { 'BLOCKED' })" -ForegroundColor $color
+        $color = if ($success) { 'Green' } else { 'Yellow' }
+        Write-Host "`n[RESULT] Subtest '$Subtest': $(if ($success) { 'EXECUTED' } else { 'NOT EXECUTED' })" -ForegroundColor $color
         if (-not $NoCleanupPrompt) {
             $c = Read-Host "Clean up now? (Y/N)"
             if ($c -eq 'Y' -or $c -eq 'y') { Invoke-Cleanup -Names @($Subtest) }

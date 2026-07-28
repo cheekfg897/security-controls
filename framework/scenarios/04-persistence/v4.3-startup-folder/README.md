@@ -25,7 +25,7 @@ On VM1, open PowerShell:
 
 > **Subtest 5 modifies a critical system registry value (Winlogon Userinit). The script restores it immediately after the test. Do not terminate the script mid-run during this subtest.**
 
-Have the EDR console visible before running. Each subtest writes a marker file to `C:\Windows\Temp\art-v4.3-<SubtestName>.txt`. If it is missing, that subtest was blocked.
+Have the EDR console visible before running. Each subtest writes a marker file to `C:\Windows\Temp\art-v4.3-<SubtestName>.txt`. A missing marker means the payload was not observed; use the security-console evidence to decide whether a control blocked it.
 
 This technique extends Technique 4.1: 4.1 covers basic startup folder drops and Run key writes, while 4.3 covers less common variations.
 

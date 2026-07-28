@@ -23,7 +23,7 @@ On VM1, open PowerShell:
 
 > **Subtests 4 (SystemTask) and 5 (HiddenXML) require running as Administrator.** Subtests 1, 2, and 3 do not.
 
-Have the EDR console visible before running. Each subtest writes a marker file to `C:\Windows\Temp\art-v4.2-<SubtestName>.txt`. If it is missing, that subtest was blocked.
+Have the EDR console visible before running. Each subtest writes a marker file to `C:\Windows\Temp\art-v4.2-<SubtestName>.txt`. A missing marker means the payload was not observed; use the security-console evidence to decide whether a control blocked it.
 
 ---
 
@@ -63,6 +63,6 @@ Creates a scheduled task that runs as `NT AUTHORITY\SYSTEM` - the highest privil
 
 ### Subtest 5: HiddenXML *(requires Administrator)*
 
-This mirrors the **TrickBot** and **Industroyer2** malware technique. It registers a scheduled task using a low-level WMI method (`PS_ScheduledTask.RegisterByXml`) with `<Hidden>true</Hidden>` set in the XML definition. The result is a task that is **completely invisible** to `schtasks /query` and the Task Scheduler GUI - it can only be found with PowerShell's `Get-ScheduledTask`. The task also masquerades as a Microsoft component in its Author and Description fields. No `schtasks.exe` process is spawned.
+This mirrors the **TrickBot** and **Industroyer2** malware technique. It registers a scheduled task using a low-level WMI method (`PS_ScheduledTask.RegisterByXml`) with `<Hidden>true</Hidden>` set in the XML definition. Hidden metadata suppresses the task in default Task Scheduler GUI views, but it does not make the task unqueryable: an exact-name `schtasks /query` or PowerShell's `Get-ScheduledTask` can still find it. The task also masquerades as a Microsoft component in its Author and Description fields. No `schtasks.exe` process is spawned during registration.
 
 **Detection:** Task creation event with `<Hidden>true</Hidden>` in the XML body (Event 4698), WMI method invocation via `PS_ScheduledTask.RegisterByXml` (Sysmon 20). The absence of `schtasks.exe` in process telemetry is itself a signal.
