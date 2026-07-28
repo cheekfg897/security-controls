@@ -148,7 +148,7 @@ Module 04 must contain only techniques with subtests. Each script must also acce
 | File | Contents |
 |---|---|
 | `results/<control-id>/control-profile.json` | Product, version, agent, policy, settings, exclusions, and local-log context. |
-| `results/<control-id>/results-module-<id>.csv` | Generated observations plus reviewer-entered detection, action, and notes fields for one module. |
+| `results/<control-id>/results-module-<id>.csv` | Generated observations plus reviewer-entered detection, action, and reviewer-notes fields for one module. |
 | `results/<control-id>/test-catalog-module-<id>.csv` | One module's generated descriptions, including its ID and display name. |
 
 All framework-managed writers use one fixed result schema. Generated results and real malware samples should remain uncommitted.

@@ -49,7 +49,7 @@ foreach ($legacyName in @('results.csv', 'test-catalog.csv')) {
     }
 }
 
-Assert-SCTResultFileSchema -Path $legacyResultsPath
+Assert-SCTResultFileSchema -Path $legacyResultsPath -AllowLegacyNotesColumn
 $resultRows = @(Import-Csv -LiteralPath $legacyResultsPath -Encoding UTF8)
 $catalogRows = @(Import-Csv -LiteralPath $legacyCatalogPath -Encoding UTF8)
 if ($resultRows.Count -eq 0) { throw "Legacy results contain no rows: $legacyResultsPath" }
@@ -92,7 +92,9 @@ try {
         $moduleResultsPath = Get-SCTModuleResultsPath -WorkspaceRoot $migrationRoot -ModuleId $moduleId
         $moduleCatalogPath = Get-SCTModuleCatalogPath -WorkspaceRoot $migrationRoot -ModuleId $moduleId
 
-        $resultsByModule[$moduleId] | Export-Csv -LiteralPath $moduleResultsPath -NoTypeInformation -Encoding UTF8
+        $resultsByModule[$moduleId] |
+            Select-Object -Property (Get-SCTResultColumns) |
+            Export-Csv -LiteralPath $moduleResultsPath -NoTypeInformation -Encoding UTF8
         @($catalogRows | Where-Object { [string]$_.module_id -eq $moduleId }) |
             Export-Csv -LiteralPath $moduleCatalogPath -NoTypeInformation -Encoding UTF8
 

@@ -24,6 +24,16 @@ class ComparisonEngineTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp.cleanup()
 
+    def test_legacy_generated_notes_column_remains_readable(self) -> None:
+        path = write_package(
+            self.root / "legacy-notes.zip",
+            "legacy-notes",
+            [{"sha256": "A" * 64}],
+            legacy_notes_column=True,
+        )
+        package = load_package(path)
+        self.assertEqual(1, len(package.cases))
+
     def test_prevention_first_ranking_uses_shared_cases(self) -> None:
         cases_a = [
             {"sha256": "A" * 64, "detection": "detected", "action": "blocked"},

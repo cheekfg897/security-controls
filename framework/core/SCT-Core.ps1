@@ -1160,7 +1160,7 @@ function Invoke-SCTSubtests {
 
             Write-SCTResult -Path $ResultsPath -Timestamp $startTime `
                 -TechniqueId $Technique.id -TechniqueName $Technique.name -Subtest $subtest `
-                -TestScript ([string]$Technique.script) -Outcome $outcome -Notes $notes -RunId $RunId
+                -TestScript ([string]$Technique.script) -Outcome $outcome -RunId $RunId
 
             $runResults += [pscustomobject]@{
                 run_id      = $RunId
@@ -1382,7 +1382,7 @@ function Invoke-DirectTechnique {
                 ([guid]::NewGuid().ToString('N').Substring(0, 6))
             Write-SCTResult -Path $ResultsPath -Timestamp $startTime -RunId $runId `
                 -TechniqueId $Technique.id -TechniqueName $Technique.name -Subtest '' `
-                -TestScript ([string]$Technique.script) -Outcome 'ERROR' -Notes $failure
+                -TestScript ([string]$Technique.script) -Outcome 'ERROR'
             Write-Host "  [!] $failure" -ForegroundColor Red
             Write-Host "  Error result appended to: $ResultsPath" -ForegroundColor DarkGray
         } else {
@@ -1391,14 +1391,13 @@ function Invoke-DirectTechnique {
             Write-Host "  [E] Executed    [N] Not executed    [S] Skip" -ForegroundColor DarkGray
             $answer = (Read-Host "  Result").Trim().ToUpperInvariant()
             if ($answer -in @('E', 'N')) {
-                $notes = (Read-Host "  Notes (optional)").Trim()
                 $outcome = if ($answer -eq 'E') { 'EXECUTED' } else { 'NOT_EXECUTED' }
                 $runId = "I$($Technique.id -replace '[^0-9A-Za-z]', '')-" +
                     (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' +
                     ([guid]::NewGuid().ToString('N').Substring(0, 6))
                 Write-SCTResult -Path $ResultsPath -Timestamp $startTime -RunId $runId `
                     -TechniqueId $Technique.id -TechniqueName $Technique.name -Subtest '' `
-                    -TestScript ([string]$Technique.script) -Outcome $outcome -Notes $notes
+                    -TestScript ([string]$Technique.script) -Outcome $outcome
                 Write-Host "  Result appended to: $ResultsPath" -ForegroundColor DarkGray
             } else {
                 Write-Host "  No result row was written." -ForegroundColor DarkGray
@@ -1675,8 +1674,7 @@ function Write-SCTResult {
         [Parameter(Mandatory)] [AllowEmptyString()] [string]$Subtest,
         [string]$TestScript = '',
         [Parameter(Mandatory)] [ValidateSet('EXECUTED','NOT_EXECUTED','BLOCKED','NOT-EXPLOITABLE','ERROR')]
-        [string]$Outcome,
-        [string]$Notes = ''
+        [string]$Outcome
     )
 
     $executionStatus = switch ($Outcome) {
@@ -1688,7 +1686,7 @@ function Write-SCTResult {
     Write-SCTResultRow -Path $Path -Timestamp $Timestamp -RunId $RunId `
         -TechniqueId $TechniqueId -TechniqueName $TechniqueName -Subtest $Subtest `
         -TestScript $TestScript -TestStage 'execution' -SourceResult $Outcome `
-        -ExecutionStatus $executionStatus -Notes $Notes
+        -ExecutionStatus $executionStatus
 }
 
 # =============================================================================

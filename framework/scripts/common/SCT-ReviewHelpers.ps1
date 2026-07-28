@@ -366,13 +366,3 @@ function Get-SCTCsvRowValue {
     }
     return $Default
 }
-
-function Get-SCTSha256FromNotes {
-    [CmdletBinding()]
-    param([string]$Notes)
-
-    if ($Notes -match '(?i)(?:^|[;\s])sha256=([0-9a-f]{64})(?:$|[;\s])') {
-        return $Matches[1].ToUpperInvariant()
-    }
-    return ''
-}

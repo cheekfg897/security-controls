@@ -8,7 +8,7 @@ function Get-SCTResultColumns {
         'timestamp', 'run_id', 'technique_id', 'technique_name', 'subtest',
         'test_script', 'test_input', 'test_input_sha256', 'delivery_method',
         'test_stage', 'source_result', 'execution_status', 'detection_status',
-        'action_status', 'reviewer_notes', 'notes'
+        'action_status', 'reviewer_notes'
     )
 }
 
@@ -41,14 +41,81 @@ function ConvertTo-SCTCanonicalActionStatus {
 
 function Assert-SCTResultFileSchema {
     [CmdletBinding()]
-    param([Parameter(Mandatory)] [string]$Path)
+    param(
+        [Parameter(Mandatory)] [string]$Path,
+        [switch]$AllowLegacyNotesColumn
+    )
 
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return }
     $header = Get-Content -LiteralPath $Path -TotalCount 1 -Encoding UTF8
     $actualColumns = @($header -split ',' | ForEach-Object { $_.Trim().Trim('"') })
     $expectedColumns = @(Get-SCTResultColumns)
+    $legacyColumns = @($expectedColumns) + 'notes'
+    if ($AllowLegacyNotesColumn -and
+        ($actualColumns -join '|') -eq ($legacyColumns -join '|')) {
+        return
+    }
     if (($actualColumns -join '|') -ne ($expectedColumns -join '|')) {
         throw "Results CSV has an unexpected schema: $Path. Expected columns: $($expectedColumns -join ', ')."
+    }
+}
+
+function Convert-SCTLegacyResultFileSchema {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)] [string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $null }
+
+    $header = Get-Content -LiteralPath $Path -TotalCount 1 -Encoding UTF8
+    $actualColumns = @($header -split ',' | ForEach-Object { $_.Trim().Trim('"') })
+    $expectedColumns = @(Get-SCTResultColumns)
+    $legacyColumns = @($expectedColumns) + 'notes'
+
+    if (($actualColumns -join '|') -eq ($expectedColumns -join '|')) {
+        return $null
+    }
+    if (($actualColumns -join '|') -ne ($legacyColumns -join '|')) {
+        Assert-SCTResultFileSchema -Path $Path
+        return $null
+    }
+
+    $rows = @(Import-Csv -LiteralPath $Path)
+    $directory = Split-Path $Path -Parent
+    $fileName = Split-Path $Path -Leaf
+    $temporaryPath = Join-Path $directory (
+        ".$fileName.notes-migration-$([guid]::NewGuid().ToString('N')).tmp"
+    )
+    $backupPath = "$Path.before-notes-removal.bak"
+    if (Test-Path -LiteralPath $backupPath) {
+        $backupPath = "$Path.before-notes-removal-$([guid]::NewGuid().ToString('N')).bak"
+    }
+
+    try {
+        if ($rows.Count -gt 0) {
+            $rows |
+                Select-Object -Property $expectedColumns |
+                Export-Csv -LiteralPath $temporaryPath -NoTypeInformation -Encoding UTF8
+        }
+        else {
+            ('"' + ($expectedColumns -join '","') + '"') |
+                Set-Content -LiteralPath $temporaryPath -Encoding UTF8
+        }
+
+        Assert-SCTResultFileSchema -Path $temporaryPath
+        $migratedRows = @(Import-Csv -LiteralPath $temporaryPath)
+        if ($migratedRows.Count -ne $rows.Count) {
+            throw "Results CSV migration changed the row count for: $Path"
+        }
+
+        Copy-Item -LiteralPath $Path -Destination $backupPath
+        Move-Item -LiteralPath $temporaryPath -Destination $Path -Force
+        Write-Verbose "Removed the legacy notes column from '$Path'. Backup: '$backupPath'."
+        return $backupPath
+    }
+    finally {
+        if (Test-Path -LiteralPath $temporaryPath -PathType Leaf) {
+            Remove-Item -LiteralPath $temporaryPath -Force
+        }
     }
 }
 
@@ -67,14 +134,14 @@ function Write-SCTResultRow {
         [string]$DeliveryMethod = '',
         [Parameter(Mandatory)] [string]$TestStage,
         [string]$SourceResult = '',
-        [ValidateSet('', 'executed', 'not_executed')] [string]$ExecutionStatus = '',
-        [string]$Notes = ''
+        [ValidateSet('', 'executed', 'not_executed')] [string]$ExecutionStatus = ''
     )
 
     $directory = Split-Path $Path -Parent
     if ($directory -and -not (Test-Path -LiteralPath $directory)) {
         New-Item -ItemType Directory -Path $directory -Force | Out-Null
     }
+    Convert-SCTLegacyResultFileSchema -Path $Path | Out-Null
     Assert-SCTResultFileSchema -Path $Path
 
     [pscustomobject][ordered]@{
@@ -93,6 +160,5 @@ function Write-SCTResultRow {
         detection_status  = ''
         action_status     = ''
         reviewer_notes    = ''
-        notes             = $Notes
     } | Export-Csv -LiteralPath $Path -Append -NoTypeInformation -Encoding UTF8
 }

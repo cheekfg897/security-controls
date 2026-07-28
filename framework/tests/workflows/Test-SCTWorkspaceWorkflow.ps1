@@ -105,20 +105,18 @@ try {
     Write-SCTResultRow -Path $results04 -Timestamp (Get-Date) -RunId 'run-a' `
         -TechniqueId '4.1' -TechniqueName 'Registry Run Keys' -Subtest 'HKCURunKey' `
         -TestScript 'v4.1-registry-run-key/v4.1-registry-run-key.ps1' `
-        -TestStage 'execution' -SourceResult 'EXECUTED' -ExecutionStatus 'executed' `
-        -Notes 'marker created'
+        -TestStage 'execution' -SourceResult 'EXECUTED' -ExecutionStatus 'executed'
     Write-SCTResultRow -Path $results01 -Timestamp (Get-Date) -RunId 'run-a' `
         -TechniqueId '1.1' -TechniqueName 'Disk Drop' `
         -TestScript 'v1.1-known-malware/v1.1-known-malware.ps1' `
         -TestInput 'malware-a.exe' -TestInputSha256 ('A' * 64) -DeliveryMethod 'DiskDrop' `
-        -TestStage 'write' -SourceResult 'delivery_success=True; sysmon_event_found=True' `
-        -Notes 'sample written'
+        -TestStage 'write' -SourceResult 'delivery_success=True; sysmon_event_found=True'
     Write-SCTResultRow -Path $results01 -Timestamp (Get-Date) -RunId 'run-a' `
         -TechniqueId '1.1' -TechniqueName 'Disk Drop' `
         -TestScript 'v1.1-known-malware/v1.1-known-malware.ps1' `
         -TestInput 'malware-a.exe' -TestInputSha256 ('A' * 64) -DeliveryMethod 'DiskDrop' `
         -TestStage 'execution' -SourceResult 'delivery_success=True; sysmon_event_found=True' `
-        -ExecutionStatus 'executed' -Notes 'sample executed'
+        -ExecutionStatus 'executed'
 
     Assert-True (@(Import-Csv -LiteralPath $results01).Count -eq 2) `
         'Module 01 observations must stay in results-module-01.csv.'
@@ -236,7 +234,9 @@ try {
     @(
         Import-Csv -LiteralPath $results01 -Encoding UTF8
         Import-Csv -LiteralPath $results04 -Encoding UTF8
-    ) | Export-Csv -LiteralPath (Join-Path $legacyWorkspace 'results.csv') -NoTypeInformation -Encoding UTF8
+    ) |
+        Select-Object *, @{ Name = 'notes'; Expression = { 'legacy generated note' } } |
+        Export-Csv -LiteralPath (Join-Path $legacyWorkspace 'results.csv') -NoTypeInformation -Encoding UTF8
     @(
         Import-Csv -LiteralPath $catalog01 -Encoding UTF8
         Import-Csv -LiteralPath $catalog04 -Encoding UTF8
@@ -258,6 +258,8 @@ try {
         Import-Csv -LiteralPath (Join-Path $legacyWorkspace 'results-module-04.csv')
     )
     Assert-True ($convertedRows.Count -eq 3) 'Legacy conversion must preserve every result exactly once.'
+    Assert-True ($convertedRows[0].PSObject.Properties.Name -notcontains 'notes') `
+        'Legacy conversion must remove the retired generated notes column.'
     Assert-True (@(
         $convertedRows |
             Where-Object { $_.action_status -in @('blocked_before_execution', 'blocked_after_execution') }

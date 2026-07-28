@@ -37,8 +37,10 @@ RESULT_COLUMNS = (
     "detection_status",
     "action_status",
     "reviewer_notes",
-    "notes",
 )
+# Packages created before the generated notes column was removed remain
+# readable. New packages always use RESULT_COLUMNS.
+LEGACY_RESULT_COLUMNS = RESULT_COLUMNS + ("notes",)
 
 CATALOG_COLUMNS = (
     "module_id",
@@ -282,9 +284,11 @@ def _parse_csv(
     name: str,
     text: str,
     expected_columns: tuple[str, ...],
+    alternate_columns: tuple[tuple[str, ...], ...] = (),
 ) -> list[dict[str, str]]:
     reader = csv.DictReader(io.StringIO(text, newline=""))
-    if tuple(reader.fieldnames or ()) != expected_columns:
+    actual_columns = tuple(reader.fieldnames or ())
+    if actual_columns != expected_columns and actual_columns not in alternate_columns:
         raise _fail(
             package,
             f"{name} has an unexpected schema; expected: {', '.join(expected_columns)}",
@@ -481,6 +485,7 @@ def load_package(path: str | Path) -> PackageData:
                 results_name,
                 _read_text(package, archive, results_name),
                 RESULT_COLUMNS,
+                (LEGACY_RESULT_COLUMNS,),
             )
             for line_number, row in enumerate(result_rows, start=2):
                 _validate_result_row(

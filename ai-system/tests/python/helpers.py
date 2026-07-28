@@ -7,7 +7,7 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
-from sct_ai.packages import CATALOG_COLUMNS, RESULT_COLUMNS
+from sct_ai.packages import CATALOG_COLUMNS, LEGACY_RESULT_COLUMNS, RESULT_COLUMNS
 
 
 MODULE_NAMES = {
@@ -32,6 +32,7 @@ def package_bytes(
     *,
     display_name: str | None = None,
     default_mode: str = "detect_and_block",
+    legacy_notes_column: bool = False,
 ) -> bytes:
     profile = {
         "schema_version": "1.0",
@@ -96,29 +97,29 @@ def package_bytes(
             execution = trial.get("execution")
             if execution is None:
                 execution = "executed"
-            result_by_module.setdefault(module_id, []).append(
-                {
-                    "timestamp": f"2026-07-23T01:00:{row_index:02d}+00:00",
-                    "run_id": f"fixture-{row_index}",
-                    "technique_id": technique_id,
-                    "technique_name": technique_name,
-                    "subtest": subtest,
-                    "test_script": f"fixture-{technique_id}.ps1",
-                    "test_input": specification.get("test_input", "fixture.bin"),
-                    "test_input_sha256": specification.get(
-                        "sha256",
-                        f"{row_index:064X}",
-                    ),
-                    "delivery_method": specification.get("delivery_method", "Fixture"),
-                    "test_stage": specification.get("stage", "execution"),
-                    "source_result": "fixture=true",
-                    "execution_status": execution,
-                    "detection_status": trial["detection"],
-                    "action_status": action,
-                    "reviewer_notes": "Fixture reviewer note",
-                    "notes": "Fixture generated note",
-                }
-            )
+            result_row = {
+                "timestamp": f"2026-07-23T01:00:{row_index:02d}+00:00",
+                "run_id": f"fixture-{row_index}",
+                "technique_id": technique_id,
+                "technique_name": technique_name,
+                "subtest": subtest,
+                "test_script": f"fixture-{technique_id}.ps1",
+                "test_input": specification.get("test_input", "fixture.bin"),
+                "test_input_sha256": specification.get(
+                    "sha256",
+                    f"{row_index:064X}",
+                ),
+                "delivery_method": specification.get("delivery_method", "Fixture"),
+                "test_stage": specification.get("stage", "execution"),
+                "source_result": "fixture=true",
+                "execution_status": execution,
+                "detection_status": trial["detection"],
+                "action_status": action,
+                "reviewer_notes": "Fixture reviewer note",
+            }
+            if legacy_notes_column:
+                result_row["notes"] = "Legacy generated note"
+            result_by_module.setdefault(module_id, []).append(result_row)
 
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
@@ -127,9 +128,12 @@ def package_bytes(
             json.dumps(profile, indent=2).encode("utf-8"),
         )
         for module_id in sorted(result_by_module):
+            result_columns = (
+                LEGACY_RESULT_COLUMNS if legacy_notes_column else RESULT_COLUMNS
+            )
             archive.writestr(
                 f"results-module-{module_id}.csv",
-                _csv_bytes(RESULT_COLUMNS, result_by_module[module_id]),
+                _csv_bytes(result_columns, result_by_module[module_id]),
             )
             archive.writestr(
                 f"test-catalog-module-{module_id}.csv",
@@ -148,6 +152,7 @@ def write_package(
     *,
     display_name: str | None = None,
     default_mode: str = "detect_and_block",
+    legacy_notes_column: bool = False,
 ) -> Path:
     path.write_bytes(
         package_bytes(
@@ -155,6 +160,7 @@ def write_package(
             cases,
             display_name=display_name,
             default_mode=default_mode,
+            legacy_notes_column=legacy_notes_column,
         )
     )
     return path

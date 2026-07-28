@@ -251,12 +251,14 @@ param(
     Write-SCTResultRow -Path $canonicalCsv -Timestamp (Get-Date) -RunId 'fixture-run' `
         -TechniqueId '4.2' -TechniqueName 'Scheduled Task' -Subtest 'HiddenXML' `
         -TestScript 'v4.2-scheduled-task/v4.2-scheduled-task.ps1' -TestStage 'execution' `
-        -SourceResult 'BLOCKED' -ExecutionStatus 'not_executed' -Notes 'fixture'
+        -SourceResult 'BLOCKED' -ExecutionStatus 'not_executed'
     $canonicalRows = @(Import-Csv -LiteralPath $canonicalCsv)
     Assert-True ($canonicalRows[0].technique_id -eq '4.2') 'Canonical results must identify the technique.'
     Assert-True ($canonicalRows[0].subtest -eq 'HiddenXML') 'Canonical results must identify the subtest.'
     Assert-True ($canonicalRows[0].PSObject.Properties.Name.Count -eq (Get-SCTResultColumns).Count) `
         'Canonical results must use the complete shared schema.'
+    Assert-True ($canonicalRows[0].PSObject.Properties.Name -notcontains 'notes') `
+        'Canonical results must not include the removed generated notes column.'
     Assert-True (-not $canonicalRows[0].detection_status -and -not $canonicalRows[0].action_status) `
         'New result rows must leave human review fields blank.'
     Assert-True (
@@ -268,6 +270,27 @@ param(
     Assert-True (
         (ConvertTo-SCTCanonicalActionStatus -Status 'blocked_after_execution') -eq 'blocked'
     ) 'Legacy blocked-after outcomes must normalize to blocked.'
+
+    $legacyNotesCsv = Join-Path $tempRoot 'legacy-notes-results.csv'
+    $legacyNotesRow = $canonicalRows[0].PSObject.Copy()
+    $legacyNotesRow | Add-Member -NotePropertyName 'notes' -NotePropertyValue 'legacy generated detail'
+    $legacyNotesRow | Export-Csv -LiteralPath $legacyNotesCsv -NoTypeInformation -Encoding UTF8
+    Assert-SCTResultFileSchema -Path $legacyNotesCsv -AllowLegacyNotesColumn
+
+    Write-SCTResultRow -Path $legacyNotesCsv -Timestamp (Get-Date) -RunId 'fixture-run-2' `
+        -TechniqueId '4.2' -TechniqueName 'Scheduled Task' -Subtest 'HiddenXML' `
+        -TestScript 'v4.2-scheduled-task/v4.2-scheduled-task.ps1' -TestStage 'execution' `
+        -SourceResult 'EXECUTED' -ExecutionStatus 'executed'
+
+    $migratedLegacyRows = @(Import-Csv -LiteralPath $legacyNotesCsv)
+    Assert-True ($migratedLegacyRows.Count -eq 2) `
+        'Migrating an existing results file must retain its rows before appending.'
+    Assert-True ($migratedLegacyRows[0].PSObject.Properties.Name -notcontains 'notes') `
+        'The automatic results migration must remove the legacy notes column.'
+    Assert-True ($migratedLegacyRows[0].technique_id -eq '4.2') `
+        'The automatic results migration must preserve existing row values.'
+    Assert-True (Test-Path -LiteralPath "$legacyNotesCsv.before-notes-removal.bak" -PathType Leaf) `
+        'The automatic results migration must retain an untouched backup.'
 
     $scenariosPath = Join-Path $repoRoot 'scenarios'
     $realModules = @(Get-SCTModules -ScenariosPath $scenariosPath)
@@ -507,8 +530,6 @@ param(
         $errorRows = @(Import-Csv -LiteralPath $errorCsv)
         Assert-True ($errorRows.Count -eq 1 -and $errorRows[0].source_result -eq 'ERROR') `
             'A nonzero technique exit must append an ERROR row instead of claiming a block.'
-        Assert-True ($errorRows[0].notes -like '*exit code: 2*') `
-            'An ERROR result must retain the technique process exit code.'
         Assert-True ($script:MockCleanupCalls -eq 2) `
             'Managed cleanup must still run after a failed interactive technique.'
         $script:MockProcessExitCode = 0
@@ -522,12 +543,12 @@ param(
         }
 
         $script:ReadResponses = New-Object 'System.Collections.Generic.Queue[string]'
-        foreach ($response in @('', 'E', 'reviewed execution', '')) { $script:ReadResponses.Enqueue($response) }
+        foreach ($response in @('', 'E', '')) { $script:ReadResponses.Enqueue($response) }
         Invoke-DirectTechnique -Technique $directTechnique -ScriptPath (Join-Path $tempRoot 'direct.ps1') `
             -ResultsPath $directCsv
 
         $script:ReadResponses = New-Object 'System.Collections.Generic.Queue[string]'
-        foreach ($response in @('', 'N', 'execution absent', '')) { $script:ReadResponses.Enqueue($response) }
+        foreach ($response in @('', 'N', '')) { $script:ReadResponses.Enqueue($response) }
         Invoke-DirectTechnique -Technique $directTechnique -ScriptPath (Join-Path $tempRoot 'direct.ps1') `
             -ResultsPath $directCsv
 
@@ -550,8 +571,7 @@ param(
         Assert-True ($directRows[1].source_result -eq 'NOT_EXECUTED' -and
             $directRows[1].execution_status -eq 'not_executed') `
             'A not-executed direct result must not claim that the control blocked it.'
-        Assert-True ($directRows[2].source_result -eq 'ERROR' -and
-            $directRows[2].notes -like '*exit code: 9*') `
+        Assert-True ($directRows[2].source_result -eq 'ERROR') `
             'A failed direct technique must append an ERROR row automatically.'
     } finally {
         $env:SystemRoot = $originalSystemRoot
