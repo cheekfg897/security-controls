@@ -34,7 +34,7 @@ security-controls/
     |   `-- reference/
     |-- results/
     |   `-- <control-id>/
-    |       |-- control-profile.json
+    |       |-- <control-id>-control-profile.json
     |       |-- results-module-01.csv
     |       `-- test-catalog-module-01.csv
     |-- samples/
@@ -170,11 +170,11 @@ technique_id,subtest,objective,what_it_does,success_indicator
 
 A technique without subtests has one row with an empty `subtest`. A technique with subtests has one row per named subtest. This keeps detailed explanations out of result rows while giving a human or later AI system an exact join through `technique_id` and `subtest`.
 
-Framework-managed writers append the canonical schema defined in `core/SCT-Results.ps1` to the selected module's `results-module-<id>.csv`. New writers must use `Write-SCTResultRow` so every test remains compatible with direct review, validation, and packaging.
+Framework-managed writers append the canonical schema defined in `core/SCT-Results.ps1` to the selected module's `results-module-<id>.csv`. Reviewer-facing context and editable verdict fields precede machine-facing provenance such as the run ID, internal technique ID, script path, and SHA-256. New writers must use `Write-SCTResultRow` so every test remains compatible with direct review, validation, and packaging.
 
 ## Per-product result workspace
 
-`results/<control-id>/control-profile.json` records the exact control configuration used for that product's test series. Each `results-module-<id>.csv` contains generated observations and reviewer statuses for one module; its matching `test-catalog-module-<id>.csv` describes that module's tests. The catalogue rows include `module_id` and `module_name`.
+`results/<control-id>/<control-id>-control-profile.json` records the exact control configuration used for that product's test series. Each `results-module-<id>.csv` contains generated observations and reviewer statuses for one module; its matching `test-catalog-module-<id>.csv` describes that module's tests. The catalogue rows include `module_id` and `module_name`.
 
 After reviewing the module result files, validate the workspace and generate `submissions/<control-id>.zip`. Each archive contains the profile plus the result/catalogue pair for every tested module. Repeat for the second product to produce the two inputs required by the comparison system.
 

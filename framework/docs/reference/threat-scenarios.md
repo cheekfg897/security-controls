@@ -51,7 +51,7 @@ Module 04 can run all 19 subtests without prompts from an Administrator PowerShe
 
 ```powershell
 .\Start-SCT.ps1 `
-    -ControlProfilePath .\results\sentinelone\control-profile.json `
+    -ControlProfilePath .\results\sentinelone\sentinelone-control-profile.json `
     -RunModule 04 -NonInteractive
 ```
 

@@ -7,7 +7,13 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
-from sct_ai.packages import CATALOG_COLUMNS, LEGACY_RESULT_COLUMNS, RESULT_COLUMNS
+from sct_ai.packages import (
+    CATALOG_COLUMNS,
+    LEGACY_RESULT_COLUMNS,
+    PREVIOUS_LEGACY_RESULT_COLUMNS,
+    PREVIOUS_RESULT_COLUMNS,
+    RESULT_COLUMNS,
+)
 
 
 MODULE_NAMES = {
@@ -33,6 +39,7 @@ def package_bytes(
     display_name: str | None = None,
     default_mode: str = "detect_and_block",
     legacy_notes_column: bool = False,
+    previous_result_layout: bool = False,
 ) -> bytes:
     profile = {
         "schema_version": "1.0",
@@ -128,9 +135,16 @@ def package_bytes(
             json.dumps(profile, indent=2).encode("utf-8"),
         )
         for module_id in sorted(result_by_module):
-            result_columns = (
-                LEGACY_RESULT_COLUMNS if legacy_notes_column else RESULT_COLUMNS
-            )
+            if previous_result_layout:
+                result_columns = (
+                    PREVIOUS_LEGACY_RESULT_COLUMNS
+                    if legacy_notes_column
+                    else PREVIOUS_RESULT_COLUMNS
+                )
+            else:
+                result_columns = (
+                    LEGACY_RESULT_COLUMNS if legacy_notes_column else RESULT_COLUMNS
+                )
             archive.writestr(
                 f"results-module-{module_id}.csv",
                 _csv_bytes(result_columns, result_by_module[module_id]),
@@ -153,6 +167,7 @@ def write_package(
     display_name: str | None = None,
     default_mode: str = "detect_and_block",
     legacy_notes_column: bool = False,
+    previous_result_layout: bool = False,
 ) -> Path:
     path.write_bytes(
         package_bytes(
@@ -161,6 +176,7 @@ def write_package(
             display_name=display_name,
             default_mode=default_mode,
             legacy_notes_column=legacy_notes_column,
+            previous_result_layout=previous_result_layout,
         )
     )
     return path

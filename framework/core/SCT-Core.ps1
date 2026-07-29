@@ -47,7 +47,8 @@ function Get-SCTModuleErrors {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)] $Module,
-        [Parameter(Mandatory)] [string]$ModuleDir
+        [Parameter(Mandatory)] [string]$ModuleDir,
+        [switch]$AllowMissingScripts
     )
 
     $errors = @()
@@ -172,7 +173,9 @@ function Get-SCTModuleErrors {
 
         if ($status -ne 'planned') {
             if ($scriptPath -and -not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
-                $errors += "Technique '$techniqueId' script was not found: $script"
+                if (-not $AllowMissingScripts) {
+                    $errors += "Technique '$techniqueId' script was not found: $script"
+                }
             } elseif ($scriptPath -and $subtests.Count -gt 0) {
                 if (-not (Test-SCTScriptSupportsParameter -ScriptPath $scriptPath -ParameterName 'Subtest')) {
                     $errors += "Technique '$techniqueId' defines subtests, but its script does not accept -Subtest."
@@ -232,7 +235,13 @@ function Get-SCTModules {
             $raw    = Get-Content -Path $jsonFile -Raw -Encoding UTF8
             $module = $raw | ConvertFrom-Json
 
-            $moduleErrors = @(Get-SCTModuleErrors -Module $module -ModuleDir $dir.FullName)
+            # A control may quarantine one scenario script as soon as the
+            # repository reaches the lab VM. Keep the rest of that module
+            # available at runtime; the standalone validation command remains
+            # strict because it does not use -AllowMissingScripts.
+            $moduleErrors = @(
+                Get-SCTModuleErrors -Module $module -ModuleDir $dir.FullName -AllowMissingScripts
+            )
             if ($moduleErrors.Count -gt 0) {
                 foreach ($message in $moduleErrors) {
                     Write-Warning "$($dir.Name)/module.json: $message"
@@ -243,6 +252,20 @@ function Get-SCTModules {
             # Runtime-only path used to resolve technique scripts.
             $module | Add-Member -NotePropertyName 'ScriptDir' `
                 -NotePropertyValue $dir.FullName -Force
+
+            foreach ($technique in @($module.techniques)) {
+                $status = Get-SCTPropertyValue -InputObject $technique -Name 'status' -Default ''
+                if ($status -eq 'planned') { continue }
+
+                $scriptPath = Join-Path $dir.FullName ([string]$technique.script)
+                if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
+                    Write-Warning (
+                        "$($dir.Name)/module.json: Technique '$($technique.id)' is unavailable " +
+                        "because its script is missing: $($technique.script). " +
+                        "The module remains loaded so its other techniques can run."
+                    )
+                }
+            }
 
             $modules += $module
         } catch {
@@ -317,8 +340,18 @@ function Get-SCTControlProfilePaths {
     if (-not (Test-Path -LiteralPath $ResultsRoot -PathType Container)) { return @() }
     return @(
         Get-ChildItem -LiteralPath $ResultsRoot -Directory |
-            ForEach-Object { Join-Path $_.FullName 'control-profile.json' } |
-            Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } |
+            ForEach-Object {
+                if ($_.Name -notmatch '^[a-z0-9][a-z0-9._-]*$') { return }
+                $preferredPath = Get-SCTControlProfilePath `
+                    -WorkspaceRoot $_.FullName -ControlId $_.Name
+                $legacyPath = Join-Path $_.FullName 'control-profile.json'
+                if (Test-Path -LiteralPath $preferredPath -PathType Leaf) {
+                    $preferredPath
+                } elseif (Test-Path -LiteralPath $legacyPath -PathType Leaf) {
+                    # Read legacy workspaces so existing evaluations remain usable.
+                    $legacyPath
+                }
+            } |
             Sort-Object
     )
 }
@@ -349,9 +382,15 @@ function Get-SCTControlWorkspace {
 
     $resultsRoot = [IO.Path]::GetFullPath((Join-Path $RepoRoot 'results'))
     $expectedProfilePath = [IO.Path]::GetFullPath(
+        (Get-SCTControlProfilePath `
+            -WorkspaceRoot (Join-Path $resultsRoot $controlId) `
+            -ControlId $controlId)
+    )
+    $legacyProfilePath = [IO.Path]::GetFullPath(
         (Join-Path (Join-Path $resultsRoot $controlId) 'control-profile.json')
     )
-    if (-not $resolvedProfilePath.Equals($expectedProfilePath, [StringComparison]::OrdinalIgnoreCase)) {
+    if (-not $resolvedProfilePath.Equals($expectedProfilePath, [StringComparison]::OrdinalIgnoreCase) -and
+        -not $resolvedProfilePath.Equals($legacyProfilePath, [StringComparison]::OrdinalIgnoreCase)) {
         throw "Control profile '$resolvedProfilePath' must be stored at '$expectedProfilePath'."
     }
 
@@ -624,8 +663,17 @@ function Invoke-SCTModuleMenu {
         for ($i = 0; $i -lt $techniques.Count; $i++) {
             $technique = $techniques[$i]
             $status = Get-SCTPropertyValue -InputObject $technique -Name 'status' -Default ''
-            $stub   = if ($status -eq 'planned') { '  [PLANNED]' } else { '' }
-            $color  = if ($status -eq 'planned') { 'DarkGray' } else { 'White' }
+            $scriptPath = Join-Path $Module.ScriptDir ([string]$technique.script)
+            $unavailable = $status -ne 'planned' -and
+                -not (Test-Path -LiteralPath $scriptPath -PathType Leaf)
+            $stub = if ($status -eq 'planned') {
+                '  [PLANNED]'
+            } elseif ($unavailable) {
+                '  [UNAVAILABLE: SCRIPT MISSING]'
+            } else {
+                ''
+            }
+            $color = if ($status -eq 'planned' -or $unavailable) { 'DarkGray' } else { 'White' }
             Write-Host ("  [{0}]  {1}{2}" -f ($i + 1), $technique.name, $stub) -ForegroundColor $color
             $description = Get-SCTPropertyValue -InputObject $technique -Name 'description' -Default ''
             if ($description) { Write-Host ("        $description") -ForegroundColor DarkGray }
@@ -1178,7 +1226,7 @@ function Invoke-SCTSubtests {
         Write-Host "  [i] [!] Marker found: execution observed" -ForegroundColor DarkGray
         Write-Host "  [i] [?] Marker absent: execution not observed; this alone does not prove a control block" -ForegroundColor DarkGray
         Write-Host "  [i] [X] Script error: fix the test prerequisite or launch failure before comparison" -ForegroundColor DarkGray
-        Write-Host "  [i] Set detection_status (detected/not_detected) and action_status (blocked/not_blocked) in this module result CSV" -ForegroundColor DarkGray
+        Write-Host "  [i] Complete detection= (detected/not_detected), action= (blocked/not_blocked), and optional notes= in this module result CSV" -ForegroundColor DarkGray
     }
 
     if ($NonInteractive) {
@@ -1427,6 +1475,112 @@ function Find-7Zip {
     return $null
 }
 
+function Get-SCTZipEntryInventory {
+    <#
+    .SYNOPSIS
+        Reads a ZIP member inventory before extraction writes anything to disk.
+
+    .DESCRIPTION
+        Password-free ZIPs use System.IO.Compression and include a SHA-256 for
+        every readable file member. Password-protected ZIPs use 7-Zip's
+        technical listing; those records retain path, size, and CRC even when
+        the endpoint control later removes the extracted file.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$ZipPath,
+        [string]$Password = ''
+    )
+
+    $records = @()
+    if (-not $Password) {
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $archive = [System.IO.Compression.ZipFile]::OpenRead($ZipPath)
+        try {
+            foreach ($entry in @($archive.Entries)) {
+                if (-not $entry.Name) { continue }
+
+                $memberHash = ''
+                $hashError = ''
+                try {
+                    $stream = $entry.Open()
+                    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+                    try {
+                        $memberHash = (
+                            [System.BitConverter]::ToString($sha256.ComputeHash($stream))
+                        ).Replace('-', '')
+                    } finally {
+                        $sha256.Dispose()
+                        $stream.Dispose()
+                    }
+                } catch {
+                    $hashError = $_.Exception.Message
+                }
+
+                $records += [pscustomobject]@{
+                    relative_path = ([string]$entry.FullName).Replace('/', '\')
+                    size          = [long]$entry.Length
+                    crc32         = ''
+                    sha256        = $memberHash
+                    hash_error    = $hashError
+                }
+            }
+        } finally {
+            $archive.Dispose()
+        }
+        return @($records)
+    }
+
+    $7zPath = Find-7Zip
+    if (-not $7zPath) {
+        throw '7-Zip is required to inventory a password-protected ZIP.'
+    }
+
+    $listing = @(& $7zPath l '-slt' "-p$Password" $ZipPath 2>&1)
+    $listingExitCode = $LASTEXITCODE
+    if ($listingExitCode -ne 0) {
+        throw "7-Zip could not list the archive (exit $listingExitCode)."
+    }
+
+    $inMemberSection = $false
+    $current = @{}
+    foreach ($rawLine in @($listing) + '') {
+        $line = [string]$rawLine
+        if ($line.Trim() -eq '----------') {
+            $inMemberSection = $true
+            $current = @{}
+            continue
+        }
+        if (-not $inMemberSection) { continue }
+
+        if ([string]::IsNullOrWhiteSpace($line)) {
+            if ($current.Count -gt 0 -and
+                $current.ContainsKey('Path') -and
+                $current['Folder'] -ne '+') {
+                $parsedSize = 0L
+                [void][long]::TryParse([string]$current['Size'], [ref]$parsedSize)
+                $records += [pscustomobject]@{
+                    relative_path = ([string]$current['Path']).Replace('/', '\')
+                    size          = $parsedSize
+                    crc32         = [string]$current['CRC']
+                    sha256        = ''
+                    hash_error    = 'Member SHA-256 unavailable from encrypted archive listing'
+                }
+            }
+            $current = @{}
+            continue
+        }
+
+        $separatorIndex = $line.IndexOf(' = ', [StringComparison]::Ordinal)
+        if ($separatorIndex -gt 0) {
+            $key = $line.Substring(0, $separatorIndex).Trim()
+            $value = $line.Substring($separatorIndex + 3)
+            $current[$key] = $value
+        }
+    }
+    return @($records)
+}
+
 function Invoke-ZipExtraction {
     [CmdletBinding()]
     param(
@@ -1548,13 +1702,62 @@ function Merge-StagingFromZips {
 
         $depthLabel = if ($item.Depth -gt 0) { " (nested depth $($item.Depth))" } else { '' }
         Write-Host "  [*] Extracting $($zip.Name)$depthLabel..." -ForegroundColor Yellow
+
+        $archiveHash = ''
+        try {
+            $archiveHash = (Get-FileHash -LiteralPath $zip.FullName -Algorithm SHA256).Hash
+        } catch {
+            $warnings += "Could not hash archive $($zip.Name): $($_.Exception.Message)"
+        }
+
+        $archiveInventory = @()
+        $inventoryError = ''
+        try {
+            $archiveInventory = @(
+                Get-SCTZipEntryInventory -ZipPath $zip.FullName -Password $item.Password
+            )
+        } catch {
+            $inventoryError = $_.Exception.Message
+            $warnings += "Could not inventory $($zip.Name) before extraction: $inventoryError"
+        }
+
+        $safeInventory = @(
+            foreach ($entry in $archiveInventory) {
+                $rawMemberPath = ([string]$entry.relative_path).Replace('/', '\')
+                $segments = @($rawMemberPath -split '\\')
+                if (-not $rawMemberPath -or
+                    [System.IO.Path]::IsPathRooted($rawMemberPath) -or
+                    $segments -contains '..') {
+                    $warnings += "Ignored unsafe archive member path in $($zip.Name): $rawMemberPath"
+                    continue
+                }
+                $memberPath = $rawMemberPath.TrimStart('\')
+                $entry.relative_path = $memberPath
+                $entry
+            }
+        )
+
+        $expectedSampleEntries = @(
+            $safeInventory | Where-Object {
+                [System.IO.Path]::GetExtension([string]$_.relative_path) -match
+                    $recognisedExtensionPattern
+            }
+        )
+        $expectedSupportEntries = @(
+            $safeInventory | Where-Object {
+                $extension = [System.IO.Path]::GetExtension([string]$_.relative_path)
+                $extension -ine '.zip' -and $extension -notmatch $recognisedExtensionPattern
+            }
+        )
+
+        $extractionError = ''
         try {
             Invoke-ZipExtraction -ZipPath $zip.FullName -DestPath $destDir -Password $item.Password
         } catch {
-            $msg = "Skipped $($zip.Name): $($_.Exception.Message)"
+            $extractionError = $_.Exception.Message
+            $msg = "Extraction of $($zip.Name) was incomplete: $extractionError"
             $warnings += $msg
             Write-Host "  [!] $msg" -ForegroundColor Red
-            continue
         }
 
         $extractedFiles = @(Get-ChildItem -LiteralPath $destDir -File -Recurse -ErrorAction SilentlyContinue)
@@ -1562,26 +1765,80 @@ function Merge-StagingFromZips {
         $nonZipFiles = @($extractedFiles | Where-Object { $_.Extension -ine '.zip' })
         $sampleFiles = @($nonZipFiles | Where-Object { $_.Extension -match $recognisedExtensionPattern })
         $bundleSupportFiles = @($nonZipFiles | Where-Object { $_.Extension -notmatch $recognisedExtensionPattern })
-        $recognisedFiles += $sampleFiles.Count
-        $supportFiles += $bundleSupportFiles.Count
+
+        # If the archive could not be inventoried, preserve the old behavior
+        # for files that did land. A successful inventory remains authoritative
+        # even when extraction is interrupted by AV/EDR.
+        if ($archiveInventory.Count -eq 0 -and $sampleFiles.Count -gt 0) {
+            $expectedSampleEntries = @(
+                foreach ($sampleFile in $sampleFiles) {
+                    $relativePath = $sampleFile.FullName.Substring($destDir.Length).TrimStart('\', '/')
+                    $fallbackHash = ''
+                    $fallbackHashError = $inventoryError
+                    try {
+                        $fallbackHash = (
+                            Get-FileHash -LiteralPath $sampleFile.FullName -Algorithm SHA256
+                        ).Hash
+                    } catch {
+                        $fallbackHashError = $_.Exception.Message
+                    }
+                    [pscustomobject]@{
+                        relative_path = $relativePath
+                        size          = [long]$sampleFile.Length
+                        crc32         = ''
+                        sha256        = $fallbackHash
+                        hash_error    = $fallbackHashError
+                    }
+                }
+            )
+            $expectedSupportEntries = @($bundleSupportFiles)
+        }
+
+        $expectedFiles = @(
+            foreach ($entry in $expectedSampleEntries) {
+                $relativePath = [string]$entry.relative_path
+                $extractedPath = Join-Path $destDir $relativePath
+                $presentAfterExtraction = Test-Path -LiteralPath $extractedPath -PathType Leaf
+                $memberHash = [string]$entry.sha256
+                $memberHashError = [string]$entry.hash_error
+                if ($presentAfterExtraction -and -not $memberHash) {
+                    try {
+                        $memberHash = (Get-FileHash -LiteralPath $extractedPath -Algorithm SHA256).Hash
+                        $memberHashError = ''
+                    } catch {
+                        $memberHashError = $_.Exception.Message
+                    }
+                }
+
+                [pscustomobject]@{
+                    relative_path           = $relativePath
+                    name                    = [System.IO.Path]::GetFileName($relativePath)
+                    extension               = [System.IO.Path]::GetExtension($relativePath)
+                    size                    = [long]$entry.size
+                    crc32                   = [string]$entry.crc32
+                    sha256                  = $memberHash
+                    runnable                = (
+                        [System.IO.Path]::GetExtension($relativePath) -match
+                            '\.(exe|com|bat|cmd|ps1|vbs|js|hta|jar|py)$'
+                    )
+                    present_after_extraction = $presentAfterExtraction
+                    hash_error              = $memberHashError
+                }
+            }
+        )
+
+        $landedSampleCount = @($expectedFiles | Where-Object { $_.present_after_extraction }).Count
+        $missingSampleCount = $expectedFiles.Count - $landedSampleCount
+        $recognisedFiles += $expectedFiles.Count
+        $supportFiles += $expectedSupportEntries.Count
         Write-Host (
-            "    $($sampleFiles.Count) recognised sample file(s), " +
-            "$($bundleSupportFiles.Count) supporting/other file(s), " +
+            "    $($expectedFiles.Count) expected recognised sample file(s) " +
+            "($landedSampleCount present, $missingSampleCount missing), " +
+            "$($expectedSupportEntries.Count) supporting/other file(s), " +
             "$($nestedZips.Count) nested ZIP(s)"
         ) -ForegroundColor DarkGray
 
-        if ($sampleFiles.Count -gt 0) {
-            $relativeCandidates = @(
-                $sampleFiles | ForEach-Object {
-                    $_.FullName.Substring($destDir.Length).TrimStart('\', '/')
-                }
-            )
-            $archiveHash = ''
-            try {
-                $archiveHash = (Get-FileHash -LiteralPath $zip.FullName -Algorithm SHA256).Hash
-            } catch {
-                $warnings += "Could not hash archive $($zip.Name): $($_.Exception.Message)"
-            }
+        if ($expectedFiles.Count -gt 0) {
             $bundleRecords += [pscustomobject]@{
                 id                  = $destName
                 name                = $baseName
@@ -1589,8 +1846,11 @@ function Merge-StagingFromZips {
                 archive_name        = $zip.Name
                 archive_sha256      = $archiveHash
                 depth               = $item.Depth
-                recognised_files    = @($relativeCandidates)
-                supporting_files    = $bundleSupportFiles.Count
+                recognised_files    = @($expectedFiles | ForEach-Object { $_.relative_path })
+                expected_files      = @($expectedFiles)
+                supporting_files    = $expectedSupportEntries.Count
+                extraction_error    = $extractionError
+                inventory_error     = $inventoryError
             }
         }
 
@@ -1636,7 +1896,7 @@ function Merge-StagingFromZips {
 
     $manifestPath = Join-Path $combinedDir '.sct-bundles.json'
     [pscustomobject]@{
-        schema_version = 1
+        schema_version = 2
         created_at     = (Get-Date).ToUniversalTime().ToString('o')
         bundles        = @($bundleRecords)
     } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
@@ -1844,11 +2104,21 @@ function Show-SCTSummary {
         foreach ($group in ($data | Group-Object technique_id | Sort-Object Name)) {
             $executed = @($group.Group | Where-Object { $_.execution_status -eq 'executed' }).Count
             $notExecuted = @($group.Group | Where-Object { $_.execution_status -eq 'not_executed' }).Count
-            $reviewed = @($group.Group | Where-Object { $_.detection_status -and $_.action_status }).Count
+            $reviewed = @(
+                $group.Group | Where-Object {
+                    (ConvertTo-SCTCanonicalDetectionStatus -Status ([string]$_.detection_status)) -and
+                    (ConvertTo-SCTCanonicalActionStatus -Status ([string]$_.action_status))
+                }
+            ).Count
             Write-Host ($header -f $group.Name, $group.Count, $executed, $notExecuted, $reviewed) -ForegroundColor White
         }
         Write-Host ("  " + ('-' * 64)) -ForegroundColor DarkGray
-        $reviewedTotal = @($data | Where-Object { $_.detection_status -and $_.action_status }).Count
+        $reviewedTotal = @(
+            $data | Where-Object {
+                (ConvertTo-SCTCanonicalDetectionStatus -Status ([string]$_.detection_status)) -and
+                (ConvertTo-SCTCanonicalActionStatus -Status ([string]$_.action_status))
+            }
+        ).Count
         Write-Host "  $($data.Count) rows total; $reviewedTotal reviewed." -ForegroundColor Cyan
         Write-Host "  Sources: $($resultPaths.Count) module result file(s) under $WorkspaceRoot" -ForegroundColor DarkGray
     } catch {

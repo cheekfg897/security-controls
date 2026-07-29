@@ -232,6 +232,33 @@ param(
     $errors = @(Get-SCTModuleErrors -Module $planned -ModuleDir $tempRoot)
     Assert-True ($errors.Count -eq 0) 'Planned techniques may reserve a future script path.'
 
+    $runtimeScenarios = Join-Path $tempRoot 'runtime-scenarios'
+    $runtimeModuleDir = Join-Path $runtimeScenarios '05-runtime-resilience'
+    New-Item -ItemType Directory -Path $runtimeModuleDir -Force | Out-Null
+    Write-FixtureScript -Directory $runtimeModuleDir -Name 'available.ps1' -Content 'param()' | Out-Null
+    Set-Content -LiteralPath (Join-Path $runtimeModuleDir 'module.json') -Encoding UTF8 -Value @'
+{
+  "id": "05",
+  "name": "Runtime Resilience",
+  "techniques": [
+    { "id": "5.1", "name": "Quarantined", "attack_id": "T0001", "script": "missing.ps1" },
+    { "id": "5.2", "name": "Available", "attack_id": "T0002", "script": "available.ps1" }
+  ]
+}
+'@
+    $runtimeManifest = Get-Content -LiteralPath (Join-Path $runtimeModuleDir 'module.json') -Raw |
+        ConvertFrom-Json
+    $strictRuntimeErrors = @(
+        Get-SCTModuleErrors -Module $runtimeManifest -ModuleDir $runtimeModuleDir
+    )
+    Assert-ErrorLike $strictRuntimeErrors "*Technique '5.1' script was not found*" `
+        'Strict module validation must continue reporting missing scripts.'
+    $runtimeModules = @(Get-SCTModules -ScenariosPath $runtimeScenarios -WarningAction SilentlyContinue)
+    Assert-True ($runtimeModules.Count -eq 1) `
+        'Runtime discovery must keep a module loaded when one technique script is missing.'
+    Assert-True (@($runtimeModules[0].techniques).Count -eq 2) `
+        'Runtime discovery must retain both unavailable and runnable techniques for stable menu numbering.'
+
     $workflowCases = @(
         @{ Script = 'direct.ps1'; Technique = $minimal.techniques[0]; Expected = 'direct' },
         @{ Script = 'source.ps1'; Technique = $minimal.techniques[0]; Expected = 'sample-batch' },
@@ -257,10 +284,27 @@ param(
     Assert-True ($canonicalRows[0].subtest -eq 'HiddenXML') 'Canonical results must identify the subtest.'
     Assert-True ($canonicalRows[0].PSObject.Properties.Name.Count -eq (Get-SCTResultColumns).Count) `
         'Canonical results must use the complete shared schema.'
+    Assert-True (
+        (@($canonicalRows[0].PSObject.Properties.Name)[0..7] -join '|') -eq
+        'technique_name|subtest|test_input|test_stage|execution_status|detection_status|action_status|reviewer_notes'
+    ) 'Canonical results must put reviewer-facing columns before technical provenance.'
     Assert-True ($canonicalRows[0].PSObject.Properties.Name -notcontains 'notes') `
         'Canonical results must not include the removed generated notes column.'
-    Assert-True (-not $canonicalRows[0].detection_status -and -not $canonicalRows[0].action_status) `
-        'New result rows must leave human review fields blank.'
+    Assert-True (
+        $canonicalRows[0].detection_status -eq 'detection=' -and
+        $canonicalRows[0].action_status -eq 'action=' -and
+        $canonicalRows[0].reviewer_notes -eq 'notes='
+    ) 'New result rows must provide compact prompts in all review fields.'
+    Assert-True (
+        (ConvertTo-SCTCanonicalDetectionStatus -Status 'detection=detected') -eq
+            'detected'
+    ) 'A reviewer must be able to type a detection value after the prompt.'
+    Assert-True (
+        (ConvertTo-SCTCanonicalActionStatus -Status 'action=blocked') -eq 'blocked'
+    ) 'A reviewer must be able to type an action value after the prompt.'
+    Assert-True (
+        (Remove-SCTReviewPrompt -Value 'notes=Reviewed' -Prompt notes) -eq 'Reviewed'
+    ) 'The package builder must be able to remove the notes prompt.'
     Assert-True (
         (ConvertTo-SCTCanonicalActionStatus -Status 'blocked') -eq 'blocked'
     ) 'The canonical blocked status must remain blocked.'
@@ -292,6 +336,30 @@ param(
     Assert-True (Test-Path -LiteralPath "$legacyNotesCsv.before-notes-removal.bak" -PathType Leaf) `
         'The automatic results migration must retain an untouched backup.'
 
+    $previousLayoutCsv = Join-Path $tempRoot 'previous-layout-results.csv'
+    $canonicalRows[0] |
+        Select-Object -Property (Get-SCTPreviousResultColumns) |
+        Export-Csv -LiteralPath $previousLayoutCsv -NoTypeInformation -Encoding UTF8
+    Assert-SCTResultFileSchema -Path $previousLayoutCsv
+
+    Write-SCTResultRow -Path $previousLayoutCsv -Timestamp (Get-Date) -RunId 'fixture-run-3' `
+        -TechniqueId '4.2' -TechniqueName 'Scheduled Task' -Subtest 'HiddenXML' `
+        -TestScript 'v4.2-scheduled-task/v4.2-scheduled-task.ps1' -TestStage 'execution' `
+        -SourceResult 'EXECUTED' -ExecutionStatus 'executed'
+
+    $migratedLayoutRows = @(Import-Csv -LiteralPath $previousLayoutCsv)
+    Assert-True ($migratedLayoutRows.Count -eq 2) `
+        'Migrating the previous results layout must retain its rows before appending.'
+    Assert-True (
+        ($migratedLayoutRows[0].PSObject.Properties.Name -join '|') -eq
+        ((Get-SCTResultColumns) -join '|')
+    ) 'The automatic migration must put existing results into the review-first layout.'
+    Assert-True ($migratedLayoutRows[0].technique_id -eq '4.2') `
+        'The review-first layout migration must preserve technical field values.'
+    Assert-True (
+        Test-Path -LiteralPath "$previousLayoutCsv.before-review-first-layout.bak" -PathType Leaf
+    ) 'The review-first layout migration must retain an untouched backup.'
+
     $scenariosPath = Join-Path $repoRoot 'scenarios'
     $realModules = @(Get-SCTModules -ScenariosPath $scenariosPath)
     Assert-True ($realModules.Count -eq 4) 'All four repository modules must load.'
@@ -310,11 +378,13 @@ param(
     $fixtureResultsRoot = Join-Path $tempRoot 'results'
     $fixtureWorkspaceRoot = Join-Path $fixtureResultsRoot 'example-control'
     New-Item -ItemType Directory -Path $fixtureWorkspaceRoot -Force | Out-Null
-    $fixtureProfilePath = Join-Path $fixtureWorkspaceRoot 'control-profile.json'
+    $fixtureProfilePath = Join-Path $fixtureWorkspaceRoot 'example-control-control-profile.json'
     Copy-Item -LiteralPath (Join-Path $repoRoot 'config\control-profile.example.json') `
         -Destination $fixtureProfilePath
     $discoveredProfiles = @(Get-SCTControlProfilePaths -ResultsRoot $fixtureResultsRoot)
     Assert-True ($discoveredProfiles.Count -eq 1) 'Control workspace discovery must find one profile per product folder.'
+    Assert-True ((Split-Path $discoveredProfiles[0] -Leaf) -eq 'example-control-control-profile.json') `
+        'Control workspace discovery must use the control-specific profile filename.'
     $script:ReadResponses = New-Object 'System.Collections.Generic.Queue[string]'
     $script:ReadResponses.Enqueue('1')
     $script:ReadPrompts = @()

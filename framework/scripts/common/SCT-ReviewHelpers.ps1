@@ -28,6 +28,26 @@ function Get-SCTModuleCatalogFileName {
     return "test-catalog-module-$ModuleId.csv"
 }
 
+function Get-SCTControlProfileFileName {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)] [string]$ControlId)
+
+    if ($ControlId -notmatch '^[a-z0-9][a-z0-9._-]*$') {
+        throw "Control id '$ControlId' must use lowercase letters, digits, dots, underscores, or hyphens."
+    }
+    return "$ControlId-control-profile.json"
+}
+
+function Get-SCTControlProfilePath {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$WorkspaceRoot,
+        [Parameter(Mandatory)] [string]$ControlId
+    )
+
+    return (Join-Path $WorkspaceRoot (Get-SCTControlProfileFileName -ControlId $ControlId))
+}
+
 function Get-SCTModuleResultsPath {
     [CmdletBinding()]
     param(
@@ -65,7 +85,9 @@ function Assert-SCTWorkspaceUsesModuleFiles {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)] [string]$WorkspaceRoot,
-        [string]$ControlProfilePath = (Join-Path $WorkspaceRoot 'control-profile.json')
+        [string]$ControlProfilePath = (Get-SCTControlProfilePath `
+            -WorkspaceRoot $WorkspaceRoot `
+            -ControlId (Split-Path $WorkspaceRoot -Leaf))
     )
 
     $legacyResults = Join-Path $WorkspaceRoot 'results.csv'

@@ -26,7 +26,7 @@ New-Item -ItemType Directory -Path $tempRoot | Out-Null
 try {
     $resultsRoot = Join-Path $tempRoot 'results'
     $workspaceRoot = Join-Path $resultsRoot 'control-a'
-    $profilePath = Join-Path $workspaceRoot 'control-profile.json'
+    $profilePath = Join-Path $workspaceRoot 'control-a-control-profile.json'
     $results01 = Join-Path $workspaceRoot 'results-module-01.csv'
     $results04 = Join-Path $workspaceRoot 'results-module-04.csv'
     $catalog01 = Join-Path $workspaceRoot 'test-catalog-module-01.csv'
@@ -39,7 +39,7 @@ try {
         -PolicyName 'Detect-only fixture' -DefaultMode 'detect_only'
 
     Assert-True (Test-Path -LiteralPath $profilePath -PathType Leaf) `
-        'Workspace setup must write control-profile.json.'
+        'Workspace setup must include the control id in the profile filename.'
     $catalogPaths = @(Get-ChildItem -LiteralPath $workspaceRoot -Filter 'test-catalog-module-*.csv' -File)
     Assert-True ($catalogPaths.Count -eq 4) 'Workspace setup must write one catalogue per current module.'
     Assert-True (-not (Test-Path -LiteralPath $results01)) `
@@ -50,7 +50,8 @@ try {
         'Every workspace catalogue row must identify its module.'
 
     $quickResultsRoot = Join-Path $tempRoot 'quick-results'
-    $quickProfilePath = Join-Path (Join-Path $quickResultsRoot 'quick-control') 'control-profile.json'
+    $quickProfilePath = Join-Path (Join-Path $quickResultsRoot 'quick-control') `
+        'quick-control-control-profile.json'
     $global:SCTTestReadResponses = New-Object 'System.Collections.Generic.Queue[string]'
     foreach ($response in @(
         'Quick Control',
@@ -135,13 +136,19 @@ try {
     foreach ($resultPath in @($results01, $results04)) {
         $rows = @(Import-Csv -LiteralPath $resultPath -Encoding UTF8)
         foreach ($row in $rows) {
-            $row.detection_status = 'detected'
-            $row.action_status = switch ($reviewedRowIndex) {
+            $row.detection_status = 'detection=detected'
+            $row.action_status = 'action=' + $(switch ($reviewedRowIndex) {
                 0 { 'blocked' }
                 1 { 'blocked_after_execution' }
                 default { 'not_blocked' }
+            })
+            $row.reviewer_notes = 'notes=Reviewed in fixture.'
+            if ($reviewedRowIndex -eq 2) {
+                # Replacing the prompt entirely remains supported too.
+                $row.detection_status = 'detected'
+                $row.action_status = 'not_blocked'
+                $row.reviewer_notes = 'Reviewed in fixture.'
             }
-            $row.reviewer_notes = 'Reviewed in fixture.'
             $reviewedRowIndex++
         }
         $rows | Export-Csv -LiteralPath $resultPath -NoTypeInformation -Encoding UTF8
@@ -171,6 +178,18 @@ try {
                     }
                 }
         )
+        $packagedReviewRows = @(
+            $archive.Entries |
+                Where-Object { $_.FullName -match '^results-module-\d{2}\.csv$' } |
+                ForEach-Object {
+                    $reader = [IO.StreamReader]::new($_.Open())
+                    try {
+                        @($reader.ReadToEnd() | ConvertFrom-Csv)
+                    } finally {
+                        $reader.Dispose()
+                    }
+                }
+        )
     } finally {
         $archive.Dispose()
     }
@@ -190,6 +209,13 @@ try {
             Where-Object { $_ -in @('blocked_before_execution', 'blocked_after_execution') }
     ).Count -eq 0) `
         'The comparison ZIP must normalize legacy blocked timing values to blocked.'
+    Assert-True (@(
+        $packagedReviewRows | Where-Object {
+            $_.detection_status -ne 'detected' -or
+            $_.reviewer_notes -ne 'Reviewed in fixture.'
+        }
+    ).Count -eq 0) `
+        'The comparison ZIP must remove review prompts and retain entered values.'
 
     # A newly authored module automatically receives stable ID-based workspace files.
     $fixtureScenarios = Join-Path $tempRoot 'fixture-scenarios'

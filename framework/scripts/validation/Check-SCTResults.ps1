@@ -14,7 +14,7 @@
 
 .EXAMPLE
     .\scripts\validation\Check-SCTResults.ps1 `
-        -ControlProfilePath .\results\sentinelone\control-profile.json
+        -ControlProfilePath .\results\sentinelone\sentinelone-control-profile.json
 #>
 
 [CmdletBinding(DefaultParameterSetName = 'Path')]
@@ -49,8 +49,6 @@ $requiredColumns = @(
 )
 $errors = @()
 $allowedExecution = @('', 'executed', 'not_executed')
-$allowedDetection = @('detected', 'not_detected')
-$allowedAction = @(Get-SCTAllowedActionStatuses)
 $checkedRows = 0
 $legacyActionRows = 0
 
@@ -83,8 +81,10 @@ foreach ($resolvedPath in $resultPaths) {
         $csvLine = $index + 2
         $context = "$(Split-Path $resolvedPath -Leaf) line $csvLine"
         $execution = [string]$row.execution_status
-        $detection = [string]$row.detection_status
-        $action = [string]$row.action_status
+        $rawDetection = [string]$row.detection_status
+        $rawAction = [string]$row.action_status
+        $detection = ConvertTo-SCTCanonicalDetectionStatus -Status $rawDetection
+        $action = ConvertTo-SCTCanonicalActionStatus -Status $rawAction
 
         foreach ($generatedField in @('timestamp', 'run_id', 'technique_id', 'technique_name', 'test_script', 'test_stage')) {
             if ([string]::IsNullOrWhiteSpace([string]$row.$generatedField)) {
@@ -101,12 +101,17 @@ foreach ($resolvedPath in $resultPaths) {
         if ($execution -notin $allowedExecution) {
             $errors += "$context has invalid execution_status '$execution'."
         }
-        if ($detection -notin $allowedDetection) {
-            $errors += "$context must set detection_status to detected or not_detected."
+        if (-not $detection) {
+            $errors += (
+                "$context must complete detection= with detected or not_detected."
+            )
         }
-        if ($action -notin $allowedAction) {
-            $errors += "$context must set action_status to blocked or not_blocked."
-        } elseif ($action -in @('blocked_before_execution', 'blocked_after_execution')) {
+        if (-not $action) {
+            $errors += "$context must complete action= with blocked or not_blocked."
+        } elseif (
+            (Remove-SCTReviewPrompt -Value $rawAction -Prompt action) -in
+                @('blocked_before_execution', 'blocked_after_execution')
+        ) {
             $legacyActionRows++
         }
     }

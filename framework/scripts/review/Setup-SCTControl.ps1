@@ -9,8 +9,8 @@
     recorded as "Not recorded", and a skipped default mode uses "custom", so
     the saved profile remains valid. Use -NonInteractive with all named
     parameters for automation and tests. By default, creates
-    results\<control-id>\control-profile.json together with one module-specific
-    test catalogue for every discovered SCT module.
+    results\<control-id>\<control-id>-control-profile.json together with one
+    module-specific test catalogue for every discovered SCT module.
 
     If results-module-<id>.csv files already exist for this workspace (for
     example, left over from a previous control tested under the same
@@ -164,7 +164,8 @@ if ($NonInteractive) {
     $DefaultMode = Read-InteractiveDefaultMode -Current $DefaultMode
 }
 
-$OutputPath = Join-Path (Join-Path $ResultsRoot $ControlId) 'control-profile.json'
+$workspaceRoot = Join-Path $ResultsRoot $ControlId
+$OutputPath = Get-SCTControlProfilePath -WorkspaceRoot $workspaceRoot -ControlId $ControlId
 
 $settings = @()
 $exclusions = @()

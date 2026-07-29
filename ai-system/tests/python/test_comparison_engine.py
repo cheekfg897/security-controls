@@ -34,6 +34,41 @@ class ComparisonEngineTests(unittest.TestCase):
         package = load_package(path)
         self.assertEqual(1, len(package.cases))
 
+    def test_previous_result_column_order_remains_readable(self) -> None:
+        path = write_package(
+            self.root / "previous-layout.zip",
+            "previous-layout",
+            [{"sha256": "B" * 64}],
+            previous_result_layout=True,
+        )
+        package = load_package(path)
+        case = next(iter(package.cases.values()))
+        self.assertEqual("sha256:" + ("B" * 64), case.input_identity)
+        self.assertEqual("1.1", case.technique_id)
+
+    def test_compact_malware_label_aligns_when_one_member_hash_is_missing(self) -> None:
+        compact_label = "payload.exe [A1B2C3D4]"
+        present = load_package(
+            write_package(
+                self.root / "present.zip",
+                "present",
+                [{"test_input": compact_label, "sha256": "A" * 64}],
+            )
+        )
+        quarantined = load_package(
+            write_package(
+                self.root / "quarantined.zip",
+                "quarantined",
+                [{"test_input": compact_label, "sha256": ""}],
+            )
+        )
+
+        self.assertEqual(set(present.cases), set(quarantined.cases))
+        self.assertEqual(
+            next(iter(present.cases.values())).input_identity,
+            next(iter(quarantined.cases.values())).input_identity,
+        )
+
     def test_prevention_first_ranking_uses_shared_cases(self) -> None:
         cases_a = [
             {"sha256": "A" * 64, "detection": "detected", "action": "blocked"},

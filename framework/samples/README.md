@@ -23,10 +23,12 @@ Keeping them zipped:
 
 Each ZIP is treated as one malware bundle. It may contain its original
 subdirectories, supporting DLLs, configuration, resources, and source
-material; no hand-written manifest is needed. The launcher generates an
-internal bundle manifest after extraction. `v1.1-known-malware.ps1` reports
-recognized payload files (`.exe .dll .com .bat .cmd .ps1 .vbs .js .hta .jar
-.py`) while preserving every supporting file in place.
+material; no hand-written manifest is needed. Before extraction, the launcher
+generates an internal inventory in `.sct-bundles.json`, then records which
+members remain available afterward. `v1.1-known-malware.ps1` reports recognized
+payload files (`.exe .dll .com .bat .cmd .ps1 .vbs .js .hta .jar .py`) even
+when a control removes one during extraction, while preserving every available
+supporting file in place.
 
 By default the launcher only **copies** each complete bundle to
 `C:\Temp\SCT-Bundles\` and does not run it. If execution is enabled, a bundle

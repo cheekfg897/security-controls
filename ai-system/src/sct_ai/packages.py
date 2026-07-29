@@ -22,6 +22,25 @@ MAX_UNCOMPRESSED_BYTES = 250 * 1024 * 1024
 MAX_COMPRESSION_RATIO = 1000
 
 RESULT_COLUMNS = (
+    "technique_name",
+    "subtest",
+    "test_input",
+    "test_stage",
+    "execution_status",
+    "detection_status",
+    "action_status",
+    "reviewer_notes",
+    "source_result",
+    "delivery_method",
+    "timestamp",
+    "run_id",
+    "technique_id",
+    "test_script",
+    "test_input_sha256",
+)
+# Packages created before the review-first layout remain readable. Column
+# ordering affects presentation only; normalized fields retain their meaning.
+PREVIOUS_RESULT_COLUMNS = (
     "timestamp",
     "run_id",
     "technique_id",
@@ -38,9 +57,10 @@ RESULT_COLUMNS = (
     "action_status",
     "reviewer_notes",
 )
-# Packages created before the generated notes column was removed remain
-# readable. New packages always use RESULT_COLUMNS.
+# Packages created before the generated notes column was removed also remain
+# readable in either layout. New packages always use RESULT_COLUMNS.
 LEGACY_RESULT_COLUMNS = RESULT_COLUMNS + ("notes",)
+PREVIOUS_LEGACY_RESULT_COLUMNS = PREVIOUS_RESULT_COLUMNS + ("notes",)
 
 CATALOG_COLUMNS = (
     "module_id",
@@ -344,6 +364,14 @@ def _validate_result_row(
 
 
 def _input_identity(row: dict[str, str]) -> str:
+    # Technique 1.1 uses a compact, stable sample label built from the archive
+    # and member path. Prefer that label for new rows so a member quarantined
+    # before hashing still aligns with the same member on another control.
+    if (
+        row["technique_id"] == "1.1"
+        and re.search(r" \[[0-9A-Fa-f]{8}\]$", row["test_input"])
+    ):
+        return stable_id("opaque-input", row["test_input"].strip().casefold())
     if row["test_input_sha256"]:
         return f"sha256:{row['test_input_sha256'].upper()}"
     if row["test_input"]:
@@ -485,7 +513,11 @@ def load_package(path: str | Path) -> PackageData:
                 results_name,
                 _read_text(package, archive, results_name),
                 RESULT_COLUMNS,
-                (LEGACY_RESULT_COLUMNS,),
+                (
+                    PREVIOUS_RESULT_COLUMNS,
+                    LEGACY_RESULT_COLUMNS,
+                    PREVIOUS_LEGACY_RESULT_COLUMNS,
+                ),
             )
             for line_number, row in enumerate(result_rows, start=2):
                 _validate_result_row(

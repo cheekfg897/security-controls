@@ -4,7 +4,7 @@
 
 .EXAMPLE
     .\scripts\review\Build-SCTComparisonPackage.ps1 `
-        -ControlProfilePath .\results\sentinelone\control-profile.json
+        -ControlProfilePath .\results\sentinelone\sentinelone-control-profile.json
 #>
 
 [CmdletBinding()]
@@ -76,16 +76,30 @@ New-Item -ItemType Directory -Path $stagingRoot | Out-Null
 try {
     $stagedPaths = @()
     foreach ($sourcePath in $packagePaths) {
-        $targetPath = Join-Path $stagingRoot (Split-Path $sourcePath -Leaf)
+        $targetFileName = if ($sourcePath.Equals($profilePath, [StringComparison]::OrdinalIgnoreCase)) {
+            # Comparison packages retain the canonical, product-independent name.
+            'control-profile.json'
+        } else {
+            Split-Path $sourcePath -Leaf
+        }
+        $targetPath = Join-Path $stagingRoot $targetFileName
         if ((Split-Path $sourcePath -Leaf) -match '^results-module-\d{2}\.csv$') {
             $rows = @(Import-Csv -LiteralPath $sourcePath -Encoding UTF8)
             foreach ($row in $rows) {
-                $canonical = ConvertTo-SCTCanonicalActionStatus `
+                $canonicalDetection = ConvertTo-SCTCanonicalDetectionStatus `
+                    -Status ([string]$row.detection_status)
+                if (-not $canonicalDetection) {
+                    throw "Cannot normalize detection_status in: $sourcePath"
+                }
+                $canonicalAction = ConvertTo-SCTCanonicalActionStatus `
                     -Status ([string]$row.action_status)
-                if ($null -eq $canonical -or -not $canonical) {
+                if (-not $canonicalAction) {
                     throw "Cannot normalize action_status in: $sourcePath"
                 }
-                $row.action_status = $canonical
+                $row.detection_status = $canonicalDetection
+                $row.action_status = $canonicalAction
+                $row.reviewer_notes = Remove-SCTReviewPrompt `
+                    -Value ([string]$row.reviewer_notes) -Prompt notes
             }
             $rows | Export-Csv -LiteralPath $targetPath `
                 -NoTypeInformation -Encoding UTF8

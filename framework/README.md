@@ -90,14 +90,14 @@ selected:
 
 Skipped text details are stored as `Not recorded`, and a skipped policy mode is
 stored as `custom`, keeping the profile valid. Setup writes the configuration
-to `results/<control-id>/control-profile.json` and creates one
+to `results/<control-id>/<control-id>-control-profile.json` and creates one
 `test-catalog-module-<id>.csv` per discovered module. SCT routes each
 observation to that module's `results-module-<id>.csv`.
 
 You can also select an existing configuration at launch:
 
 ```powershell
-.\Start-SCT.ps1 -ControlProfilePath .\results\sentinelone\control-profile.json
+.\Start-SCT.ps1 -ControlProfilePath .\results\sentinelone\sentinelone-control-profile.json
 ```
 
 > Start with a standard PowerShell session unless the selected technique says it requires Administrator rights. Do not run Technique 3.2 (UAC Bypass) from an already elevated session because existing elevation invalidates the test.
@@ -127,7 +127,7 @@ From an Administrator PowerShell session:
 
 ```powershell
 .\Start-SCT.ps1 `
-    -ControlProfilePath .\results\sentinelone\control-profile.json `
+    -ControlProfilePath .\results\sentinelone\sentinelone-control-profile.json `
     -RunModule 04 -NonInteractive
 ```
 
@@ -148,7 +148,7 @@ The workspace contains the product configuration plus stable result/catalogue fi
 
 ```text
 results/<control-id>/
-|-- control-profile.json
+|-- <control-id>-control-profile.json
 |-- results-module-01.csv
 |-- test-catalog-module-01.csv
 |-- results-module-02.csv
@@ -161,8 +161,18 @@ Run SCT with that workspace selected. SCT creates a module result file on its fi
 
 | Field | Allowed values |
 |---|---|
-| `detection_status` | `detected`, `not_detected` |
-| `action_status` | `blocked`, `not_blocked` |
+| `detection_status` | Complete `detection=` with `detected` or `not_detected` |
+| `action_status` | Complete `action=` with `blocked` or `not_blocked` |
+
+New rows also place `notes=` in `reviewer_notes`. Type after each equals sign,
+for example `detection=detected`, `action=blocked`, and
+`notes=Quarantined during extraction`. Replacing the complete prompt with the
+value remains supported. Packaging removes the prompts automatically.
+
+Result files use a review-first layout: technique name, subtest, input, stage,
+execution observation, and the editable review fields appear first. Run
+metadata, the internal technique ID, script path, and SHA-256 remain at the end
+of each row for validation and AI comparison.
 
 `execution_status` is generated separately as `executed`, `not_executed`, or blank when it is not applicable; it never determines the review fields. A test may have an execution marker while the product log also reports a block, so reviewers record the observations independently. Timestamps remain so a reviewer can correlate each row with the product console or local logs.
 
@@ -176,10 +186,10 @@ Save the module result files in place, then validate and package the workspace t
 
 ```powershell
 .\scripts\validation\Check-SCTResults.ps1 `
-    -ControlProfilePath .\results\sentinelone\control-profile.json
+    -ControlProfilePath .\results\sentinelone\sentinelone-control-profile.json
 
 .\scripts\review\Build-SCTComparisonPackage.ps1 `
-    -ControlProfilePath .\results\sentinelone\control-profile.json
+    -ControlProfilePath .\results\sentinelone\sentinelone-control-profile.json
 ```
 
 The package is written to `submissions/<control-id>.zip` and contains `control-profile.json` plus the authoritative result/catalogue pair for every tested module. Repeat for the second product and submit the two ZIP files to the comparison system.

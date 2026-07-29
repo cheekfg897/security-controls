@@ -10,11 +10,15 @@ For interactive use, run `.\Start-SCT.ps1` and select `[M] Manage SCT`. The dire
 |---|---|---|
 | 1 | Create the product workspace and record its control policy | `.\scripts\review\Setup-SCTControl.ps1` |
 | 2 | Run tests | `.\Start-SCT.ps1` |
-| 3 | Enter `detected`/`not_detected` and `blocked`/`not_blocked` | Open each `results\<control-id>\results-module-<id>.csv` in Excel |
-| 4 | Check the completed results | `.\scripts\validation\Check-SCTResults.ps1 -ControlProfilePath .\results\<control-id>\control-profile.json` |
-| 5 | Build that product's comparison ZIP | `.\scripts\review\Build-SCTComparisonPackage.ps1 -ControlProfilePath .\results\<control-id>\control-profile.json` |
+| 3 | Complete `detection=`, `action=`, and optional `notes=` | Open each `results\<control-id>\results-module-<id>.csv` in Excel |
+| 4 | Check the completed results | `.\scripts\validation\Check-SCTResults.ps1 -ControlProfilePath .\results\<control-id>\<control-id>-control-profile.json` |
+| 5 | Build that product's comparison ZIP | `.\scripts\review\Build-SCTComparisonPackage.ps1 -ControlProfilePath .\results\<control-id>\<control-id>-control-profile.json` |
 
-There is no raw/analysis conversion step and no second review CSV. SCT writes observations to the authoritative `results-module-<id>.csv`; a person fills `detection_status`, binary `action_status` (`blocked` or `not_blocked`), and optional `reviewer_notes` directly in each tested module file because execution alone cannot determine what the control detected or blocked.
+There is no raw/analysis conversion step and no second review CSV. SCT writes
+observations to the authoritative `results-module-<id>.csv`; a person types
+after its `detection=`, `action=`, and optional `notes=` prompts. Bare values
+also remain accepted, and packaging removes prompt labels. Review stays manual
+because execution alone cannot determine what the control detected or blocked.
 
 For interactive setup, only the configuration display name is required.
 Press Enter to accept the derived control id or skip an optional field.
@@ -25,7 +29,7 @@ Convert an older combined workspace with:
 
 ```powershell
 .\scripts\review\Convert-SCTLegacyWorkspace.ps1 `
-    -ControlProfilePath .\results\<control-id>\control-profile.json
+    -ControlProfilePath .\results\<control-id>\<control-id>-control-profile.json
 ```
 
 Repeat the workflow for the second product. The package builder writes `submissions/<control-id>.zip`, giving the comparison system one ZIP per product.

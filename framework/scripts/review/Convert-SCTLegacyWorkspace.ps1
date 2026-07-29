@@ -8,7 +8,7 @@
 
 .EXAMPLE
     .\scripts\review\Convert-SCTLegacyWorkspace.ps1 `
-        -ControlProfilePath .\results\sentinelone\control-profile.json
+        -ControlProfilePath .\results\sentinelone\sentinelone-control-profile.json
 #>
 
 [CmdletBinding()]

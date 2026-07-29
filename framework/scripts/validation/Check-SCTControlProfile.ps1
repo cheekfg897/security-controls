@@ -4,7 +4,7 @@
 
 .EXAMPLE
     .\scripts\validation\Check-SCTControlProfile.ps1 `
-        -Path .\results\sentinelone\control-profile.json
+        -Path .\results\sentinelone\sentinelone-control-profile.json
 #>
 
 [CmdletBinding()]

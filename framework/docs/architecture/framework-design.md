@@ -5,6 +5,12 @@ The launcher discovers `scenarios/*/module.json` relative to that directory,
 validates each file, shows the module and technique menus, infers how a script
 must be launched, and records normalized results.
 
+Runtime discovery tolerates an individual missing technique script because an
+endpoint control may quarantine that artifact on the lab VM. The affected
+technique is labeled `UNAVAILABLE: SCRIPT MISSING`, while the module and its
+remaining techniques stay selectable. `Check-SCTModules.ps1` remains strict and
+continues to report missing scripts during repository validation.
+
 ## Naming hierarchy
 
 ```text
@@ -137,7 +143,7 @@ Validation rejects unknown/legacy fields, missing required fields, malformed or 
 
 ```powershell
 .\Start-SCT.ps1 `
-    -ControlProfilePath .\results\sentinelone\control-profile.json `
+    -ControlProfilePath .\results\sentinelone\sentinelone-control-profile.json `
     -RunModule 04 -NonInteractive
 ```
 
@@ -147,7 +153,7 @@ Module 04 must contain only techniques with subtests. Each script must also acce
 
 | File | Contents |
 |---|---|
-| `results/<control-id>/control-profile.json` | Product, version, agent, policy, settings, exclusions, and local-log context. |
+| `results/<control-id>/<control-id>-control-profile.json` | Product, version, agent, policy, settings, exclusions, and local-log context. |
 | `results/<control-id>/results-module-<id>.csv` | Generated observations plus reviewer-entered detection, action, and reviewer-notes fields for one module. |
 | `results/<control-id>/test-catalog-module-<id>.csv` | One module's generated descriptions, including its ID and display name. |
 
@@ -155,11 +161,22 @@ All framework-managed writers use one fixed result schema. Generated results and
 
 Each interactive subtest selection receives an `I<technique>-...` run ID. A non-interactive Module 04 run uses one shared `M04-...` run ID for all of its technique rows.
 
-There is no raw/analysis conversion or separate reviewed copy. SCT appends generated observations to the authoritative module result file and leaves the control verdict fields blank. The reviewer edits that same file and enters:
+There is no raw/analysis conversion or separate reviewed copy. SCT appends
+generated observations to the authoritative module result file and initializes
+the review cells with short `detection=`, `action=`, and `notes=` prompts. The
+reviewer edits that same file and completes:
 
-- `detection_status`: `detected` or `not_detected`.
-- `action_status`: `blocked` or `not_blocked`.
+- `detection_status`: `detection=detected` or `detection=not_detected`.
+- `action_status`: `action=blocked` or `action=not_blocked`.
 
-The reviewer may also fill `reviewer_notes`. One file or the whole workspace is checked with `Check-SCTResults.ps1`, then packaged with the profile and matching module catalogues by `Build-SCTComparisonPackage.ps1`. Keeping execution, detection, and action separate avoids inferring control behavior from a marker or process-launch result. The action verdict is binary because logs do not reliably identify whether a block occurred before or after execution. Older timing-specific values are accepted and normalized to `blocked`.
+Bare values remain accepted. The reviewer may complete `reviewer_notes` after
+`notes=`. One file or the whole workspace is checked with
+`Check-SCTResults.ps1`, then packaged with the profile and matching module
+catalogues by `Build-SCTComparisonPackage.ps1`; packaging removes the prompts.
+Keeping execution, detection, and action separate avoids inferring control
+behavior from a marker or process-launch result. The action verdict is binary
+because logs do not reliably identify whether a block occurred before or after
+execution. Older timing-specific values are accepted and normalized to
+`blocked`.
 
 The package builder writes `submissions/<control-id>.zip`. Two products therefore produce two self-contained ZIP files for the comparison system.

@@ -19,7 +19,8 @@
     selected control profile so identity and results cannot diverge.
 
 .PARAMETER ControlProfilePath
-    Selects a product workspace through its results\<control-id>\control-profile.json.
+    Selects a product workspace through its
+    results\<control-id>\<control-id>-control-profile.json.
     Required with -NonInteractive. Interactive runs prompt when multiple
     workspaces exist and automatically select the only workspace when possible.
 
@@ -31,10 +32,10 @@
     .\Start-SCT.ps1
 
 .EXAMPLE
-    .\Start-SCT.ps1 -ControlProfilePath .\results\sentinelone\control-profile.json
+    .\Start-SCT.ps1 -ControlProfilePath .\results\sentinelone\sentinelone-control-profile.json
 
 .EXAMPLE
-    .\Start-SCT.ps1 -ControlProfilePath .\results\sentinelone\control-profile.json `
+    .\Start-SCT.ps1 -ControlProfilePath .\results\sentinelone\sentinelone-control-profile.json `
         -SamplesPath D:\MalwareSamples
 
 .NOTES
