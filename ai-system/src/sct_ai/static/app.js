@@ -90,6 +90,21 @@ document.addEventListener("DOMContentLoaded", () => {
   blockingWeight?.addEventListener("input", switchToCustomScoring);
   configureScoringMode();
 
+  const autoOption = scoringMode?.querySelector('option[value="auto"]');
+  function applyMixedModeGuard() {
+    if (!scoringMode || !autoOption) return;
+    const mixed = Boolean(document.querySelector("[data-mixed-modes]"));
+    autoOption.disabled = mixed;
+    scoringMode.setCustomValidity(
+      mixed && scoringMode.value === "auto"
+        ? "The selected packages mix detect-only and blocking policies. Choose Detection only, Prevention first, or Custom."
+        : ""
+    );
+  }
+  document.body.addEventListener("htmx:afterSwap", applyMixedModeGuard);
+  scoringMode?.addEventListener("change", applyMixedModeGuard);
+  applyMixedModeGuard();
+
   const panel = document.querySelector("[data-job-id]");
   if (!panel) return;
   const jobId = panel.dataset.jobId;

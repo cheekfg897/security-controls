@@ -8,7 +8,7 @@ Tests common ways malware reaches or executes on an endpoint.
 
 | Technique | Purpose | Preparation |
 |---|---|---|
-| 1.1 Disk Drop | Copy samples to disk and optionally execute them. | Put ZIPs in `samples/`; see the [technique guide](../../scenarios/01-malware-delivery/v1.1-known-malware/README.md). |
+| 1.1 Malware Payload Delivery | Copy samples to disk and optionally execute them. | Put ZIPs in `samples/`; see the [technique guide](../../scenarios/01-malware-delivery/v1.1-known-malware/README.md). |
 | 1.2 Removable Media | Deliver samples from USB media. | Use an authorised endpoint with physical USB passthrough; see the [technique guide](../../scenarios/01-malware-delivery/v1.2-removable-media/README.md). |
 | 1.3 Internet Download | Download samples over HTTP. | Start the companion server on a second VM; see the [two-VM guide](../../scenarios/01-malware-delivery/v1.3-download-internet/README.md). |
 | 1.4 Trojanised COTS | Exercise a decoy application and hidden payload chain. | Self-contained; see the [technique guide](../../scenarios/01-malware-delivery/v1.4-trojanised-cots/README.md). |

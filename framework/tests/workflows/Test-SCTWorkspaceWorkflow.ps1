@@ -108,14 +108,14 @@ try {
         -TestScript 'v4.1-registry-run-key/v4.1-registry-run-key.ps1' `
         -TestStage 'execution' -SourceResult 'EXECUTED' -ExecutionStatus 'executed'
     Write-SCTResultRow -Path $results01 -Timestamp (Get-Date) -RunId 'run-a' `
-        -TechniqueId '1.1' -TechniqueName 'Disk Drop' `
+        -TechniqueId '1.1' -TechniqueName 'Malware Payload Delivery' `
         -TestScript 'v1.1-known-malware/v1.1-known-malware.ps1' `
-        -TestInput 'malware-a.exe' -TestInputSha256 ('A' * 64) -DeliveryMethod 'DiskDrop' `
+        -TestInput 'malware-a.exe' -TestInputSha256 ('A' * 64) -DeliveryMethod 'MalwarePayloadDelivery' `
         -TestStage 'write' -SourceResult 'delivery_success=True; sysmon_event_found=True'
     Write-SCTResultRow -Path $results01 -Timestamp (Get-Date) -RunId 'run-a' `
-        -TechniqueId '1.1' -TechniqueName 'Disk Drop' `
+        -TechniqueId '1.1' -TechniqueName 'Malware Payload Delivery' `
         -TestScript 'v1.1-known-malware/v1.1-known-malware.ps1' `
-        -TestInput 'malware-a.exe' -TestInputSha256 ('A' * 64) -DeliveryMethod 'DiskDrop' `
+        -TestInput 'malware-a.exe' -TestInputSha256 ('A' * 64) -DeliveryMethod 'MalwarePayloadDelivery' `
         -TestStage 'execution' -SourceResult 'delivery_success=True; sysmon_event_found=True' `
         -ExecutionStatus 'executed'
 

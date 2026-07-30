@@ -641,6 +641,40 @@ function Invoke-SCTManagementMenu {
 # MODULE SUB-MENU + DISPATCH
 # =============================================================================
 
+function Confirm-SCTExistingResultsFile {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$ResultsPath
+    )
+
+    if (-not (Test-Path -LiteralPath $ResultsPath -PathType Leaf)) {
+        return $false
+    }
+
+    Write-Host ""
+    Write-Host "  [!] A results CSV already exists:" -ForegroundColor Yellow
+    Write-Host "      $ResultsPath" -ForegroundColor DarkGray
+    Write-Host "  [!] It may contain results from other techniques in this module." -ForegroundColor Yellow
+
+    while ($true) {
+        $answer = (
+            Read-Host "  Delete the existing results CSV and start fresh? [Y/N] (Enter keeps it)"
+        ).Trim()
+
+        if (-not $answer -or $answer -ieq 'N') {
+            Write-Host "  Existing results kept; new results will be appended." -ForegroundColor Cyan
+            return $false
+        }
+        if ($answer -ieq 'Y') {
+            Remove-Item -LiteralPath $ResultsPath -Force
+            Write-Host "  Existing results CSV deleted. This run will create a fresh file." -ForegroundColor Green
+            return $true
+        }
+
+        Write-Host "  Enter Y to delete the file, or N to keep it." -ForegroundColor Yellow
+    }
+}
+
 function Invoke-SCTModuleMenu {
     [CmdletBinding()]
     param(
@@ -740,6 +774,8 @@ function Invoke-SCTTechnique {
         Read-Host "`n  Press Enter to return"
         return
     }
+
+    [void](Confirm-SCTExistingResultsFile -ResultsPath $ResultsPath)
 
     switch (Get-SCTTechniqueWorkflow -Technique $Technique -ScriptPath $scriptPath) {
         'subtests' {

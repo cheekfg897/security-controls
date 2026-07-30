@@ -165,7 +165,9 @@ Requirements:
   unsafe compression ratios are rejected.
 
 Use **Validate packages** before running a comparison. The preflight result
-shows each control ID, case count, trial count, and submitted module IDs.
+shows each control ID, case count, trial count, submitted module IDs, and the
+declared policy mode, and warns when the selection mixes detect-only and
+blocking policies.
 
 Uploads are copied to a generated staging directory. They are removed when the
 job finishes. ZIPs already stored under `framework\submissions\` are never modified.
@@ -184,14 +186,19 @@ module. The current repository has:
 If two more module definitions are added, the page displays six module cards
 automatically. Initial weights are divided equally across all discovered
 modules, with the final value adjusted for rounding so the total remains
-exactly 100%. For six modules, that is approximately 16.667% per module.
+exactly 100%. For six modules, that is 16.667% for the first five modules and
+16.665% for the last one.
 
 Module weights describe business importance. A module with a 40% weight has
 twice the ranking influence of a module with a 20% weight.
 
 The modules contained in the selected ZIPs must have positive weights totaling
-100%. Set modules not present in the selected packages to 0%. The server
-validates this again before starting the job.
+100%. In the web form, set modules not present in the selected packages to 0%
+so that the on-page total reaches 100%; the server ignores those fields and
+validates only the modules that the packages actually contain. This 0% rule
+applies to the web form only — a command-line policy file must instead omit
+absent modules entirely, because the policy validator rejects any module
+weight of 0 (see [Command-line use](#command-line-use)).
 
 Examples:
 
@@ -215,12 +222,22 @@ The GUI provides four starting modes.
 
 #### Automatic
 
-This is the recommended default.
+This is the recommended default when every submission shares one policy mode.
 
 - If every submitted control profile has `default_mode: detect_only`, scoring
   resolves to 100% detection and 0% blocking.
-- If any submitted control is `detect_and_block` or `custom`, scoring resolves
-  to prevention-first: 40% detection and 60% blocking.
+- If every submitted control can block (`detect_and_block` or `custom`),
+  scoring resolves to prevention-first: 40% detection and 60% blocking.
+- If the submissions mix detect-only with blocking policies, Automatic
+  refuses to choose and the comparison stops with a validation error. A
+  detect-only control never earns blocking credit under prevention-first
+  scoring, so its maximum possible score would be 40 out of 100; that
+  trade-off must be chosen deliberately. Select **Detection only**,
+  **Prevention first**, or **Custom** instead.
+
+**Validate packages** shows each package's declared policy mode and flags a
+mixed selection before the comparison runs. The page then disables Automatic
+until an explicit mode is selected.
 
 The completed comparison page and generated reports show the mode that was
 actually used.
@@ -280,6 +297,16 @@ dominating a module.
 The ranking uses only cases shared by every submitted control. If the modules
 containing shared cases represent less than this threshold, the result is
 provisional and the engine does not recommend a product.
+
+Two behaviors matter when coverage is incomplete:
+
+- A module with no shared cases is excluded from the ranking, and the
+  remaining module weights are scaled up proportionally. The effective
+  weighted comparable coverage appears in the reports.
+- A module counts its full weight toward comparable coverage when at least
+  one of its cases is shared, even if most of its cases are not. The
+  threshold therefore measures module-level coverage, not the share of
+  individual cases that are comparable.
 
 **Tie margin** defaults to 2 points.
 
@@ -598,6 +625,12 @@ A custom scoring policy adds:
 }
 ```
 
+`module_weights` must list exactly the modules present in the submitted
+packages: every listed module needs a positive weight, and absent modules must
+be omitted entirely rather than set to 0. The policy is rejected when it names
+a module the packages do not contain or gives any module a weight of 0. The
+example above assumes both packages contain modules 01 through 04.
+
 Run metrics and ranking:
 
 ```powershell
@@ -770,13 +803,23 @@ Metrics-only comparisons remain available without an AI provider.
 
 - Use **Validate packages** to see which modules are present.
 - Give every present module a positive value.
-- Set absent modules to 0.
+- In the web form, set absent modules to 0 so the page total reaches 100.
+- In a command-line policy file, omit absent modules entirely; a listed
+  weight of 0 is rejected.
 - Confirm the present-module values total exactly 100.
 
 ### Custom scoring is rejected
 
 Detection and blocking weights must each be between 0 and 100 and together
 must total exactly 100.
+
+### Automatic scoring is rejected
+
+The submitted packages mix `detect_only` with blocking policy modes, so
+Automatic cannot choose a fair detection/blocking split. Use
+**Validate packages** to see each package's declared mode, then select
+Detection only, Prevention first, or Custom explicitly. The same rule applies
+to `"scoring_mode": "auto"` in a command-line policy file.
 
 ### A run is provisional
 

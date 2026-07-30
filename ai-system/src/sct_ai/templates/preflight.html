@@ -5,10 +5,20 @@
   {% for package in packages %}
     <li>{{ package.display_name }} ({{ package.control_id }}):
     {{ package.case_count }} cases, {{ package.trial_count }} trials,
-    modules {{ package.modules|map(attribute="module_id")|join(", ") }}</li>
+    modules {{ package.modules|map(attribute="module_id")|join(", ") }},
+    policy mode {{ package.default_mode }}</li>
   {% endfor %}
   </ul>
 </div>
+{% if mixed_policy_modes %}
+<div class="warning" role="alert" data-mixed-modes>
+  <strong>Mixed policy modes: {{ policy_modes|join(", ") }}.</strong>
+  Automatic scoring is unavailable for this selection because a detect-only
+  control never earns blocking credit under prevention-first scoring. In
+  step 3, choose Detection only, Prevention first, or Custom before running
+  the comparison.
+</div>
+{% endif %}
 {% else %}
 <div class="error" role="alert">{{ error }}</div>
 {% endif %}

@@ -162,6 +162,34 @@ class ComparisonEngineTests(unittest.TestCase):
         self.assertEqual(100.0, entries["control-a"]["score"])
         self.assertEqual(0.0, entries["control-b"]["score"])
 
+    def test_auto_scoring_rejects_mixed_policy_modes(self) -> None:
+        case = [{"sha256": "A" * 64}]
+        package_a = load_package(
+            write_package(
+                self.root / "a.zip",
+                "control-a",
+                case,
+                default_mode="detect_only",
+            )
+        )
+        package_b = load_package(
+            write_package(self.root / "b.zip", "control-b", case)
+        )
+        policy = {
+            "schema_version": "1.0",
+            "module_weights": {"01": 100},
+            "minimum_comparable_weight": 80,
+            "tie_margin": 2,
+            "scoring_mode": "auto",
+        }
+        with self.assertRaises(PolicyValidationError) as context:
+            compare_packages([package_a, package_b], policy)
+        self.assertIn("mixed policy modes", str(context.exception))
+
+        explicit = dict(policy, scoring_mode="prevention_first")
+        result = compare_packages([package_a, package_b], explicit)
+        self.assertEqual("prevention_first", result["scoring"]["resolved_mode"])
+
     def test_custom_scoring_weights_are_applied(self) -> None:
         cases_a = [
             {

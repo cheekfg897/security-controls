@@ -144,6 +144,14 @@ def resolve_scoring(
         )
 
     if requested_mode == "auto":
+        if "detect_only" in policy_modes and len(policy_modes) > 1:
+            raise PolicyValidationError(
+                "Automatic scoring cannot resolve mixed policy modes ("
+                + ", ".join(sorted(policy_modes))
+                + "): a detect-only control never earns blocking credit under "
+                "prevention-first scoring. Set scoring_mode to detect_only, "
+                "prevention_first, or custom explicitly."
+            )
         resolved_mode = (
             "detect_only"
             if policy_modes and policy_modes == {"detect_only"}

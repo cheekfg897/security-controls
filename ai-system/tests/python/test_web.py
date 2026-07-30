@@ -50,6 +50,17 @@ class WebSurfaceTests(unittest.TestCase):
             sum(float(option["weight"]) for option in options),
             places=3,
         )
+        for option in options:
+            weight = float(option["weight"])
+            self.assertAlmostEqual(
+                weight,
+                round(weight * 1000) / 1000,
+                places=9,
+                msg=(
+                    "Prefilled module weights must satisfy the form's "
+                    'step="0.001" constraint.'
+                ),
+            )
 
     def test_scoring_fields_switch_edits_to_custom_mode(self) -> None:
         source = (
@@ -159,9 +170,98 @@ class WebSurfaceTests(unittest.TestCase):
                 self.assertEqual(200, response.status_code, response.text)
                 self.assertTrue(response.json()["valid"])
                 self.assertEqual(2, len(response.json()["packages"]))
+                self.assertFalse(response.json()["mixed_policy_modes"])
+                self.assertEqual(
+                    ["detect_and_block"],
+                    response.json()["policy_modes"],
+                )
                 htmx = client.get("/static/htmx.min.js")
                 self.assertEqual(200, htmx.status_code)
                 self.assertIn("2.0.10", htmx.text)
+
+    @unittest.skipUnless(HAS_WEB_DEPS, "Web test dependencies are not installed")
+    def test_mixed_policy_modes_flagged_and_auto_rejected(self) -> None:
+        from fastapi.testclient import TestClient
+        from sct_ai.web import create_app
+
+        with tempfile.TemporaryDirectory() as value:
+            root = Path(value)
+            system_root = root / "ai-system"
+            system_root.mkdir()
+            (root / "submissions").mkdir()
+            module = root / "scenarios" / "01-fixture"
+            module.mkdir(parents=True)
+            (module / "module.json").write_text(
+                '{"id":"01","name":"Fixture","techniques":[]}',
+                encoding="utf-8",
+            )
+            app = create_app(
+                repository_root=root,
+                system_root=system_root,
+            )
+            mixed_uploads = [
+                (
+                    "uploads",
+                    (
+                        "a.zip",
+                        package_bytes(
+                            "control-a",
+                            [{"sha256": "A" * 64}],
+                            default_mode="detect_only",
+                        ),
+                        "application/zip",
+                    ),
+                ),
+                (
+                    "uploads",
+                    (
+                        "b.zip",
+                        package_bytes(
+                            "control-b",
+                            [{"sha256": "A" * 64}],
+                            default_mode="detect_and_block",
+                        ),
+                        "application/zip",
+                    ),
+                ),
+            ]
+            with TestClient(app) as client:
+                home = client.get("/")
+                token = re.search(
+                    r'name="csrf_token" value="([^"]+)"',
+                    home.text,
+                ).group(1)
+
+                preflight = client.post(
+                    "/comparisons/validate",
+                    data={"csrf_token": token},
+                    files=mixed_uploads,
+                )
+                self.assertEqual(200, preflight.status_code, preflight.text)
+                self.assertTrue(preflight.json()["valid"])
+                self.assertTrue(preflight.json()["mixed_policy_modes"])
+                self.assertEqual(
+                    ["detect_and_block", "detect_only"],
+                    preflight.json()["policy_modes"],
+                )
+
+                response = client.post(
+                    "/comparisons",
+                    data={
+                        "csrf_token": token,
+                        "module_weight_01": "100",
+                        "scoring_mode": "auto",
+                        "detection_weight": "40",
+                        "blocking_weight": "60",
+                        "minimum_comparable_weight": "80",
+                        "tie_margin": "2",
+                    },
+                    files=mixed_uploads,
+                    follow_redirects=False,
+                )
+                self.assertEqual(400, response.status_code, response.text)
+                self.assertIn("mixed policy modes", response.text)
+                app.state.manager.executor.shutdown(wait=True)
 
     @unittest.skipUnless(HAS_WEB_DEPS, "Web test dependencies are not installed")
     def test_gui_policy_uses_detect_only_automatic_scoring(self) -> None:

@@ -112,7 +112,7 @@ Before testing, confirm the security product is active with a check from [`sanit
 
 | Technique | Sample source |
 |---|---|
-| **1.1 Disk Drop** | Put ZIP files in `samples/`, then select one or combine all ZIPs. ZIPs inside a selected ZIP are detected and can be included after an explicit prompt. |
+| **1.1 Malware Payload Delivery** | Put ZIP files in `samples/`, then select one or combine all ZIPs. ZIPs inside a selected ZIP are detected and can be included after an explicit prompt. |
 | **1.2 Removable Media** | Pre-load samples on an authorised USB drive; SCT requests its drive letter. |
 | **1.3 Internet Download** | Host samples on a second VM with `v1.3-server.ps1`. |
 | **1.4, 1.5, 1.6** | Self-contained or in-memory; no local sample archives are required. |
@@ -219,7 +219,7 @@ installation.
 
 | # | Module | Status | Techniques |
 |---|---|---|---|
-| 1 | Malware Delivery | Active | 1.1 Disk Drop; 1.2 Removable Media; 1.3 Internet Download; 1.4 Trojanised COTS; 1.5 Fileless PowerShell; 1.6 DLL Sideloading |
+| 1 | Malware Delivery | Active | 1.1 Malware Payload Delivery; 1.2 Removable Media; 1.3 Internet Download; 1.4 Trojanised COTS; 1.5 Fileless PowerShell; 1.6 DLL Sideloading |
 | 2 | Exploitation | Active | 2.1 Malicious Macro; 2.2 CVE Simulation |
 | 3 | Privilege Escalation | Partial | 3.1 Process Hollowing *(planned)*; 3.2 UAC Bypass; 3.3 LOLBin Signed Binary |
 | 4 | Persistence | Active | 4.1 Registry Run Keys (HKCU/HKLM); 4.2 Scheduled Tasks; 4.3 Advanced Startup Folder; 4.4 WMI Event Subscription |

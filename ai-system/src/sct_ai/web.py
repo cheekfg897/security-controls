@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .jobs import ComparisonJobManager, JobStore
+from .metrics import resolve_scoring
 from .packages import MAX_PACKAGE_BYTES, load_packages
 from .util import load_json_no_duplicates, validate_comparison_id
 
@@ -136,7 +137,9 @@ def _module_options(
             continue
     if not modules:
         return []
-    base = round(100.0 / len(modules), 4)
+    # The form inputs declare step="0.001", so prefilled values must not use
+    # more than three decimal places or the browser rejects the defaults.
+    base = round(100.0 / len(modules), 3)
     weights = {
         module["module_id"]: base
         for module in modules
@@ -147,7 +150,7 @@ def _module_options(
             weights[module["module_id"]]
             for module in modules[:-1]
         ),
-        4,
+        3,
     )
     submitted_values = submitted_values or {}
     return [
@@ -483,16 +486,30 @@ def create_app(
             paths = await stage_inputs(form, stage_dir)
             packages = load_packages(paths)
             summaries = [package.preflight_summary() for package in packages]
+            policy_modes = sorted(
+                {summary["default_mode"] for summary in summaries}
+            )
+            mixed_policy_modes = (
+                "detect_only" in policy_modes and len(policy_modes) > 1
+            )
             if request.headers.get("HX-Request") == "true":
                 return render(
                     request,
                     "preflight.html",
-                    {"valid": True, "packages": summaries, "error": None},
+                    {
+                        "valid": True,
+                        "packages": summaries,
+                        "error": None,
+                        "policy_modes": policy_modes,
+                        "mixed_policy_modes": mixed_policy_modes,
+                    },
                 )
             return JSONResponse(
                 {
                     "valid": True,
                     "packages": summaries,
+                    "policy_modes": policy_modes,
+                    "mixed_policy_modes": mixed_policy_modes,
                 }
             )
         except Exception as exc:
@@ -523,6 +540,15 @@ def create_app(
                 for case in package.cases.values()
             }
             policy = parse_policy(form, required_modules)
+            # Fail in the form response, not in the background job, when
+            # Automatic cannot resolve mixed detect-only/blocking policies.
+            resolve_scoring(
+                policy,
+                {
+                    package.profile_summary["policy"]["default_mode"]
+                    for package in packages
+                },
+            )
             comparison_id_value = str(form.get("comparison_id", "")).strip()
             comparison_id = (
                 validate_comparison_id(comparison_id_value)

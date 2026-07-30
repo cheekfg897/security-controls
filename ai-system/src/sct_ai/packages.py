@@ -140,6 +140,7 @@ class PackageData:
             ],
             "case_count": len(self.cases),
             "trial_count": sum(len(case.trials) for case in self.cases.values()),
+            "default_mode": self.profile_summary["policy"]["default_mode"],
         }
 
 

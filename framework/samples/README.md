@@ -1,6 +1,6 @@
 # samples/ — Malware ZIP Archive Store
 
-This folder holds ZIP archives used by sample-delivery techniques, primarily Technique 1.1 Disk Drop.
+This folder holds ZIP archives used by sample-delivery techniques, primarily Technique 1.1 Malware Payload Delivery.
 
 The launcher (`Start-SCT.ps1`) reads this folder, lists the available ZIPs,
 and stages the selected archive under `C:\Temp\SCT-Staging\combined-*\` before

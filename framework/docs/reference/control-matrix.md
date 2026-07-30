@@ -4,7 +4,7 @@ This matrix reflects the current `module.json` definitions. "Available" means SC
 
 | Module | Technique | ATT&CK | Subtests | Status |
 |---|---|---|---:|---|
-| Malware Delivery | 1.1 Known Malware - Disk Drop | T1105 | - | Available |
+| Malware Delivery | 1.1 Malware Payload Delivery | T1105 | - | Available |
 | Malware Delivery | 1.2 Removable Media (USB) | T1091 | - | Available; environment validation pending |
 | Malware Delivery | 1.3 Download from Internet (HTTP) | T1105 | - | Available |
 | Malware Delivery | 1.4 Trojanised COTS Application | T1036.005 | 2 | Available |
