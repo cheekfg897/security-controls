@@ -40,6 +40,11 @@
     Probe write access to the machine-wide HKLM Run key, remove the temporary
     value immediately, and exit. Run from an elevated PowerShell to test HKLM.
 
+.PARAMETER NonInteractive
+    Remove only stale artifacts that can be positively identified as SCT-owned
+    without prompting. Unknown files and registry values are always preserved.
+    The SCT launcher supplies this switch only for non-interactive module runs.
+
 .EXAMPLE
     .\v4.1-registry-run-key.ps1 -Subtest HKCURunKey
     .\v4.1-registry-run-key.ps1 -Subtest All
@@ -53,7 +58,8 @@ param(
     [switch]$NoReport,
     [switch]$NoPause,
     [switch]$CleanupOnly,
-    [switch]$CheckHKLMWriteAccess
+    [switch]$CheckHKLMWriteAccess,
+    [switch]$NonInteractive
 )
 
 $tempDir    = "C:\Windows\Temp"
@@ -92,10 +98,30 @@ function Test-SCTRegistryValueAvailable {
     )
 
     $key = Get-Item -LiteralPath $Path -ErrorAction SilentlyContinue
-    if ($key -and $key.GetValueNames() -contains $Name) {
-        Write-Host "  RESULT: Refusing to overwrite existing registry value '$Name' at $Path." -ForegroundColor Yellow
+    if (-not $key -or $key.GetValueNames() -notcontains $Name) {
+        return $true
+    }
+
+    $value = Get-ItemPropertyValue -LiteralPath $Path -Name $Name -ErrorAction SilentlyContinue
+    if (-not (Test-SCTOwnedRunValue -Value $value)) {
+        Write-Host "  RESULT: Refusing to overwrite existing registry value '$Name' at $Path because it is not owned by SCT." -ForegroundColor Yellow
         return $false
     }
+
+    Write-Host "  [!] Existing SCT registry artifact detected: $Path\$Name" -ForegroundColor Yellow
+    if (-not (Confirm-SCTArtifactRemoval -Description "registry value '$Name' at $Path")) {
+        Write-Host "  RESULT: Existing SCT registry value was kept." -ForegroundColor Yellow
+        return $false
+    }
+
+    Remove-SCTRunValue -Path $Path -Name $Name
+    $key = Get-Item -LiteralPath $Path -ErrorAction SilentlyContinue
+    if ($key -and $key.GetValueNames() -contains $Name) {
+        Write-Host "  RESULT: Could not remove existing SCT registry value '$Name' at $Path." -ForegroundColor Yellow
+        return $false
+    }
+
+    Write-Host "  [+] Removed existing SCT registry artifact." -ForegroundColor Green
     return $true
 }
 
@@ -115,6 +141,26 @@ function Test-SCTOwnedRunValue {
         }
     }
     return $false
+}
+
+function Confirm-SCTArtifactRemoval {
+    param([Parameter(Mandatory)][string]$Description)
+
+    if ($NonInteractive) {
+        Write-Host "      Removing the stale SCT artifact automatically for this non-interactive run." -ForegroundColor DarkGray
+        return $true
+    }
+
+    while ($true) {
+        $answer = (Read-Host "      Remove existing SCT $Description and continue? [y/N]").Trim()
+        if (-not $answer -or $answer -match '^(n|no)$') {
+            return $false
+        }
+        if ($answer -match '^(y|yes)$') {
+            return $true
+        }
+        Write-Host "      Enter Y or N." -ForegroundColor Yellow
+    }
 }
 
 function Remove-SCTRunValue {
@@ -138,10 +184,29 @@ function Remove-SCTRunValue {
 
 function Test-SCTFileAvailable {
     param([Parameter(Mandatory)][string]$Path)
-    if (Test-Path -LiteralPath $Path) {
-        Write-Host "  RESULT: Refusing to overwrite existing file: $Path" -ForegroundColor Yellow
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return $true
+    }
+
+    $content = Get-Content -LiteralPath $Path -Raw -ErrorAction SilentlyContinue
+    if ($content -notmatch '(?i)art-v4\.1-') {
+        Write-Host "  RESULT: Refusing to overwrite existing file not identifiable as an SCT artifact: $Path" -ForegroundColor Yellow
         return $false
     }
+
+    Write-Host "  [!] Existing SCT file artifact detected: $Path" -ForegroundColor Yellow
+    if (-not (Confirm-SCTArtifactRemoval -Description "file '$Path'")) {
+        Write-Host "  RESULT: Existing SCT file was kept." -ForegroundColor Yellow
+        return $false
+    }
+
+    Remove-SCTTextArtifact -Path $Path
+    if (Test-Path -LiteralPath $Path) {
+        Write-Host "  RESULT: Could not remove existing SCT file: $Path" -ForegroundColor Yellow
+        return $false
+    }
+
+    Write-Host "  [+] Removed existing SCT file artifact." -ForegroundColor Green
     return $true
 }
 

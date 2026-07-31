@@ -385,6 +385,23 @@ param(
     Assert-True ($discoveredProfiles.Count -eq 1) 'Control workspace discovery must find one profile per product folder.'
     Assert-True ((Split-Path $discoveredProfiles[0] -Leaf) -eq 'example-control-control-profile.json') `
         'Control workspace discovery must use the control-specific profile filename.'
+
+    $draftResultsRoot = Join-Path $tempRoot 'draft-results'
+    $draftWorkspace = New-SCTDraftWorkspace -ResultsRoot $draftResultsRoot -SessionName 'Framework Only Run'
+    Assert-True $draftWorkspace.IsDraft 'A new session without a profile must be marked as a draft.'
+    Assert-True ($draftWorkspace.SessionName -eq 'Framework Only Run') `
+        'A draft workspace must preserve the operator-facing session name.'
+    Assert-True ($draftWorkspace.ControlId -eq 'framework-only-run') `
+        'A draft workspace must derive a filesystem-safe id from its session name.'
+    Assert-True (Test-Path -LiteralPath $draftWorkspace.WorkspaceRoot -PathType Container) `
+        'Creating a draft session must create its results workspace.'
+    Assert-True (@(Get-SCTControlProfilePaths -ResultsRoot $draftResultsRoot).Count -eq 0) `
+        'A draft workspace must not be discovered as a finalized control profile.'
+
+    $secondDraftWorkspace = New-SCTDraftWorkspace -ResultsRoot $draftResultsRoot -SessionName 'Framework Only Run'
+    Assert-True ($secondDraftWorkspace.ControlId -eq 'framework-only-run-2') `
+        'Repeated session names must receive unique workspace ids instead of overwriting a prior draft.'
+
     $script:ReadResponses = New-Object 'System.Collections.Generic.Queue[string]'
     $script:ReadResponses.Enqueue('1')
     $script:ReadPrompts = @()
@@ -461,10 +478,17 @@ param(
         Assert-True ($technique44.subtests -contains $wmiSubtest) "Technique 4.4 must include $wmiSubtest."
     }
     $technique44Path = Join-Path $module4.ScriptDir $technique44.script
-    foreach ($requiredParameter in @('Subtest','NoPause','NoReport','CleanupOnly','NoCleanupPrompt')) {
+    foreach ($requiredParameter in @('Subtest','NoPause','NoReport','CleanupOnly','NoCleanupPrompt','NonInteractive')) {
         Assert-True (Test-SCTScriptSupportsParameter -ScriptPath $technique44Path -ParameterName $requiredParameter) `
             "Technique 4.4 must accept -$requiredParameter."
     }
+    $technique44Text = Get-Content -LiteralPath $technique44Path -Raw
+    Assert-True ($technique44Text -match 'Existing SCT marker artifact detected') `
+        'Technique 4.4 must detect stale marker files before a direct rerun.'
+    Assert-True ($technique44Text -match 'Remove existing SCT.*and continue\?') `
+        'Technique 4.4 must ask before removing a stale marker interactively.'
+    Assert-True ($technique44Text -match 'not identifiable as an SCT artifact') `
+        'Technique 4.4 must preserve marker files whose SCT ownership cannot be verified.'
     $technique42 = @($module4.techniques | Where-Object { $_.id -eq '4.2' })[0]
     $technique42Path = Join-Path $module4.ScriptDir $technique42.script
     $technique42Text = Get-Content -LiteralPath $technique42Path -Raw
@@ -479,9 +503,27 @@ param(
         'Technique 4.1 cleanup must identify SCT-owned Run values before removing them.'
     Assert-True ($technique41Text -match 'Refusing to overwrite existing registry value') `
         'Technique 4.1 must preserve pre-existing Run values.'
+    Assert-True (Test-SCTScriptSupportsParameter -ScriptPath $technique41Path -ParameterName 'NonInteractive') `
+        'Technique 4.1 must distinguish interactive cleanup confirmation from non-interactive runs.'
+    Assert-True ($technique41Text -match 'Existing SCT (?:file|registry) artifact detected') `
+        'Technique 4.1 must detect stale SCT-owned artifacts before refusing a rerun.'
+    Assert-True ($technique41Text -match 'Remove existing SCT.*and continue\?') `
+        'Technique 4.1 must ask before removing a stale SCT-owned artifact interactively.'
+    Assert-True ($technique41Text -match 'not identifiable as an SCT artifact') `
+        'Technique 4.1 must preserve existing files whose SCT ownership cannot be verified.'
     $technique43 = @($module4.techniques | Where-Object { $_.id -eq '4.3' })[0]
     $technique43Path = Join-Path $module4.ScriptDir $technique43.script
     $technique43Text = Get-Content -LiteralPath $technique43Path -Raw
+    Assert-True (Test-SCTScriptSupportsParameter -ScriptPath $technique43Path -ParameterName 'NonInteractive') `
+        'Technique 4.3 must distinguish interactive stale-artifact confirmation from non-interactive runs.'
+    Assert-True ($technique43Text -match 'Existing SCT marker artifact detected') `
+        'Technique 4.3 must detect stale marker files before a direct rerun.'
+    Assert-True ($technique43Text -match 'Existing SCT redirect directory detected') `
+        'Technique 4.3 must identify its stale redirect directory before reuse.'
+    Assert-True ($technique43Text -match 'Remove existing SCT.*and continue\?') `
+        'Technique 4.3 must ask before removing stale SCT artifacts interactively.'
+    Assert-True ($technique43Text -match 'not owned by SCT') `
+        'Technique 4.3 must preserve an existing redirect directory not owned by SCT.'
     Assert-True ($technique43Text -match 'SCT-Startup-Backup-v4\.3') `
         'Technique 4.3 must use a dedicated backup for the current Startup-folder value.'
     Assert-True ($technique43Text -match 'SCT-Userinit-Backup-v4\.3') `
@@ -501,6 +543,12 @@ param(
     $technique32 = @($module3.techniques | Where-Object { $_.id -eq '3.2' })[0]
     $technique32Path = Join-Path $module3.ScriptDir $technique32.script
     $technique32Text = Get-Content -LiteralPath $technique32Path -Raw
+    Assert-True (Test-SCTScriptSupportsParameter -ScriptPath $technique32Path -ParameterName 'NonInteractive') `
+        'Technique 3.2 must distinguish interactive stale-artifact confirmation from non-interactive runs.'
+    Assert-True ($technique32Text -match 'Existing SCT marker artifact detected') `
+        'Technique 3.2 must detect stale marker files before a direct rerun.'
+    Assert-True ($technique32Text -match 'Remove existing SCT.*and continue\?') `
+        'Technique 3.2 must ask before removing stale SCT artifacts interactively.'
     Assert-True ($technique32Text -match "\[EnvironmentVariableTarget\]::User") `
         'Technique 3.2 SilentCleanup must set the current-user windir value seen by Task Scheduler.'
     Assert-True ($technique32Text -notmatch '\$env:windir\s*=') `
@@ -513,10 +561,15 @@ param(
         'Technique 3.2 must not recursively delete an entire per-user class branch.'
     $technique33 = @($module3.techniques | Where-Object { $_.id -eq '3.3' })[0]
     $technique33Path = Join-Path $module3.ScriptDir $technique33.script
-    foreach ($requiredParameter in @('Subtest','NoPause','NoReport','CleanupOnly','NoCleanupPrompt')) {
+    foreach ($requiredParameter in @('Subtest','NoPause','NoReport','CleanupOnly','NoCleanupPrompt','NonInteractive')) {
         Assert-True (Test-SCTScriptSupportsParameter -ScriptPath $technique33Path -ParameterName $requiredParameter) `
             "Technique 3.3 must accept -$requiredParameter for managed launch and cleanup."
     }
+    $technique33Text = Get-Content -LiteralPath $technique33Path -Raw
+    Assert-True ($technique33Text -match 'Existing SCT marker artifact detected') `
+        'Technique 3.3 must detect stale marker files before a direct rerun.'
+    Assert-True ($technique33Text -match 'Remove existing SCT.*and continue\?') `
+        'Technique 3.3 must ask before removing stale SCT artifacts interactively.'
 
     # Exercise the interactive subtest-to-CSV path without launching a technique.
     $interactiveScript = Write-FixtureScript -Directory $tempRoot -Name 'interactive.ps1' -Content @'
@@ -526,7 +579,8 @@ param(
     [switch]$NoCleanupPrompt,
     [switch]$NoReport,
     [switch]$NoPause,
-    [switch]$CleanupOnly
+    [switch]$CleanupOnly,
+    [switch]$NonInteractive
 )
 '@
     $interactiveCsv = Join-Path $tempRoot 'interactive-results.csv'
@@ -557,10 +611,12 @@ param(
                 $script:MockCleanupCalls++
                 return [pscustomobject]@{ ExitCode = 0 }
             }
+            $script:MockLaunchArguments = @($ArgumentList)
             return [pscustomobject]@{ ExitCode = $script:MockProcessExitCode }
         }
         $script:MockProcessExitCode = 0
         $script:MockCleanupCalls = 0
+        $script:MockLaunchArguments = @()
 
         function Test-SCTMarkerFile {
             param([string]$Path)
@@ -590,6 +646,14 @@ param(
             'A missing marker must not be mislabeled as a confirmed control block.'
         Assert-True ($script:MockCleanupCalls -eq 1) `
             'Interactive managed subtests must clean up only after their CSV result is recorded.'
+        Assert-True ($script:MockLaunchArguments -notcontains '-NonInteractive') `
+            'Interactive managed subtests must retain stale-artifact confirmation prompts.'
+
+        $nonInteractiveCsv = Join-Path $tempRoot 'noninteractive-results.csv'
+        Invoke-SCTSubtests -Technique $interactiveTechnique -ScriptPath $interactiveScript `
+            -Control 'FixtureControl' -ResultsPath $nonInteractiveCsv -NonInteractive
+        Assert-True ($script:MockLaunchArguments -contains '-NonInteractive') `
+            'Non-interactive managed subtests must tell supported scripts to clean verified stale artifacts without prompting.'
 
         $errorCsv = Join-Path $tempRoot 'interactive-error-results.csv'
         $script:MockProcessExitCode = 2

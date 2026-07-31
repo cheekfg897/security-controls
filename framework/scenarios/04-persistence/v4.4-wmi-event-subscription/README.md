@@ -41,6 +41,8 @@ C:\Windows\Temp\art-v4.4-ActiveScriptConsumer.txt
 
 The WMI binding, consumer, and filter are removed in a `finally` block immediately after each subtest. The marker remains long enough for SCT to record the outcome. `-CleanupOnly` also removes any SCT WMI objects left by a terminated or interrupted run.
 
+On an interactive rerun, SCT asks before deleting an existing marker so a stale success cannot be mistaken for a new execution. Direct runs provide the same prompt after verifying that the marker content belongs to this technique. Non-interactive managed runs remove verified stale SCT markers automatically.
+
 ## Subtests
 
 ### CommandLineConsumer

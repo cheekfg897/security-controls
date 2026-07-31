@@ -21,8 +21,9 @@
 .PARAMETER ControlProfilePath
     Selects a product workspace through its
     results\<control-id>\<control-id>-control-profile.json.
-    Required with -NonInteractive. Interactive runs prompt when multiple
-    workspaces exist and automatically select the only workspace when possible.
+    Required with -NonInteractive. Interactive runs without this parameter
+    create a named draft session and let the operator decide whether to create
+    a control profile before or after running tests.
 
 .PARAMETER SamplesPath
     Override the default samples/ folder used for malware ZIP archives.
@@ -80,14 +81,53 @@ if (-not $SamplesPath) {
     $SamplesPath = Join-Path $PSScriptRoot 'samples'
 }
 
+function Read-SCTSessionName {
+    while ($true) {
+        $value = (Read-Host '  Session name (required)').Trim()
+        if ($value) { return $value }
+        Write-Host "  Enter a name for this test session." -ForegroundColor Yellow
+    }
+}
+
+function Read-SCTYesNo {
+    param([Parameter(Mandatory)] [string]$Prompt)
+
+    while ($true) {
+        $value = (Read-Host "$Prompt [y/N]").Trim()
+        if (-not $value -or $value -match '^(n|no)$') { return $false }
+        if ($value -match '^(y|yes)$') { return $true }
+        Write-Host '  Enter Y or N.' -ForegroundColor Yellow
+    }
+}
+
+function Complete-SCTDraftProfile {
+    param([Parameter(Mandatory)] $DraftWorkspace)
+
+    if (-not $DraftWorkspace.IsDraft) { return $DraftWorkspace }
+
+    Invoke-SCTRepositoryTool -RepoRoot $PSScriptRoot -Tool 'SetupControl' -Arguments @(
+        '-ResultsRoot', $resultsRoot,
+        '-ScenariosPath', $scenariosPath,
+        '-ControlId', $DraftWorkspace.ControlId,
+        '-DisplayName', $DraftWorkspace.ControlName,
+        '-PreserveExistingResults'
+    )
+
+    $profilePath = Get-SCTControlProfilePath `
+        -WorkspaceRoot $DraftWorkspace.WorkspaceRoot `
+        -ControlId $DraftWorkspace.ControlId
+    if (-not (Test-Path -LiteralPath $profilePath -PathType Leaf)) {
+        throw "The control profile was not created: $profilePath"
+    }
+    return (Get-SCTControlWorkspace -RepoRoot $PSScriptRoot -ProfilePath $profilePath)
+}
+
 $workspace = $null
 if ($ControlProfilePath) {
     $workspace = Get-SCTControlWorkspace -RepoRoot $PSScriptRoot -ProfilePath $ControlProfilePath
 } else {
     $availableProfiles = @(Get-SCTControlProfilePaths -ResultsRoot $resultsRoot)
-    if ($availableProfiles.Count -eq 1) {
-        $workspace = Get-SCTControlWorkspace -RepoRoot $PSScriptRoot -ProfilePath $availableProfiles[0]
-    } elseif ($Control) {
+    if ($Control) {
         foreach ($profilePath in $availableProfiles) {
             $candidate = Get-SCTControlWorkspace -RepoRoot $PSScriptRoot -ProfilePath $profilePath
             if ($candidate.ControlId -eq $Control -or $candidate.ControlName -eq $Control) {
@@ -120,8 +160,41 @@ if ($NonInteractive -and -not $ControlProfilePath) {
     throw "-ControlProfilePath is required with -NonInteractive so configuration and results stay together."
 }
 
+if (-not $workspace) {
+    Write-Host ""
+    Write-Host "  Start a test session" -ForegroundColor Cyan
+    Write-Host "  A control profile is optional while running tests." -ForegroundColor White
+    Write-Host "  You can create it now, later from [N] on the Main Menu, or before exiting." -ForegroundColor White
+    Write-Host ""
+
+    $sessionName = Read-SCTSessionName
+    $workspace = New-SCTDraftWorkspace -ResultsRoot $resultsRoot -SessionName $sessionName
+    $Control = $workspace.ControlName
+
+    Write-Host ""
+    Write-Host "  Draft session created: $($workspace.ControlName) [$($workspace.ControlId)]" -ForegroundColor Green
+    Write-Host "  Results will be saved under: $($workspace.WorkspaceRoot)" -ForegroundColor DarkGray
+    if (Read-SCTYesNo -Prompt '  Create a new control profile for this session now?') {
+        try {
+            $workspace = Complete-SCTDraftProfile -DraftWorkspace $workspace
+            $Control = $workspace.ControlName
+            Write-Host "  Profile created for this session." -ForegroundColor Green
+        } catch {
+            Write-Host "  Profile was not created: $($_.Exception.Message)" -ForegroundColor Yellow
+            Write-Host "  Continuing with the draft session; existing results will still be saved." -ForegroundColor White
+        }
+    } else {
+        Write-Host "  Continuing without a profile. Choose [N] whenever you are ready to create one." -ForegroundColor Yellow
+    }
+}
+
 Write-Host ""
-if ($workspace) {
+if ($workspace.IsDraft) {
+    Write-Host "  Session       : $($workspace.SessionName) [$($workspace.ControlId)]" -ForegroundColor Green
+    Write-Host "  Profile       : not created (draft session)" -ForegroundColor Yellow
+    Write-Host "  Workspace     : $($workspace.WorkspaceRoot)" -ForegroundColor DarkGray
+} elseif ($workspace) {
+    Write-Host "  Session       : $($workspace.SessionName)" -ForegroundColor Green
     Write-Host "  Configuration : $($workspace.ControlName) [$($workspace.ControlId)]" -ForegroundColor Green
     Write-Host "  Workspace     : $($workspace.WorkspaceRoot)" -ForegroundColor DarkGray
 } else {
@@ -182,7 +255,8 @@ if ($RunModule) {
 # ---------------------------------------------------------------------------
 while ($true) {
     $configurationCount = @(Get-SCTControlProfilePaths -ResultsRoot $resultsRoot).Count
-    Show-SCTMainMenu -Modules $modules -Control $Control -ConfigurationCount $configurationCount
+    Show-SCTMainMenu -Modules $modules -SessionName $workspace.SessionName -Control $Control `
+        -DraftSession:$workspace.IsDraft -ConfigurationCount $configurationCount
 
     $choice = (Read-Host "  Selection").Trim()
 
@@ -191,7 +265,22 @@ while ($true) {
     switch ($choice.ToUpper()) {
         'Q' {
             Write-Host ""
-            if ($workspace) {
+            if ($workspace.IsDraft -and
+                @(Get-SCTWorkspaceResultPaths -WorkspaceRoot $workspace.WorkspaceRoot).Count -gt 0 -and
+                (Read-SCTYesNo -Prompt '  This draft has results. Create its control profile before exiting?')) {
+                try {
+                    $workspace = Complete-SCTDraftProfile -DraftWorkspace $workspace
+                    $Control = $workspace.ControlName
+                    Write-Host "  Profile created for this session." -ForegroundColor Green
+                } catch {
+                    Write-Host "  Profile was not created: $($_.Exception.Message)" -ForegroundColor Yellow
+                }
+            }
+            if ($workspace.IsDraft) {
+                Write-Host "  Exiting. Draft session results:" -ForegroundColor Gray
+                Write-Host "  $($workspace.WorkspaceRoot)" -ForegroundColor DarkGray
+                Write-Host "  This draft has no control profile and cannot be packaged yet." -ForegroundColor Yellow
+            } elseif ($workspace) {
                 Write-Host "  Exiting. Product workspace:" -ForegroundColor Gray
                 Write-Host "  $($workspace.WorkspaceRoot)" -ForegroundColor DarkGray
             } else {
@@ -224,7 +313,7 @@ while ($true) {
                 [void](Sync-SCTWorkspaceCatalogs -ScenariosPath $scenariosPath -WorkspaceRoot $workspace.WorkspaceRoot)
                 $Control = $workspace.ControlName
                 Write-Host "  Active workspace: $($workspace.ControlName) [$($workspace.ControlId)]" -ForegroundColor Green
-            } elseif ($workspace -and (Test-Path -LiteralPath $workspace.ProfilePath)) {
+            } elseif (-not $workspace.IsDraft -and (Test-Path -LiteralPath $workspace.ProfilePath)) {
                 $workspace = Get-SCTControlWorkspace -RepoRoot $PSScriptRoot -ProfilePath $workspace.ProfilePath
                 [void](Sync-SCTWorkspaceCatalogs -ScenariosPath $scenariosPath -WorkspaceRoot $workspace.WorkspaceRoot)
                 $Control = $workspace.ControlName
@@ -232,16 +321,21 @@ while ($true) {
         }
         'N' {
             try {
-                $profilesBefore = @(Get-SCTControlProfilePaths -ResultsRoot $resultsRoot)
-                Invoke-SCTRepositoryTool -RepoRoot $PSScriptRoot -Tool 'SetupControl'
-                $profilesAfter = @(Get-SCTControlProfilePaths -ResultsRoot $resultsRoot)
-                $newProfiles = @($profilesAfter | Where-Object { $profilesBefore -notcontains $_ })
-                $selectedProfile = if ($newProfiles.Count -eq 1) {
-                    $newProfiles[0]
-                } elseif ($profilesAfter.Count -gt 0) {
-                    Select-SCTControlProfilePath -ResultsRoot $resultsRoot
+                if ($workspace.IsDraft) {
+                    $workspace = Complete-SCTDraftProfile -DraftWorkspace $workspace
+                    $selectedProfile = $workspace.ProfilePath
                 } else {
-                    $null
+                    $profilesBefore = @(Get-SCTControlProfilePaths -ResultsRoot $resultsRoot)
+                    Invoke-SCTRepositoryTool -RepoRoot $PSScriptRoot -Tool 'SetupControl'
+                    $profilesAfter = @(Get-SCTControlProfilePaths -ResultsRoot $resultsRoot)
+                    $newProfiles = @($profilesAfter | Where-Object { $profilesBefore -notcontains $_ })
+                    $selectedProfile = if ($newProfiles.Count -eq 1) {
+                        $newProfiles[0]
+                    } elseif ($profilesAfter.Count -gt 0) {
+                        Select-SCTControlProfilePath -ResultsRoot $resultsRoot
+                    } else {
+                        $null
+                    }
                 }
                 if ($selectedProfile) {
                     $workspace = Get-SCTControlWorkspace -RepoRoot $PSScriptRoot -ProfilePath $selectedProfile

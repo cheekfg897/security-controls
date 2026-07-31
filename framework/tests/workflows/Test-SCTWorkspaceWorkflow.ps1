@@ -103,6 +103,55 @@ try {
     Assert-True ($quickProfile.policy.name -eq 'Not recorded' -and $quickProfile.policy.default_mode -eq 'custom') `
         'Skipped optional policy details must use valid placeholder values.'
 
+    $draftResultsRoot = Join-Path $tempRoot 'draft-finalization-results'
+    $draftWorkspaceRoot = Join-Path $draftResultsRoot 'framework-only-session'
+    $draftResultPath = Join-Path $draftWorkspaceRoot 'results-module-04.csv'
+    $draftProfilePath = Join-Path $draftWorkspaceRoot 'framework-only-session-control-profile.json'
+    New-Item -ItemType Directory -Path $draftWorkspaceRoot -Force | Out-Null
+    Write-SCTResultRow -Path $draftResultPath -Timestamp (Get-Date) -RunId 'draft-run' `
+        -TechniqueId '4.1' -TechniqueName 'Registry Run Keys' -Subtest 'HKCURunKey' `
+        -TestScript 'v4.1-registry-run-key/v4.1-registry-run-key.ps1' `
+        -TestStage 'execution' -SourceResult 'EXECUTED' -ExecutionStatus 'executed'
+    $draftRowsBeforeProfile = @(Import-Csv -LiteralPath $draftResultPath -Encoding UTF8)
+
+    $global:SCTTestReadResponses = New-Object 'System.Collections.Generic.Queue[string]'
+    foreach ($response in @('', '', '')) {
+        $global:SCTTestReadResponses.Enqueue($response)
+    }
+    $global:SCTTestReadPrompts = @()
+    function global:Read-Host {
+        param([string]$Prompt)
+        $global:SCTTestReadPrompts += $Prompt
+        if ($global:SCTTestReadResponses.Count -gt 0) { return $global:SCTTestReadResponses.Dequeue() }
+        throw "Unexpected Read-Host prompt: $Prompt"
+    }
+    try {
+        & (Join-Path $repoRoot 'scripts\review\Setup-SCTControl.ps1') `
+            -ResultsRoot $draftResultsRoot -ScenariosPath (Join-Path $repoRoot 'scenarios') `
+            -ControlId 'framework-only-session' -DisplayName 'Framework Only Session' `
+            -Vendor 'Fixture Vendor' -Product 'Fixture XDR' -ProductVersion '1.0' `
+            -AgentVersion '2.0' -PolicyName 'Fixture policy' -DefaultMode 'detect_only' `
+            -Notes 'Profile added after the run.' -PreserveExistingResults
+    } finally {
+        $draftRemainingResponses = $global:SCTTestReadResponses.Count
+        $draftReadPrompts = @($global:SCTTestReadPrompts)
+        Remove-Item -LiteralPath 'Function:\global:Read-Host' -ErrorAction SilentlyContinue
+        Remove-Variable -Name SCTTestReadResponses -Scope Global -ErrorAction SilentlyContinue
+        Remove-Variable -Name SCTTestReadPrompts -Scope Global -ErrorAction SilentlyContinue
+    }
+
+    Assert-True ($draftRemainingResponses -eq 0) `
+        'Finalizing a draft must consume only the normal optional profile prompts.'
+    Assert-True (@($draftReadPrompts | Where-Object { $_ -like '*Delete them*' }).Count -eq 0) `
+        'Finalizing a draft must not ask to delete its existing results.'
+    Assert-True (Test-Path -LiteralPath $draftProfilePath -PathType Leaf) `
+        'Finalizing a draft must create its control profile in the existing session workspace.'
+    $draftRowsAfterProfile = @(Import-Csv -LiteralPath $draftResultPath -Encoding UTF8)
+    Assert-True ($draftRowsAfterProfile.Count -eq $draftRowsBeforeProfile.Count) `
+        'Finalizing a draft must preserve every existing result row.'
+    Assert-True ($draftRowsAfterProfile[0].run_id -eq 'draft-run') `
+        'Finalizing a draft must preserve the content of existing result rows.'
+
     Write-SCTResultRow -Path $results04 -Timestamp (Get-Date) -RunId 'run-a' `
         -TechniqueId '4.1' -TechniqueName 'Registry Run Keys' -Subtest 'HKCURunKey' `
         -TestScript 'v4.1-registry-run-key/v4.1-registry-run-key.ps1' `

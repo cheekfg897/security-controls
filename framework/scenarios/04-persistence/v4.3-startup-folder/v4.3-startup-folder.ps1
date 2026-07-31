@@ -53,7 +53,8 @@ param(
     [switch]$NoCleanupPrompt,
     [switch]$NoReport,
     [switch]$NoPause,
-    [switch]$CleanupOnly
+    [switch]$CleanupOnly,
+    [switch]$NonInteractive
 )
 
 $tempDir         = "C:\Windows\Temp"
@@ -93,12 +94,53 @@ function Test-ExecutionResult {
     }
 }
 
-function Test-SCTArtifactAvailable {
-    param([Parameter(Mandatory)][string]$Path)
-    if (Test-Path -LiteralPath $Path) {
-        Write-Host "  RESULT: Refusing to overwrite existing artifact: $Path" -ForegroundColor Yellow
+function Confirm-SCTArtifactRemoval {
+    param([Parameter(Mandatory)][string]$Description)
+
+    if ($NonInteractive) {
+        Write-Host "      Removing the stale SCT artifact automatically for this non-interactive run." -ForegroundColor DarkGray
+        return $true
+    }
+
+    while ($true) {
+        $answer = (Read-Host "      Remove existing SCT $Description and continue? [y/N]").Trim()
+        if (-not $answer -or $answer -match '^(n|no)$') {
+            return $false
+        }
+        if ($answer -match '^(y|yes)$') {
+            return $true
+        }
+        Write-Host "      Enter Y or N." -ForegroundColor Yellow
+    }
+}
+
+function Test-SCTMarkerAvailable {
+    param([Parameter(Mandatory)][string]$Name)
+
+    $path = "$tempDir\art-v4.3-$Name.txt"
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        return $true
+    }
+
+    $content = [string](Get-Content -LiteralPath $path -Raw -ErrorAction SilentlyContinue)
+    if ($content -notmatch "(?i)$([regex]::Escape($Name)) executed") {
+        Write-Host "  RESULT: Refusing to remove marker not identifiable as an SCT artifact: $path" -ForegroundColor Yellow
         return $false
     }
+
+    Write-Host "  [!] Existing SCT marker artifact detected: $path" -ForegroundColor Yellow
+    if (-not (Confirm-SCTArtifactRemoval -Description "marker file '$path'")) {
+        Write-Host "  RESULT: Existing SCT marker was kept." -ForegroundColor Yellow
+        return $false
+    }
+
+    Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $path) {
+        Write-Host "  RESULT: Could not remove existing SCT marker: $path" -ForegroundColor Yellow
+        return $false
+    }
+
+    Write-Host "  [+] Removed existing SCT marker." -ForegroundColor Green
     return $true
 }
 
@@ -121,7 +163,8 @@ function Remove-SCTTextArtifact {
         return
     }
     $content = Get-Content -LiteralPath $Path -Raw -ErrorAction SilentlyContinue
-    if ($content -match '(?i)art-v4\.3-') {
+    if ($content -match '(?i)art-v4\.3-' -or
+        (Test-SCTEncodedPayload -Arguments $content)) {
         Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
     } else {
         Write-Host "[!] Preserving file not identifiable as an SCT artifact: $Path" -ForegroundColor Yellow
@@ -143,6 +186,107 @@ function Remove-SCTLnkArtifact {
     } catch {
         Write-Host "[!] Could not verify shortcut ownership; preserving $Path." -ForegroundColor Yellow
     }
+}
+
+function Test-SCTArtifactAvailable {
+    param([Parameter(Mandatory)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return $true
+    }
+
+    $isOwned = if ([IO.Path]::GetExtension($Path) -ieq '.lnk') {
+        try {
+            $shortcut = (New-Object -ComObject WScript.Shell -ErrorAction Stop).CreateShortcut($Path)
+            Test-SCTEncodedPayload -Arguments $shortcut.Arguments
+        } catch {
+            $false
+        }
+    } else {
+        $content = [string](Get-Content -LiteralPath $Path -Raw -ErrorAction SilentlyContinue)
+        $content -match '(?i)art-v4\.3-' -or
+            (Test-SCTEncodedPayload -Arguments $content)
+    }
+
+    if (-not $isOwned) {
+        Write-Host "  RESULT: Refusing to overwrite existing artifact not identifiable as SCT-owned: $Path" -ForegroundColor Yellow
+        return $false
+    }
+
+    Write-Host "  [!] Existing SCT file artifact detected: $Path" -ForegroundColor Yellow
+    if (-not (Confirm-SCTArtifactRemoval -Description "file '$Path'")) {
+        Write-Host "  RESULT: Existing SCT file was kept." -ForegroundColor Yellow
+        return $false
+    }
+
+    if ([IO.Path]::GetExtension($Path) -ieq '.lnk') {
+        Remove-SCTLnkArtifact -Path $Path
+    } else {
+        Remove-SCTTextArtifact -Path $Path
+    }
+    if (Test-Path -LiteralPath $Path) {
+        Write-Host "  RESULT: Could not remove existing SCT file: $Path" -ForegroundColor Yellow
+        return $false
+    }
+
+    Write-Host "  [+] Removed existing SCT file artifact." -ForegroundColor Green
+    return $true
+}
+
+function Remove-SCTRedirectDirectory {
+    if (-not (Test-Path -LiteralPath $redirectDir -PathType Container)) {
+        return $true
+    }
+
+    $owner = [string](Get-Content -LiteralPath $redirectOwnerPath -Raw -ErrorAction SilentlyContinue)
+    if ($owner.Trim() -ne $redirectOwnerValue) {
+        Write-Host "[!] Preserving redirect directory not owned by SCT: $redirectDir" -ForegroundColor Yellow
+        return $false
+    }
+
+    $knownPaths = @($redirectOwnerPath, $redirectPayload)
+    $unexpected = @(
+        Get-ChildItem -LiteralPath $redirectDir -Force -ErrorAction SilentlyContinue |
+            Where-Object { $knownPaths -notcontains $_.FullName }
+    )
+    if ($unexpected.Count -gt 0) {
+        Write-Host "[!] Preserving SCT redirect directory because it contains unexpected entries: $redirectDir" -ForegroundColor Yellow
+        return $false
+    }
+
+    Remove-SCTTextArtifact -Path $redirectPayload
+    Remove-Item -LiteralPath $redirectOwnerPath -Force -ErrorAction SilentlyContinue
+    # Non-recursive removal preserves unexpected unrelated content.
+    Remove-Item -LiteralPath $redirectDir -Force -ErrorAction SilentlyContinue
+    return (-not (Test-Path -LiteralPath $redirectDir))
+}
+
+function Test-SCTRedirectDirectoryAvailable {
+    if (-not (Test-Path -LiteralPath $redirectDir)) {
+        return $true
+    }
+    if (-not (Test-Path -LiteralPath $redirectDir -PathType Container)) {
+        Write-Host "  RESULT: Refusing to overwrite a non-directory artifact at: $redirectDir" -ForegroundColor Yellow
+        return $false
+    }
+
+    $owner = [string](Get-Content -LiteralPath $redirectOwnerPath -Raw -ErrorAction SilentlyContinue)
+    if ($owner.Trim() -ne $redirectOwnerValue) {
+        Write-Host "  RESULT: Refusing to reuse existing directory not owned by SCT: $redirectDir" -ForegroundColor Yellow
+        return $false
+    }
+
+    Write-Host "  [!] Existing SCT redirect directory detected: $redirectDir" -ForegroundColor Yellow
+    if (-not (Confirm-SCTArtifactRemoval -Description "redirect directory '$redirectDir'")) {
+        Write-Host "  RESULT: Existing SCT redirect directory was kept." -ForegroundColor Yellow
+        return $false
+    }
+    if (-not (Remove-SCTRedirectDirectory)) {
+        Write-Host "  RESULT: Could not safely remove existing SCT redirect directory: $redirectDir" -ForegroundColor Yellow
+        return $false
+    }
+
+    Write-Host "  [+] Removed existing SCT redirect directory." -ForegroundColor Green
+    return $true
 }
 
 function Restore-SCTShellFolderStartup {
@@ -178,17 +322,7 @@ function Invoke-Cleanup {
     Remove-SCTLnkArtifact -Path "$userStartup\sct-lnk-test.lnk"
     Remove-SCTTextArtifact -Path "$allUsersStartup\sct-allusers-test.bat"
     Restore-SCTShellFolderStartup
-    if (Test-Path -LiteralPath $redirectDir) {
-        $owner = [string](Get-Content -LiteralPath $redirectOwnerPath -Raw -ErrorAction SilentlyContinue)
-        if ($owner.Trim() -eq $redirectOwnerValue) {
-            Remove-SCTTextArtifact -Path $redirectPayload
-            Remove-Item -LiteralPath $redirectOwnerPath -Force -ErrorAction Ignore
-            # Non-recursive removal preserves unexpected unrelated content.
-            Remove-Item -LiteralPath $redirectDir -Force -ErrorAction Ignore
-        } else {
-            Write-Host "[!] Preserving redirect directory not owned by SCT: $redirectDir" -ForegroundColor Yellow
-        }
-    }
+    [void](Remove-SCTRedirectDirectory)
     Restore-SCTWinlogonUserinit
     Write-Host "[+] Cleanup complete" -ForegroundColor Green
 }
@@ -214,6 +348,9 @@ function Test-JSEStartup {
     $jsePath = "$userStartup\sct-jse-test.jse"
     $marker  = "$tempDir\art-v4.3-JSEStartup.txt"
     $markerEscaped = $marker -replace '\\', '\\'
+    if (-not (Test-SCTMarkerAvailable -Name 'JSEStartup')) {
+        return $false
+    }
 
     $jseContent = @"
 var fso = new ActiveXObject("Scripting.FileSystemObject");
@@ -270,6 +407,9 @@ function Test-LNKShortcut {
     $marker  = "$tempDir\art-v4.3-LNKShortcut.txt"
     $command = "Set-Content -Path '$marker' -Value ('[' + (Get-Date) + '] LNKShortcut executed')"
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
+    if (-not (Test-SCTMarkerAvailable -Name 'LNKShortcut')) {
+        return $false
+    }
 
     Write-Host "`n[*] Creating .lnk shortcut via WScript.Shell COM: $lnkPath" -ForegroundColor Yellow
     Write-Host "    TargetPath : powershell.exe" -ForegroundColor DarkGray
@@ -332,6 +472,9 @@ function Test-AllUsersBAT {
     $batPath    = "$allUsersStartup\sct-allusers-test.bat"
     $marker     = "$tempDir\art-v4.3-AllUsersBAT.txt"
     $batContent = "@echo off`r`necho [%DATE% %TIME%] AllUsersBAT executed > `"$marker`""
+    if (-not (Test-SCTMarkerAvailable -Name 'AllUsersBAT')) {
+        return $false
+    }
 
     Write-Host "`n[*] Dropping BAT to AllUsers startup folder: $batPath" -ForegroundColor Yellow
     Write-Host "    [Detection: Sysmon 11 - FileCreate .bat in C:\ProgramData\...\StartUp]" -ForegroundColor DarkGray
@@ -382,6 +525,9 @@ function Test-ShellFolderRedirect {
     $encoded     = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
     $batPayload  = $redirectPayload
     $batContent  = "@echo off`r`npowershell.exe -NoProfile -WindowStyle Hidden -EncodedCommand $encoded"
+    if (-not (Test-SCTMarkerAvailable -Name 'ShellFolderRedirect')) {
+        return $false
+    }
 
     Write-Host "`n[*] Reading current Startup value (for restore)..." -ForegroundColor Yellow
     $shellFolderKey = Get-Item -LiteralPath $shellFolderPath -ErrorAction SilentlyContinue
@@ -397,20 +543,24 @@ function Test-ShellFolderRedirect {
     Write-Host "    Current: $originalStartup" -ForegroundColor DarkGray
 
     Write-Host "`n[*] Creating redirect directory and BAT payload: $redirectDir" -ForegroundColor Yellow
+    if (-not (Test-SCTRedirectDirectoryAvailable)) {
+        return $false
+    }
+    $createdRedirectDirectory = $false
     try {
-        if (Test-Path -LiteralPath $redirectDir) {
-            throw "Refusing to reuse existing directory: $redirectDir"
-        }
         New-Item -ItemType Directory -Path $redirectDir -ErrorAction Stop | Out-Null
+        $createdRedirectDirectory = $true
         Set-Content -LiteralPath $redirectOwnerPath -Value $redirectOwnerValue -Encoding ASCII -ErrorAction Stop
         Set-Content -Path $batPayload -Value $batContent -Encoding ASCII -ErrorAction Stop
         New-ItemProperty -LiteralPath $shellFolderPath -Name $shellFolderBackupName `
             -Value $originalStartup -PropertyType String -ErrorAction Stop | Out-Null
         Write-Host "    Redirect dir + payload created." -ForegroundColor Green
     } catch {
-        Remove-Item -LiteralPath $batPayload -Force -ErrorAction SilentlyContinue
-        Remove-Item -LiteralPath $redirectOwnerPath -Force -ErrorAction SilentlyContinue
-        Remove-Item -LiteralPath $redirectDir -Force -ErrorAction SilentlyContinue
+        if ($createdRedirectDirectory) {
+            Remove-Item -LiteralPath $batPayload -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $redirectOwnerPath -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $redirectDir -Force -ErrorAction SilentlyContinue
+        }
         Write-Host "  RESULT: Redirect dir/payload creation blocked - $($_.Exception.Message)" -ForegroundColor Green
         return $false
     }
@@ -477,6 +627,9 @@ function Test-WinlogonUserinit {
     $command = "Set-Content -Path '$marker' -Value ('[' + (Get-Date) + '] WinlogonUserinit executed')"
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
     $payload = "powershell.exe -NoProfile -WindowStyle Hidden -EncodedCommand $encoded"
+    if (-not (Test-SCTMarkerAvailable -Name 'WinlogonUserinit')) {
+        return $false
+    }
 
     Write-Host "`n[*] Reading and backing up current Userinit value..." -ForegroundColor Yellow
     try {

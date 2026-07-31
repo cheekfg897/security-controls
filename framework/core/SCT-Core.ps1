@@ -284,7 +284,9 @@ function Show-SCTMainMenu {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][array]$Modules,
+        [string]$SessionName,
         [string]$Control,
+        [switch]$DraftSession,
         [ValidateRange(0, 2147483647)]
         [int]$ConfigurationCount = 0
     )
@@ -292,13 +294,23 @@ function Show-SCTMainMenu {
     Write-Host ""
     Write-Host "  +----------------------------------------------------------------------------+" -ForegroundColor Cyan
     Write-Host "  |  MAIN MENU                                                                 |" -ForegroundColor Cyan
-    if ($Control) {
-        $tag = "  |  Control : $Control"
+    if ($SessionName) {
+        $tag = "  |  Session : $SessionName"
+        Write-Host ($tag.PadRight(77) + '|') -ForegroundColor Cyan
+    }
+    if ($DraftSession) {
+        $tag = "  |  Profile : Not created (draft session)"
+        Write-Host ($tag.PadRight(77) + '|') -ForegroundColor Yellow
+    } elseif ($Control) {
+        $tag = "  |  Profile : $Control"
         Write-Host ($tag.PadRight(77) + '|') -ForegroundColor Cyan
     }
     Write-Host "  +----------------------------------------------------------------------------+" -ForegroundColor Cyan
     Write-Host ""
-    if (-not $Control) {
+    if ($DraftSession) {
+        Write-Host "  [i] Results are being saved. Create a profile before validation or packaging." -ForegroundColor Yellow
+        Write-Host ""
+    } elseif (-not $Control) {
         Write-Host "  [!] CONFIGURATION REQUIRED BEFORE A MODULE CAN RUN" -ForegroundColor Yellow
         if ($ConfigurationCount -gt 0) {
             Write-Host "      Choose [C] to select one of $ConfigurationCount existing configuration(s)." -ForegroundColor White
@@ -325,12 +337,62 @@ function Show-SCTMainMenu {
 
     $configurationAction = if ($Control) { 'Select or switch configuration' } else { 'Select existing configuration' }
     Write-Host "  [C]   $configurationAction ($ConfigurationCount available)" -ForegroundColor Yellow
-    Write-Host "  [N]   Create new configuration" -ForegroundColor Yellow
-    Write-Host "        Only display name is required; press Enter to skip optional fields." -ForegroundColor Gray
+    if ($DraftSession) {
+        Write-Host "  [N]   Create a control profile for this session" -ForegroundColor Yellow
+        Write-Host "        Existing session results will be kept." -ForegroundColor Gray
+    } else {
+        Write-Host "  [N]   Create new configuration" -ForegroundColor Yellow
+        Write-Host "        Only display name is required; press Enter to skip optional fields." -ForegroundColor Gray
+    }
     Write-Host "  [M]   Manage SCT" -ForegroundColor Yellow
     Write-Host "  [V]   View Results Summary" -ForegroundColor Yellow
     Write-Host "  [Q]   Quit" -ForegroundColor Yellow
     Write-Host ""
+}
+
+function ConvertTo-SCTSessionId {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)] [string]$SessionName)
+
+    $candidate = $SessionName.Trim().ToLowerInvariant()
+    $candidate = [regex]::Replace($candidate, '[^a-z0-9._-]+', '-')
+    $candidate = $candidate.Trim([char[]]'._-')
+    if (-not $candidate) {
+        $candidate = 'session-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
+    }
+    return $candidate
+}
+
+function New-SCTDraftWorkspace {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$ResultsRoot,
+        [Parameter(Mandatory)] [string]$SessionName
+    )
+
+    $trimmedName = $SessionName.Trim()
+    if (-not $trimmedName) {
+        throw 'Session name is required.'
+    }
+
+    $baseId = ConvertTo-SCTSessionId -SessionName $trimmedName
+    $sessionId = $baseId
+    $suffix = 2
+    while (Test-Path -LiteralPath (Join-Path $ResultsRoot $sessionId)) {
+        $sessionId = "$baseId-$suffix"
+        $suffix++
+    }
+
+    $workspaceRoot = Join-Path $ResultsRoot $sessionId
+    New-Item -ItemType Directory -Path $workspaceRoot -Force | Out-Null
+    return [pscustomobject]@{
+        ControlId    = $sessionId
+        ControlName  = $trimmedName
+        SessionName  = $trimmedName
+        ProfilePath  = ''
+        WorkspaceRoot = $workspaceRoot
+        IsDraft      = $true
+    }
 }
 
 function Get-SCTControlProfilePaths {
@@ -399,8 +461,10 @@ function Get-SCTControlWorkspace {
     return [pscustomobject]@{
         ControlId       = $controlId
         ControlName     = $controlName
+        SessionName     = $controlName
         ProfilePath     = $resolvedProfilePath
         WorkspaceRoot   = $workspaceRoot
+        IsDraft         = $false
     }
 }
 
@@ -1056,6 +1120,44 @@ function Get-SCTMarkerPath {
     return (Join-Path $env:SystemRoot "Temp\art-v$TechniqueId-$Subtest.txt")
 }
 
+function Clear-SCTExistingMarker {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$Path,
+        [switch]$NonInteractive
+    )
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return $true
+    }
+
+    Write-Host "  [!] Existing SCT marker detected: $Path" -ForegroundColor Yellow
+    if (-not $NonInteractive) {
+        while ($true) {
+            $answer = (Read-Host '      Delete the old marker file and continue? [y/N]').Trim()
+            if (-not $answer -or $answer -match '^(n|no)$') {
+                Write-Host '  RESULT: Existing marker was kept; the subtest run was cancelled.' -ForegroundColor Yellow
+                return $false
+            }
+            if ($answer -match '^(y|yes)$') {
+                break
+            }
+            Write-Host '      Enter Y or N.' -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host '      Removing the stale marker automatically for this non-interactive run.' -ForegroundColor DarkGray
+    }
+
+    Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $Path) {
+        Write-Host "  RESULT: Could not remove existing SCT marker: $Path" -ForegroundColor Yellow
+        return $false
+    }
+
+    Write-Host '  [+] Removed existing SCT marker.' -ForegroundColor Green
+    return $true
+}
+
 function Invoke-SCTSubtests {
     [CmdletBinding()]
     param(
@@ -1149,7 +1251,12 @@ function Invoke-SCTSubtests {
 
     foreach ($subtest in $toCheck) {
         $markerPath = Get-SCTMarkerPath -TechniqueId $Technique.id -Subtest $subtest
-        Remove-Item -LiteralPath $markerPath -Force -ErrorAction SilentlyContinue
+        if (-not (Clear-SCTExistingMarker -Path $markerPath -NonInteractive:$NonInteractive)) {
+            if ($NonInteractive) {
+                throw "Could not prepare the marker path for Technique $($Technique.id) subtest '$subtest'."
+            }
+            return
+        }
     }
 
     Write-Host ""
@@ -1176,6 +1283,10 @@ function Invoke-SCTSubtests {
     # before the module menu regains control.
     if (Test-SCTScriptSupportsParameter -ScriptPath $ScriptPath -ParameterName 'NoPause') {
         $scriptArgs += '-NoPause'
+    }
+    if ($NonInteractive -and
+        (Test-SCTScriptSupportsParameter -ScriptPath $ScriptPath -ParameterName 'NonInteractive')) {
+        $scriptArgs += '-NonInteractive'
     }
 
     Write-Host ""

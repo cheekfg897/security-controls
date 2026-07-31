@@ -17,7 +17,9 @@
     control-id), an interactive run asks whether to delete them so the new
     run starts with a clean results set. Pass -DeleteExistingResults to
     delete them without prompting (including in -NonInteractive runs); omit
-    it to leave existing result files untouched.
+    it to leave existing result files untouched. Pass
+    -PreserveExistingResults when adding a profile to a draft session so the
+    existing observations are retained without a deletion prompt.
 
 .EXAMPLE
     .\scripts\review\Setup-SCTControl.ps1
@@ -51,12 +53,17 @@ param(
     [string]$Notes = '',
     [switch]$NonInteractive,
     [switch]$Force,
-    [switch]$DeleteExistingResults
+    [switch]$DeleteExistingResults,
+    [switch]$PreserveExistingResults
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '..\common\SCT-ReviewHelpers.ps1')
+
+if ($DeleteExistingResults -and $PreserveExistingResults) {
+    throw '-DeleteExistingResults and -PreserveExistingResults cannot be used together.'
+}
 
 function Read-RequiredValue {
     param([string]$Prompt, [string]$Current, [scriptblock]$Validate, [string]$Message)
@@ -232,7 +239,9 @@ if (Test-Path -LiteralPath $directory -PathType Container) {
     $existingResultPaths = @(Get-SCTWorkspaceResultPaths -WorkspaceRoot $directory)
     if ($existingResultPaths.Count -gt 0) {
         $shouldDelete = [bool]$DeleteExistingResults
-        if (-not $shouldDelete -and -not $NonInteractive) {
+        if ($PreserveExistingResults) {
+            Write-Host "  Keeping $($existingResultPaths.Count) existing draft-session result file(s)." -ForegroundColor Green
+        } elseif (-not $shouldDelete -and -not $NonInteractive) {
             Write-Host ""
             Write-Host "  Existing result file(s) found in this workspace:" -ForegroundColor Yellow
             foreach ($existingPath in $existingResultPaths) {

@@ -12,13 +12,29 @@ results/
     `-- test-catalog-module-02.csv
 ```
 
-Create a workspace through `.\Start-SCT.ps1` -> `[N] Create New
-Configuration`, or through `[M] Manage SCT` -> `[3] Create or update a control
-configuration/workspace`. Only the display name is required during interactive
-setup; press Enter to accept the generated id and skip optional details. Setup
-creates one catalogue per discovered module. The launcher creates and appends
-to `results-module-<id>.csv` when that module first records an observation.
-Use `[C] Select Existing Configuration` to choose or switch between products.
+The launcher asks for a session name and creates this workspace before any
+profile is required. If the operator declines the startup profile prompt, the
+workspace initially contains catalogues and result CSVs but no JSON:
+
+```text
+results/
+`-- <session-id>/
+    |-- results-module-01.csv
+    |-- test-catalog-module-01.csv
+    `-- test-catalog-module-02.csv
+```
+
+Choose `[N] Create a control profile for this session` at any time to add
+`<session-id>-control-profile.json` without deleting existing observations.
+Only the display name is required during interactive setup; optional details
+can be skipped. Validation and comparison packaging require this finalized
+profile. Use `[C] Select Existing Configuration` to choose or switch to an
+already finalized product workspace.
+
+Profiles can also be created independently through `[M] Manage SCT` -> `[3]
+Create or update a control configuration/workspace`. Setup creates one
+catalogue per discovered module. The launcher creates and appends to
+`results-module-<id>.csv` when that module first records an observation.
 
 If `results-module-<id>.csv` files already exist under the target `control-id` (for example, left over from a previous control tested in the same workspace), Setup asks whether to delete them before continuing, so the new control starts from a clean results set instead of inheriting the previous product's observations. Answer no (or just re-run without confirming) to keep appending to the existing files instead.
 

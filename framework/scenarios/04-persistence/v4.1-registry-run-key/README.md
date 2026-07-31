@@ -31,6 +31,14 @@ Have the EDR console visible before running. Each subtest writes a marker file t
 
 The Run and RunOnce subtests execute their benign payload immediately to simulate the next-login trigger; SCT does not log out or reboot the VM. Choose cleanup when prompted to remove the test values. The complete non-interactive Module 4 run performs this cleanup automatically.
 
+If a previous interrupted or uncleaned run left a BAT, VBS, PowerShell payload,
+or Run/RunOnce value behind, the technique verifies that the artifact contains
+an SCT marker and asks whether to remove it before continuing. Pressing Enter
+keeps it and skips that subtest. Files and registry values that cannot be
+positively identified as SCT-owned are never removed or overwritten. A
+non-interactive Module 4 run automatically removes only positively identified
+SCT artifacts.
+
 `-CheckHKLMWriteAccess` remains available as a quick permission check. It creates and immediately removes a temporary probe value without running a payload.
 
 ---

@@ -41,7 +41,8 @@ param(
     [switch]$NoCleanupPrompt,
     [switch]$NoPause,
     [switch]$NoReport,
-    [switch]$CleanupOnly
+    [switch]$CleanupOnly,
+    [switch]$NonInteractive
 )
 
 $tempDir    = "C:\Windows\Temp"
@@ -64,6 +65,56 @@ function Write-Header {
 function Get-EncodedCommand {
     param([string]$Command)
     return [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($Command))
+}
+
+function Confirm-SCTArtifactRemoval {
+    param([Parameter(Mandatory)][string]$Description)
+
+    if ($NonInteractive) {
+        Write-Host "      Removing the stale SCT artifact automatically for this non-interactive run." -ForegroundColor DarkGray
+        return $true
+    }
+
+    while ($true) {
+        $answer = (Read-Host "      Remove existing SCT $Description and continue? [y/N]").Trim()
+        if (-not $answer -or $answer -match '^(n|no)$') {
+            return $false
+        }
+        if ($answer -match '^(y|yes)$') {
+            return $true
+        }
+        Write-Host "      Enter Y or N." -ForegroundColor Yellow
+    }
+}
+
+function Initialize-TestMarker {
+    param([Parameter(Mandatory)][string]$Name)
+
+    $marker = "$tempDir\art-v3.3-$Name.txt"
+    if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) {
+        return $marker
+    }
+
+    $content = [string](Get-Content -LiteralPath $marker -Raw -ErrorAction SilentlyContinue)
+    if ($content -notmatch "(?i)$([regex]::Escape($Name)) signed-binary proxy execution") {
+        Write-Host "  RESULT: Refusing to remove marker not identifiable as an SCT artifact: $marker" -ForegroundColor Yellow
+        return $null
+    }
+
+    Write-Host "  [!] Existing SCT marker artifact detected: $marker" -ForegroundColor Yellow
+    if (-not (Confirm-SCTArtifactRemoval -Description "marker file '$marker'")) {
+        Write-Host "  RESULT: Existing SCT marker was kept." -ForegroundColor Yellow
+        return $null
+    }
+
+    Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $marker) {
+        Write-Host "  RESULT: Could not remove existing SCT marker: $marker" -ForegroundColor Yellow
+        return $null
+    }
+
+    Write-Host "  [+] Removed existing SCT marker." -ForegroundColor Green
+    return $marker
 }
 
 function New-PayloadDirectory {
@@ -142,9 +193,12 @@ function Test-MshtaHTA {
     Write-Host "  EDR alert  - mshta.exe executing script content or spawning script activity"
     Write-Host "  SIEM rule  - mshta.exe with command line containing .hta or http/https/script protocol"
 
+    $marker = Initialize-TestMarker -Name 'MshtaHTA'
+    if (-not $marker) {
+        return $false
+    }
     New-PayloadDirectory
     $htaPath = Join-Path $payloadDir "sct-v3.3-mshta.hta"
-    $marker  = "$tempDir\art-v3.3-MshtaHTA.txt"
 
     $htaContent = @"
 <html>
@@ -200,9 +254,12 @@ function Test-Regsvr32SCT {
     Write-Host "  Sysmon 11  - .sct file created in %TEMP%"
     Write-Host "  EDR alert  - Squiblydoo-style regsvr32 scriptlet execution"
 
+    $marker = Initialize-TestMarker -Name 'Regsvr32SCT'
+    if (-not $marker) {
+        return $false
+    }
     New-PayloadDirectory
     $sctPath = Join-Path $payloadDir "sct-v3.3-regsvr32.sct"
-    $marker  = "$tempDir\art-v3.3-Regsvr32SCT.txt"
 
     $sctContent = @"
 <?XML version="1.0"?>
@@ -259,6 +316,9 @@ function Test-Rundll32Advpack {
     Write-Host "  EDR alert  - rundll32.exe launching setup/installer helper routines"
     Write-Host "  SIEM rule  - rundll32 command line contains LaunchINFSection"
 
+    if (-not (Initialize-TestMarker -Name 'Rundll32Advpack')) {
+        return $false
+    }
     New-PayloadDirectory
     $infPath = Join-Path $payloadDir "sct-v3.3-rundll32.inf"
     $encoded = Get-EncodedCommand (New-MarkerCommand -Name "Rundll32Advpack")
@@ -319,6 +379,9 @@ function Test-InfDefaultInstall {
     Write-Host "  EDR alert  - installer binary executing script/interpreter child process"
     Write-Host "  SIEM rule  - InfDefaultInstall.exe launched outside normal driver/software install"
 
+    if (-not (Initialize-TestMarker -Name 'InfDefaultInstall')) {
+        return $false
+    }
     New-PayloadDirectory
     $infPath = Join-Path $payloadDir "sct-v3.3-infdefaultinstall.inf"
     $encoded = Get-EncodedCommand (New-MarkerCommand -Name "InfDefaultInstall")

@@ -51,7 +51,8 @@ param(
     [Alias('Technique')]
     [string]$Subtest = 'Fodhelper',
     [switch]$NoCleanupPrompt,
-    [switch]$NoPause
+    [switch]$NoPause,
+    [switch]$NonInteractive
 )
 
 $tempDir        = "C:\Windows\Temp"
@@ -86,11 +87,53 @@ function Test-IsHighIntegrity {
     return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+function Confirm-SCTArtifactRemoval {
+    param([Parameter(Mandatory)][string]$Description)
+
+    if ($NonInteractive) {
+        Write-Host "      Removing the stale SCT artifact automatically for this non-interactive run." -ForegroundColor DarkGray
+        return $true
+    }
+
+    while ($true) {
+        $answer = (Read-Host "      Remove existing SCT $Description and continue? [y/N]").Trim()
+        if (-not $answer -or $answer -match '^(n|no)$') {
+            return $false
+        }
+        if ($answer -match '^(y|yes)$') {
+            return $true
+        }
+        Write-Host "      Enter Y or N." -ForegroundColor Yellow
+    }
+}
+
 function Initialize-TestMarker {
     param([Parameter(Mandatory)][string]$Name)
 
     $marker = "$tempDir\art-v3.2-$Name.txt"
+    if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) {
+        return $marker
+    }
+
+    $content = [string](Get-Content -LiteralPath $marker -Raw -ErrorAction SilentlyContinue)
+    if ($content -notmatch "(?i)$([regex]::Escape($Name)) UAC bypass executed") {
+        Write-Host "  RESULT: Refusing to remove marker not identifiable as an SCT artifact: $marker" -ForegroundColor Yellow
+        return $null
+    }
+
+    Write-Host "  [!] Existing SCT marker artifact detected: $marker" -ForegroundColor Yellow
+    if (-not (Confirm-SCTArtifactRemoval -Description "marker file '$marker'")) {
+        Write-Host "  RESULT: Existing SCT marker was kept." -ForegroundColor Yellow
+        return $null
+    }
+
     Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $marker) {
+        Write-Host "  RESULT: Could not remove existing SCT marker: $marker" -ForegroundColor Yellow
+        return $null
+    }
+
+    Write-Host "  [+] Removed existing SCT marker." -ForegroundColor Green
     return $marker
 }
 
@@ -122,7 +165,20 @@ function New-SCTRegistryHijack {
     )
 
     if (Test-Path -LiteralPath $Path) {
-        throw "Refusing to overwrite an existing per-user class override: $Path"
+        $owner = Get-ItemPropertyValue -LiteralPath $Path -Name $registryOwnerName -ErrorAction SilentlyContinue
+        if ($owner -ne $registryOwnerValue) {
+            throw "Refusing to overwrite an existing per-user class override not owned by SCT: $Path"
+        }
+
+        Write-Host "  [!] Existing SCT registry artifact detected: $Path" -ForegroundColor Yellow
+        if (-not (Confirm-SCTArtifactRemoval -Description "registry key '$Path'")) {
+            throw "Existing SCT registry key was kept: $Path"
+        }
+        Remove-SCTRegistryHijack -Path $Path
+        if (Test-Path -LiteralPath $Path) {
+            throw "Could not remove existing SCT registry key: $Path"
+        }
+        Write-Host "  [+] Removed existing SCT registry artifact." -ForegroundColor Green
     }
 
     New-Item -Path $Path -Force -ErrorAction Stop | Out-Null
@@ -188,6 +244,9 @@ function Test-Fodhelper {
     Write-Host "  SIEM rule  - Process create: IntegrityLevel=High; parent=fodhelper.exe"
 
     $marker  = Initialize-TestMarker -Name 'Fodhelper'
+    if (-not $marker) {
+        return $false
+    }
     $cmd     = "Set-Content -Path '$marker' -Value ('[' + (Get-Date) + '] Fodhelper UAC bypass executed')"
     $encoded = Get-EncodedCommand $cmd
     $payload = "powershell.exe -NoProfile -WindowStyle Hidden -EncodedCommand $encoded"
@@ -245,6 +304,9 @@ function Test-Eventvwr {
     Write-Host "  Rule gap   - If rules only watch fodhelper parent, this bypasses them"
 
     $marker  = Initialize-TestMarker -Name 'Eventvwr'
+    if (-not $marker) {
+        return $false
+    }
     $cmd     = "Set-Content -Path '$marker' -Value ('[' + (Get-Date) + '] Eventvwr UAC bypass executed')"
     $encoded = Get-EncodedCommand $cmd
     $payload = "powershell.exe -NoProfile -WindowStyle Hidden -EncodedCommand $encoded"
@@ -300,6 +362,9 @@ function Test-ComputerDefaults {
     Write-Host "  Rule gap   - Alert fires on fodhelper parent but not ComputerDefaults parent"
 
     $marker  = Initialize-TestMarker -Name 'ComputerDefaults'
+    if (-not $marker) {
+        return $false
+    }
     $cmd     = "Set-Content -Path '$marker' -Value ('[' + (Get-Date) + '] ComputerDefaults UAC bypass executed')"
     $encoded = Get-EncodedCommand $cmd
     $payload = "powershell.exe -NoProfile -WindowStyle Hidden -EncodedCommand $encoded"
@@ -360,6 +425,9 @@ function Test-SilentCleanup {
     Write-Host "  Hunt       - Unusual current-user %%windir%% environment value"
 
     $marker      = Initialize-TestMarker -Name 'SilentCleanup'
+    if (-not $marker) {
+        return $false
+    }
     $cmd         = "Set-Content -Path '$marker' -Value ('[' + (Get-Date) + '] SilentCleanup UAC bypass executed')"
     $encoded     = Get-EncodedCommand $cmd
     # cmd /c runs: powershell ... -EncodedCommand [b64] & REM\system32\cleanmgr.exe /autoclean /d c:

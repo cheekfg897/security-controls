@@ -35,7 +35,8 @@ param(
     [switch]$NoCleanupPrompt,
     [switch]$NoReport,
     [switch]$NoPause,
-    [switch]$CleanupOnly
+    [switch]$CleanupOnly,
+    [switch]$NonInteractive
 )
 
 $tempDir = 'C:\Windows\Temp'
@@ -68,6 +69,55 @@ function Test-Administrator {
 function Get-MarkerPath {
     param([string]$Name)
     return (Join-Path $tempDir "art-v4.4-$Name.txt")
+}
+
+function Confirm-SCTArtifactRemoval {
+    param([Parameter(Mandatory)] [string]$Description)
+
+    if ($NonInteractive) {
+        Write-Host '      Removing the stale SCT artifact automatically for this non-interactive run.' -ForegroundColor DarkGray
+        return $true
+    }
+
+    while ($true) {
+        $answer = (Read-Host "      Remove existing SCT $Description and continue? [y/N]").Trim()
+        if (-not $answer -or $answer -match '^(n|no)$') {
+            return $false
+        }
+        if ($answer -match '^(y|yes)$') {
+            return $true
+        }
+        Write-Host '      Enter Y or N.' -ForegroundColor Yellow
+    }
+}
+
+function Test-SCTMarkerAvailable {
+    param([Parameter(Mandatory)] [string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return $true
+    }
+
+    $content = [string](Get-Content -LiteralPath $Path -Raw -ErrorAction SilentlyContinue)
+    if ($content -notmatch '(?i)^SCT WMI (?:CommandLineConsumer|ActiveScriptConsumer) triggered') {
+        Write-Host "  RESULT: Refusing to remove marker not identifiable as an SCT artifact: $Path" -ForegroundColor Yellow
+        return $false
+    }
+
+    Write-Host "  [!] Existing SCT marker artifact detected: $Path" -ForegroundColor Yellow
+    if (-not (Confirm-SCTArtifactRemoval -Description "marker file '$Path'")) {
+        Write-Host '  RESULT: Existing SCT marker was kept.' -ForegroundColor Yellow
+        return $false
+    }
+
+    Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $Path) {
+        Write-Host "  RESULT: Could not remove existing SCT marker: $Path" -ForegroundColor Yellow
+        return $false
+    }
+
+    Write-Host '  [+] Removed existing SCT marker.' -ForegroundColor Green
+    return $true
 }
 
 function Remove-SCTWmiSubscription {
@@ -152,7 +202,9 @@ function Invoke-SCTWmiConsumer {
         return $false
     }
 
-    Remove-Item -LiteralPath $MarkerPath -Force -ErrorAction Ignore
+    if (-not (Test-SCTMarkerAvailable -Path $MarkerPath)) {
+        return $false
+    }
     Remove-SCTWmiSubscription -Name $Name -Quiet
 
     $triggerProcess = $null

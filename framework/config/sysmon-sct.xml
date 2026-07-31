@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Security Controls Testing (SCT) lab telemetry configuration.
+
+  This configuration is intentionally broad for a short-lived, isolated lab
+  VM. It is not tuned for production deployment. It collects the Sysmon event
+  types referenced by the SCT scenarios:
+
+    1       Process creation
+    3       Network connection
+    7       Image load (limited to DLL names used by SCT)
+    11      File creation
+    12-14   Registry changes
+    19-21   Permanent WMI event subscriptions
+-->
+<Sysmon schemaversion="4.90">
+  <HashAlgorithms>SHA256</HashAlgorithms>
+  <CheckRevocation>false</CheckRevocation>
+  <DnsLookup>false</DnsLookup>
+
+  <EventFiltering>
+    <!-- Empty exclude rules collect every event of the selected type. -->
+    <ProcessCreate onmatch="exclude" />
+    <NetworkConnect onmatch="exclude" />
+
+    <!-- Event 7 is high-volume, so retain only image loads used by SCT. -->
+    <RuleGroup name="SCT required image loads" groupRelation="or">
+      <ImageLoad onmatch="include">
+        <ImageLoaded condition="end with">\dxgi.dll</ImageLoaded>
+        <ImageLoaded condition="end with">\scrobj.dll</ImageLoaded>
+      </ImageLoad>
+    </RuleGroup>
+
+    <FileCreate onmatch="exclude" />
+    <RegistryEvent onmatch="exclude" />
+    <WmiEvent onmatch="exclude" />
+  </EventFiltering>
+</Sysmon>

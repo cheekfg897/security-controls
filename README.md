@@ -29,9 +29,9 @@ The normal user workflow starts and remains in `framework`:
 
 1. Open [`framework/`](framework/README.md).
 2. Run `Start-SCT.ps1`.
-3. Create or select a security-product configuration.
+3. Name the test session and optionally create or select a product profile.
 4. Run the test scenarios and review the results.
-5. Validate the results and build a comparison ZIP.
+5. Create the profile later if needed, then validate the results and build a comparison ZIP.
 
 The [`framework/README.md`](framework/README.md) contains the requirements,
 setup instructions, menu guide, and complete testing workflow.
@@ -61,7 +61,7 @@ security-controls/
 |-- README.md                 # Start here
 |-- framework/                # Main user-facing SCT application
 |   |-- Start-SCT.ps1         # Main launcher: run this
-|   |-- config/               # Product-profile example and schema
+|   |-- config/               # Product-profile files and ready-to-use Sysmon XML
 |   |-- core/                 # Menu, discovery, execution, and result logic
 |   |-- docs/                 # Framework design, guides, and references
 |   |-- results/              # Generated workspaces and reviewed test results

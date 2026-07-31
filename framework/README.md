@@ -10,6 +10,7 @@ SCT is a PowerShell lab framework for checking whether EDR and antivirus product
 - [Getting started](#getting-started)
   - [Lab requirements](#lab-requirements)
   - [Install](#install)
+  - [Configure Sysmon telemetry](#configure-sysmon-telemetry)
   - [Which script do I run?](#which-script-do-i-run)
   - [Run SCT normally](#run-sct-normally)
   - [Malware samples](#malware-samples)
@@ -39,7 +40,9 @@ SCT uses the same three terms in metadata, menus, scripts, results, and document
 - An isolated Windows 10/11 VM with a snapshot.
 - PowerShell 5.1 or later.
 - An active EDR or antivirus product to test.
-- [Sysmon](https://learn.microsoft.com/sysinternals/downloads/sysmon) is recommended and is required for fileless-test result collection.
+- [Sysmon](https://learn.microsoft.com/sysinternals/downloads/sysmon), installed
+  with SCT's [`config/sysmon-sct.xml`](config/sysmon-sct.xml). A default Sysmon
+  installation does not enable all telemetry used by SCT.
 - Most techniques use one VM. Techniques 1.3 and remote subtests in 1.5 require a second Windows VM on the same isolated lab network.
 
 ### Install
@@ -50,13 +53,97 @@ Set-Location security-controls
 Set-Location framework
 ```
 
+### Configure Sysmon telemetry
+
+SCT includes a ready-to-use Sysmon configuration at
+[`config/sysmon-sct.xml`](config/sysmon-sct.xml). **The XML file is required:**
+installing Sysmon with its default settings does not enable all event types
+used by the scenarios.
+
+The included lab configuration collects:
+
+| Sysmon event | SCT evidence |
+|---|---|
+| 1 | Process creation and parent/child command lines |
+| 3 | Network connections used by download and fileless tests |
+| 7 | `dxgi.dll` and `scrobj.dll` image loads used by sideloading/LOLBin tests |
+| 11 | File creation and payload delivery |
+| 12-14 | Registry creation, value changes, and renames |
+| 19-21 | Permanent WMI filter, consumer, and binding creation |
+
+The configuration is intentionally broad for a short-lived isolated lab VM.
+Do not deploy it unchanged to production endpoints.
+
+Download and extract Sysmon from Microsoft into `C:\Sysmon`. Then open
+**PowerShell as Administrator**, change to the repository root, and paste:
+
+```powershell
+$sysmonExe = 'C:\Sysmon\Sysmon64.exe'
+$sysmonConfig = (Resolve-Path '.\framework\config\sysmon-sct.xml').Path
+$sysmonServices = @(Get-Service -Name Sysmon,Sysmon64 -ErrorAction SilentlyContinue)
+
+if (-not (Test-Path -LiteralPath $sysmonExe -PathType Leaf)) {
+    throw "Sysmon executable not found: $sysmonExe"
+}
+
+if ($sysmonServices.Count -eq 0) {
+    & $sysmonExe -accepteula -i $sysmonConfig
+} else {
+    $sysmonServices |
+        Where-Object Status -ne 'Running' |
+        Start-Service
+    & $sysmonExe -c $sysmonConfig
+}
+
+# Retain up to 512 MiB so broad lab telemetry does not roll over too quickly.
+wevtutil.exe sl Microsoft-Windows-Sysmon/Operational /e:true /ms:536870912
+```
+
+If the download contains `Sysmon.exe` instead, change only `$sysmonExe`.
+The `-i` command installs Sysmon with the XML; `-c` updates an existing
+installation immediately without a reboot.
+
+Verify the service, active configuration, and event channel:
+
+```powershell
+Get-Service -Name Sysmon,Sysmon64 -ErrorAction SilentlyContinue
+& $sysmonExe -c
+Get-WinEvent -ListLog Microsoft-Windows-Sysmon/Operational |
+    Select-Object LogName, IsEnabled, RecordCount, MaximumSizeInBytes
+```
+
+At least one Sysmon service must show `Running`, and the event log must show
+`IsEnabled` as `True`. If applying the XML reports a schema error, use the
+latest Sysmon release from Microsoft; do not fall back to the default
+configuration.
+
+Sysmon does not provide every Windows event referenced by SCT. Enable
+PowerShell Script Block Logging for Event 4104 and scheduled-task auditing for
+Event 4698 from the same elevated PowerShell session:
+
+```powershell
+$scriptBlockKey = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging'
+New-Item -Path $scriptBlockKey -Force | Out-Null
+New-ItemProperty -Path $scriptBlockKey -Name EnableScriptBlockLogging `
+    -PropertyType DWord -Value 1 -Force | Out-Null
+
+auditpol.exe /set /subcategory:"Other Object Access Events" /success:enable
+wevtutil.exe sl Microsoft-Windows-TaskScheduler/Operational /e:true
+wevtutil.exe sl Microsoft-Windows-WMI-Activity/Operational /e:true
+```
+
+Start a new PowerShell process after enabling Script Block Logging. Sysmon
+events confirm that activity was recorded; they do not by themselves mean the
+EDR/AV raised a detection. Record the product verdict separately in the SCT
+result fields.
+
 ### Which script do I run?
 
 | I want to... | Run this |
 |---|---|
 | Run the security tests | `.\Start-SCT.ps1` |
 | Open module, review, and validation tools | `.\Start-SCT.ps1`, then select `[M] Manage SCT` |
-| Create a product configuration/workspace | `.\Start-SCT.ps1`, then select `[N]` |
+| Create a product profile before or after testing | `.\Start-SCT.ps1`, then answer the startup prompt or select `[N]` |
 | Select an existing configuration | `.\Start-SCT.ps1`, then select `[C]` |
 | Fill detected/not-detected and blocked/not-blocked status | Edit `results/<control-id>/results-module-<id>.csv` directly |
 | Check the completed results | `.\Start-SCT.ps1`, then select `[M]` -> `[4]` |
@@ -77,22 +164,25 @@ directory, run:
 .\Start-SCT.ps1
 ```
 
-SCT displays the module menu immediately. A configuration must be active before
-a module can run. The menu shows this requirement prominently when none is
-selected:
+SCT first asks for a session name, which identifies the result workspace for
+the run. It then asks whether to create a new control profile. Answer **No** to
+continue immediately in draft-session mode: modules remain available and all
+observations are saved, but validation and comparison packaging remain
+unavailable until the profile is created.
 
-- Choose `[C] Select Existing Configuration` to activate a configuration already
-  under `results/`.
-- Choose `[N] Create New Configuration` for a new product. Only its display name
-  is required. Press Enter to accept the derived control id and skip optional
-  vendor, product, version, agent, policy, mode, setting, exclusion, log, and
-  notes fields.
+Answer **Yes**, or choose `[N] Create a control profile for this session` later
+from the Main Menu, to run the profile setup. Existing draft results are kept.
+Only the display name is required; press Enter to skip optional vendor, product,
+version, agent, policy, mode, setting, exclusion, log, and notes fields.
 
 Skipped text details are stored as `Not recorded`, and a skipped policy mode is
-stored as `custom`, keeping the profile valid. Setup writes the configuration
-to `results/<control-id>/<control-id>-control-profile.json` and creates one
-`test-catalog-module-<id>.csv` per discovered module. SCT routes each
-observation to that module's `results-module-<id>.csv`.
+stored as `custom`, keeping the profile valid. Finalizing the session writes
+`results/<session-id>/<session-id>-control-profile.json`. The same workspace
+contains one `test-catalog-module-<id>.csv` per discovered module and routes
+each observation to that module's `results-module-<id>.csv`.
+
+Choose `[C] Select Existing Configuration` to switch from the current session
+to a finalized product workspace already under `results/`.
 
 You can also select an existing configuration at launch:
 
@@ -233,7 +323,7 @@ security-controls/
 |-- ai-system/          # Isolated comparison engine, web app, config, outputs, and tests
 `-- framework/
     |-- Start-SCT.ps1   # Main launcher
-    |-- config/         # Control-profile example and JSON schema
+    |-- config/         # Control-profile schema/example and Sysmon lab XML
     |-- core/           # Discovery, execution, markers, and results
     |-- docs/           # Indexed architecture, guides, and reference docs
     |-- results/        # Per-product profiles and generated result workspaces
