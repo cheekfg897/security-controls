@@ -23,10 +23,29 @@
     {% else %}
     <p class="muted">No ZIPs are currently stored under <code>framework/submissions/</code>.</p>
     {% endif %}
-    <label class="field">Upload additional ZIPs
-      <input type="file" name="uploads" accept=".zip,application/zip" multiple>
+    <label class="field" for="package-uploads">Add ZIP packages
+      <input type="file" id="package-uploads" name="uploads"
+        accept=".zip,application/zip" multiple data-package-upload
+        aria-describedby="package-upload-help package-upload-status">
     </label>
-    <p class="hint">Maximum 20 packages and 100 MB per uploaded package.</p>
+    <p class="hint" id="package-upload-help">Choose one ZIP at a time or
+      several together. New selections are added to the list instead of
+      replacing files already selected. Maximum 20 packages and 100 MB per
+      uploaded package.</p>
+    <div class="upload-summary" data-upload-summary hidden>
+      <div class="upload-summary-header">
+        <div>
+          <strong>New ZIPs ready to upload</strong>
+          <span class="upload-count" data-upload-count></span>
+        </div>
+        <button type="button" class="secondary compact-button"
+          data-clear-uploads>Clear all</button>
+      </div>
+      <ol class="upload-list" data-upload-list></ol>
+    </div>
+    <p class="hint" id="package-upload-status" data-upload-empty
+      aria-live="polite">No new ZIPs selected yet.</p>
+    <p class="error compact-error" data-upload-error role="alert" hidden></p>
   </fieldset>
 
   <fieldset>

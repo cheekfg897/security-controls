@@ -82,6 +82,19 @@ class WebSurfaceTests(unittest.TestCase):
             source,
         )
 
+    def test_upload_queue_keeps_incremental_file_selections(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[2]
+            / "src"
+            / "sct_ai"
+            / "static"
+            / "app.js"
+        ).read_text(encoding="utf-8")
+        self.assertIn("let selectedUploads = []", source)
+        self.assertIn("const transfer = new DataTransfer()", source)
+        self.assertIn("packageUpload.files = transfer.files", source)
+        self.assertIn('remove.textContent = "Remove"', source)
+
     def test_non_loopback_requires_shared_mode(self) -> None:
         validate_web_binding("127.0.0.1", 8000, False)
         validate_web_binding("0.0.0.0", 8000, True)
@@ -146,6 +159,9 @@ class WebSurfaceTests(unittest.TestCase):
                 self.assertNotIn("https://", response.text)
                 self.assertIn('name="module_weight_01"', response.text)
                 self.assertIn('name="scoring_mode"', response.text)
+                self.assertIn('data-package-upload', response.text)
+                self.assertIn('data-upload-summary', response.text)
+                self.assertIn('data-upload-list', response.text)
                 self.assertNotIn('name="module_weights"', response.text)
                 token_match = re.search(
                     r'name="csrf_token" value="([^"]+)"',

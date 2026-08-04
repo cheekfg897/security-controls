@@ -8,6 +8,7 @@ import os
 import sys
 from pathlib import Path
 
+from .environment import load_repository_environment
 from .errors import AIOutputError, PackageValidationError, SCTComparisonError
 from .packages import load_packages
 from .service import run_comparison
@@ -22,6 +23,14 @@ def _system_root() -> Path:
     if (checkout_system / "pyproject.toml").is_file():
         return checkout_system
     return source_system
+
+
+def _provider_config_default() -> str | None:
+    configured = os.environ.get("SCT_PROVIDER_CONFIG", "").strip()
+    if configured:
+        return str(Path(configured).expanduser())
+    candidate = _system_root() / "config" / "config.local.ai.json"
+    return str(candidate) if candidate.is_file() else None
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -39,7 +48,7 @@ def _parser() -> argparse.ArgumentParser:
     compare.add_argument("--policy")
     compare.add_argument("--provider", default="none")
     compare.add_argument("--model")
-    compare.add_argument("--provider-config")
+    compare.add_argument("--provider-config", default=_provider_config_default())
     compare.add_argument("--comparison-id")
     compare.add_argument(
         "--output-root",
@@ -51,7 +60,7 @@ def _parser() -> argparse.ArgumentParser:
     web.add_argument("--host", default="127.0.0.1")
     web.add_argument("--port", type=int, default=8000)
     web.add_argument("--shared", action="store_true")
-    web.add_argument("--provider-config")
+    web.add_argument("--provider-config", default=_provider_config_default())
     web.add_argument("--workers", type=int, default=1)
     web.add_argument("--repository-root")
     web.add_argument("--system-root")
@@ -63,8 +72,9 @@ def _print_progress(stage: str, percent: int, message: str) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
     try:
+        load_repository_environment()
+        args = _parser().parse_args(argv)
         if args.command == "validate":
             packages = load_packages(args.package)
             print(

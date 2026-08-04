@@ -133,6 +133,10 @@ job index, and browser assets included in this repository.
 .\ai-system\.venv\Scripts\python.exe -m sct_ai web
 ```
 
+At startup, the application loads `.env` from the repository root when the
+file exists. It also discovers `ai-system\config\config.local.ai.json`
+automatically. Both files are ignored by Git.
+
 Open:
 
 ```text
@@ -154,6 +158,19 @@ The home page is arranged in the same order as a comparison run.
 
 Select existing ZIPs from `framework\submissions\`, upload additional ZIPs, or combine
 both methods.
+
+The upload control keeps a numbered list beneath the file picker. You can add
+ZIPs one at a time or select several together; later selections are appended
+to the list. Review filenames and sizes there, remove individual files, or
+clear the upload list before validating.
+
+Use only comparison packages produced by
+`framework\scripts\review\Build-SCTComparisonPackage.ps1`. A valid package is
+named `<control-id>.zip` under `framework\submissions\` and contains a
+root-level `control-profile.json` plus matching result/catalogue pairs for the
+tested modules. Do not upload a ZIP made directly from `framework\results`;
+product-specific profile names, nested workspace folders, and catalogues
+without matching results are rejected.
 
 Requirements:
 
@@ -455,20 +472,21 @@ that will hold the API key:
 }
 ```
 
-Set that environment variable in the same PowerShell session before starting
-the web application:
+Create the ignored repository-root environment file once:
 
 ```powershell
-$openAIKey = Read-Host 'OpenAI API key' -AsSecureString
-$openAICredential = [System.Management.Automation.PSCredential]::new(
-    'unused',
-    $openAIKey
-)
-$env:OPENAI_API_KEY = $openAICredential.GetNetworkCredential().Password
-Remove-Variable openAICredential, openAIKey
+Copy-Item .\.env.example .\.env
 ```
 
-Enter the key issued for the approved API project when prompted.
+Open `.env` and set the key issued for the approved API project:
+
+```dotenv
+OPENAI_API_KEY=replace-with-the-api-key
+```
+
+The application loads this file automatically from the repository root.
+An environment variable already set by Windows or PowerShell takes precedence
+over the value in `.env`.
 
 #### OpenAI-compatible endpoint
 
@@ -484,16 +502,10 @@ environment variable that contains its key:
 }
 ```
 
-Then set the matching variable before startup:
+Then set the matching value in the repository-root `.env` file:
 
-```powershell
-$compatibleKey = Read-Host 'Compatible API key' -AsSecureString
-$compatibleCredential = [System.Management.Automation.PSCredential]::new(
-    'unused',
-    $compatibleKey
-)
-$env:SCT_AI_API_KEY = $compatibleCredential.GetNetworkCredential().Password
-Remove-Variable compatibleCredential, compatibleKey
+```dotenv
+SCT_AI_API_KEY=replace-with-the-compatible-api-key
 ```
 
 Users cannot submit an arbitrary model URL through the browser.
@@ -501,27 +513,28 @@ Users cannot submit an arbitrary model URL through the browser.
 ### 4. Protect the API key
 
 - Put only the environment-variable name in `config.local.ai.json`, never the
-  secret value.
+  secret value. Store the local secret in the ignored repository-root `.env`.
 - Do not commit keys, paste them into comparison policies, or include them in
   command history or screenshots.
 - Use a key scoped to the approved project and provider permissions.
-- The `$env:` examples set the key for the current PowerShell process and
-  programs started from it. Open a new session or remove the variable when it
-  is no longer needed.
+- `.env` and `.env.*` are ignored by Git; `.env.example` contains no secret and
+  remains tracked as the setup template.
+- A process-level environment variable overrides `.env`, which allows managed
+  deployments to inject credentials without a local secret file.
 
 ### 5. Start and verify
 
-Start the application from the same terminal in which a hosted API key was
-set:
+Start the application from the repository root:
 
 ```powershell
 .\ai-system\.venv\Scripts\python.exe -m sct_ai web
 ```
 
 Open `http://127.0.0.1:8000`, enable **Run AI evidence skills**, and confirm
-the expected provider/model pair appears in the dropdown. If it does not,
-check the model spelling, remove placeholder angle brackets, confirm the API
-key variable is set, and restart the server after configuration changes.
+the expected provider/model pair appears in the dropdown. This confirms that
+the provider configuration and model allowlist were loaded. Running an
+AI-enabled comparison also verifies the API credential from `.env` or the
+process environment. Restart the server after changing either file.
 
 ## What the AI workflow does
 
@@ -799,6 +812,15 @@ Fix:
 
 Metrics-only comparisons remain available without an AI provider.
 
+### An AI run says the API key variable is not set
+
+- Confirm the repository-root `.env` file exists, not only `.env.example`.
+- Confirm it contains a non-empty value such as `OPENAI_API_KEY=...`.
+- Confirm `api_key_env` in `config.local.ai.json` names that same variable.
+- Remove an empty process-level variable because it takes precedence over
+  `.env`; in PowerShell, use `Remove-Item Env:OPENAI_API_KEY`.
+- Restart the web application after changing `.env`.
+
 ### Module weights are rejected
 
 - Use **Validate packages** to see which modules are present.
@@ -856,7 +878,9 @@ the web surface, and AI evidence validation.
 - Web forms use same-site double-submit CSRF protection.
 - Pages use automatic HTML escaping and a restrictive Content Security Policy.
 - Browser code makes self-origin requests only and uses no CDN.
-- API keys are read from server environment variables.
+- API keys are read from server environment variables. For local source
+  checkouts, the ignored repository-root `.env` populates variables that the
+  launch environment has not already set.
 - Provider names, model names, and endpoints are server-allowlisted.
 - The model receives structured evidence and cannot change the deterministic
   ranking.

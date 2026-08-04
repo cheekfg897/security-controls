@@ -105,6 +105,124 @@ document.addEventListener("DOMContentLoaded", () => {
   scoringMode?.addEventListener("change", applyMixedModeGuard);
   applyMixedModeGuard();
 
+  const packageUpload = document.querySelector("[data-package-upload]");
+  const uploadSummary = document.querySelector("[data-upload-summary]");
+  const uploadList = document.querySelector("[data-upload-list]");
+  const uploadCount = document.querySelector("[data-upload-count]");
+  const uploadEmpty = document.querySelector("[data-upload-empty]");
+  const uploadError = document.querySelector("[data-upload-error]");
+  const clearUploads = document.querySelector("[data-clear-uploads]");
+
+  if (packageUpload && uploadSummary && uploadList) {
+    let selectedUploads = [];
+    const maximumFiles = 20;
+    const maximumFileBytes = 100 * 1024 * 1024;
+
+    function fileKey(file) {
+      return `${file.name}\u0000${file.size}\u0000${file.lastModified}`;
+    }
+
+    function formatFileSize(bytes) {
+      if (bytes < 1024) return `${bytes} B`;
+      if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+      return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    }
+
+    function syncUploadInput() {
+      const transfer = new DataTransfer();
+      selectedUploads.forEach((file) => transfer.items.add(file));
+      packageUpload.files = transfer.files;
+    }
+
+    function showUploadError(message) {
+      if (!uploadError) return;
+      uploadError.textContent = message;
+      uploadError.hidden = !message;
+    }
+
+    function renderUploads() {
+      uploadList.replaceChildren();
+      selectedUploads.forEach((file) => {
+        const item = document.createElement("li");
+        const details = document.createElement("div");
+        const name = document.createElement("strong");
+        const size = document.createElement("span");
+        const remove = document.createElement("button");
+
+        name.textContent = file.name;
+        size.textContent = formatFileSize(file.size);
+        details.className = "upload-file-details";
+        details.append(name, size);
+
+        remove.type = "button";
+        remove.className = "remove-upload";
+        remove.textContent = "Remove";
+        remove.setAttribute("aria-label", `Remove ${file.name}`);
+        remove.addEventListener("click", () => {
+          const key = fileKey(file);
+          selectedUploads = selectedUploads.filter(
+            (candidate) => fileKey(candidate) !== key
+          );
+          syncUploadInput();
+          showUploadError("");
+          renderUploads();
+        });
+
+        item.append(details, remove);
+        uploadList.append(item);
+      });
+
+      const count = selectedUploads.length;
+      uploadSummary.hidden = count === 0;
+      if (uploadEmpty) {
+        uploadEmpty.hidden = count !== 0;
+        uploadEmpty.textContent = count === 0 ? "No new ZIPs selected yet." : "";
+      }
+      if (uploadCount) {
+        uploadCount.textContent = `(${count} ${count === 1 ? "file" : "files"})`;
+      }
+    }
+
+    packageUpload.addEventListener("change", () => {
+      const additions = [...packageUpload.files];
+      const existingKeys = new Set(selectedUploads.map(fileKey));
+      const rejected = [];
+
+      additions.forEach((file) => {
+        if (!file.name.toLowerCase().endsWith(".zip")) {
+          rejected.push(`${file.name} is not a ZIP`);
+          return;
+        }
+        if (file.size > maximumFileBytes) {
+          rejected.push(`${file.name} is larger than 100 MB`);
+          return;
+        }
+        const key = fileKey(file);
+        if (existingKeys.has(key)) return;
+        if (selectedUploads.length >= maximumFiles) {
+          rejected.push("No more than 20 uploaded ZIPs are allowed");
+          return;
+        }
+        selectedUploads.push(file);
+        existingKeys.add(key);
+      });
+
+      syncUploadInput();
+      showUploadError(rejected.join(". "));
+      renderUploads();
+    });
+
+    clearUploads?.addEventListener("click", () => {
+      selectedUploads = [];
+      syncUploadInput();
+      showUploadError("");
+      renderUploads();
+      packageUpload.focus();
+    });
+
+    renderUploads();
+  }
+
   const panel = document.querySelector("[data-job-id]");
   if (!panel) return;
   const jobId = panel.dataset.jobId;

@@ -282,7 +282,29 @@ Save the module result files in place, then validate and package the workspace t
     -ControlProfilePath .\results\sentinelone\sentinelone-control-profile.json
 ```
 
-The package is written to `submissions/<control-id>.zip` and contains `control-profile.json` plus the authoritative result/catalogue pair for every tested module. Repeat for the second product and submit the two ZIP files to the comparison system.
+The package is written to `submissions/<control-id>.zip` and contains
+`control-profile.json` plus the authoritative result/catalogue pair for every
+tested module. Repeat for the second product and submit the two ZIP files to
+the comparison system.
+
+#### Workspace and package naming
+
+| Location | Required name | Purpose |
+|---|---|---|
+| Product workspace | `results/<control-id>/<control-id>-control-profile.json` | Product-specific profile used while running and reviewing tests |
+| Product workspace | `test-catalog-module-<id>.csv` | Test descriptions; one catalogue is retained for every discovered module |
+| Product workspace | `results-module-<id>.csv` | Observations; created only after that module has results |
+| Submission folder | `submissions/<control-id>.zip` | Final ZIP accepted by the comparison application |
+| Inside the submission ZIP | `control-profile.json` | Canonical product-independent profile name |
+| Inside the submission ZIP | Matching `results-module-<id>.csv` and `test-catalog-module-<id>.csv` pairs | Only modules that actually have results |
+
+Do not compress or upload a directory from `results/` directly. A workspace
+intentionally contains catalogues for untested modules and uses a
+product-specific profile filename, so a raw workspace ZIP is not a comparison
+package. Always use Manage SCT option `[5]` or
+`Build-SCTComparisonPackage.ps1`; the builder renames the profile and excludes
+catalogues without matching results. Use `-Force` when rebuilding an existing
+submission after results change.
 
 ### Compare products
 
