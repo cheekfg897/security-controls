@@ -286,7 +286,8 @@ param(
         'Canonical results must use the complete shared schema.'
     Assert-True (
         (@($canonicalRows[0].PSObject.Properties.Name)[0..7] -join '|') -eq
-        'technique_name|subtest|test_input|test_stage|execution_status|detection_status|action_status|reviewer_notes'
+        ('technique_name|subtest|test_input|test_stage|execution_status|' +
+            'detection_status|action_status|reviewer_notes')
     ) 'Canonical results must put reviewer-facing columns before technical provenance.'
     Assert-True ($canonicalRows[0].PSObject.Properties.Name -notcontains 'notes') `
         'Canonical results must not include the removed generated notes column.'

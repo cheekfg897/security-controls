@@ -41,7 +41,8 @@ setup instructions, menu guide, and complete testing workflow.
 `ai-system` is a separate, optional comparison application. It does **not** run
 the endpoint security tests. It accepts two or more completed ZIP packages
 created by `framework`, calculates comparable scores and rankings, and can
-optionally use an approved AI model to explain the calculated evidence.
+optionally use an approved AI model for a blinded advisory assessment that is
+shown separately from the deterministic Python recommendation.
 
 Only open [`ai-system/`](ai-system/README.md) when you already have completed
 framework packages to compare, or when you are developing the comparison
@@ -93,7 +94,7 @@ it.
 | Record, validate, or package test results | [`framework/`](framework/README.md) |
 | Add a test module or technique | [`framework/`](framework/README.md#adding-a-technique) |
 | Compare two or more completed result ZIPs | [`ai-system/`](ai-system/README.md) |
-| Configure optional AI explanations | [`ai-system/`](ai-system/README.md#choose-and-configure-an-ai-model) |
+| Configure optional independent AI assessment | [`ai-system/`](ai-system/README.md#choose-and-configure-an-ai-model) |
 
 ## Developer tests
 

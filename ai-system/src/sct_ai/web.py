@@ -187,7 +187,6 @@ def create_app(
     repository = (repository_root or _repository_root()).resolve()
     system = (system_root or _system_root()).resolve()
     output_root = system / "comparisons"
-    submissions_root = repository / "submissions"
     staging_root = output_root / ".staging"
     output_root.mkdir(parents=True, exist_ok=True)
     staging_root.mkdir(parents=True, exist_ok=True)
@@ -282,33 +281,17 @@ def create_app(
         if not cookie or not submitted or not hmac.compare_digest(cookie, submitted):
             raise HTTPException(status_code=403, detail="CSRF validation failed.")
 
-    def existing_packages() -> list[str]:
-        return [
-            path.name
-            for path in sorted(submissions_root.glob("*.zip"))
-            if path.is_file()
-        ]
-
     async def stage_inputs(form: Any, stage_dir: Path) -> list[str]:
-        selected = [str(value) for value in form.getlist("existing_packages")]
         uploads = [
             value
             for value in form.getlist("uploads")
             if getattr(value, "filename", "")
         ]
-        if len(selected) + len(uploads) < 2:
-            raise ValueError("Select or upload at least two comparison ZIPs.")
-        if len(selected) + len(uploads) > 20:
+        if len(uploads) < 2:
+            raise ValueError("Upload at least two comparison ZIPs.")
+        if len(uploads) > 20:
             raise ValueError("No more than 20 comparison ZIPs are allowed.")
         paths: list[str] = []
-        for name in selected:
-            if Path(name).name != name:
-                raise ValueError("Existing package selection is invalid.")
-            path = (submissions_root / name).resolve()
-            if path.parent != submissions_root.resolve() or not path.is_file():
-                raise ValueError(f"Selected package does not exist: {name}")
-            paths.append(str(path))
-
         stage_dir.mkdir(parents=True, exist_ok=False)
         for upload in uploads:
             try:
@@ -316,7 +299,9 @@ def create_app(
                     raise ValueError(
                         f"Uploaded file must be a ZIP: {upload.filename}"
                     )
-                target = stage_dir / f"{uuid.uuid4().hex}.zip"
+                upload_dir = stage_dir / uuid.uuid4().hex
+                upload_dir.mkdir(exist_ok=False)
+                target = upload_dir / Path(str(upload.filename)).name
                 total = 0
                 with target.open("xb") as handle:
                     while True:
@@ -398,6 +383,15 @@ def create_app(
             ),
             "scoring_mode": scoring_mode,
         }
+        decision_priorities = str(
+            form.get("decision_priorities", "")
+        ).strip()
+        if len(decision_priorities) > 2000:
+            raise ValueError(
+                "Decision priorities must not exceed 2000 characters."
+            )
+        if decision_priorities:
+            policy["decision_priorities"] = decision_priorities
         if scoring_mode == "custom":
             policy["detection_weight"] = parse_number(
                 form,
@@ -457,6 +451,7 @@ def create_app(
                 80,
             ),
             "tie_margin": form_value("tie_margin", 2),
+            "decision_priorities": form_value("decision_priorities", ""),
         }
 
     @app.get("/", response_class=HTMLResponse)
@@ -467,7 +462,6 @@ def create_app(
             "index.html",
             {
                 "csrf_token": token,
-                "packages": existing_packages(),
                 "provider_options": _provider_options(provider_config_path),
                 "jobs": store.list_recent(),
                 "error": None,
@@ -591,7 +585,6 @@ def create_app(
                 "index.html",
                 {
                     "csrf_token": token,
-                    "packages": existing_packages(),
                     "provider_options": _provider_options(provider_config_path),
                     "jobs": store.list_recent(),
                     "error": str(exc),

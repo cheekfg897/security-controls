@@ -1,7 +1,7 @@
 # SCT comparison web application
 
 This folder contains the Security Control Testing (SCT) comparison engine,
-web application, optional AI explanation workflow, and offline-installation
+web application, optional independent AI assessment workflow, and offline-installation
 tools.
 
 The normal way to use it is:
@@ -65,9 +65,9 @@ To install and start the application, you need:
 - The Python dependencies installed from a package index or from the
   [air-gapped installation](#air-gapped-installation) bundle.
 
-To perform a comparison, you also need at least two valid SCT result ZIPs.
-These can already be present under `framework\submissions\` or be uploaded through the
-web application.
+To perform a comparison, you also need at least two valid SCT result ZIPs. The
+web application accepts them through its upload control; the command-line
+interface accepts explicit local package paths.
 
 AI is optional. Metrics, scoring, ranking, and deterministic reports work
 without Ollama, an OpenAI API key, or any other model provider. Node.js, npm,
@@ -154,10 +154,9 @@ the primary startup method.
 
 The home page is arranged in the same order as a comparison run.
 
-### Step 1: Select result packages
+### Step 1: Upload result packages
 
-Select existing ZIPs from `framework\submissions\`, upload additional ZIPs, or combine
-both methods.
+Upload at least two comparison ZIPs from your own files.
 
 The upload control keeps a numbered list beneath the file picker. You can add
 ZIPs one at a time or select several together; later selections are appended
@@ -186,8 +185,10 @@ shows each control ID, case count, trial count, submitted module IDs, and the
 declared policy mode, and warns when the selection mixes detect-only and
 blocking policies.
 
-Uploads are copied to a generated staging directory. They are removed when the
-job finishes. ZIPs already stored under `framework\submissions\` are never modified.
+Uploads are copied to a generated staging directory and removed when the job
+finishes. The web page does not expose server-side files from
+`framework\submissions\`; those packages remain available to command-line
+workflows through explicit paths.
 
 ### Step 2: Set module weights
 
@@ -307,6 +308,10 @@ Repeated trials are averaged inside their case first. Cases are then averaged
 inside their module. This prevents frequently repeated tests from silently
 dominating a module.
 
+Module 01 uses one `test_stage=write` row for each payload attempt, with its
+outcome stored in `execution_status`. A package that repeats the same logical
+payload and run as separate write and execution rows is rejected.
+
 ### Step 4: Set decision thresholds
 
 **Minimum comparable weight** defaults to 80%.
@@ -330,21 +335,33 @@ Two behaviors matter when coverage is incomplete:
 When the top two scores are within this margin, the result is reported as
 `no_clear_winner`.
 
-### Step 5: Optionally enable AI explanation
+### Step 5: Describe decision priorities
+
+Optionally state the evaluation priorities that the independent AI assessment
+should consider, such as prevention, detection visibility, broad module
+coverage, or stable repeated-run outcomes. This text is limited to 2,000
+characters. It is stored with the comparison policy but does not change
+Python's weights, scores, thresholds, ranking, or recommendation.
+
+Do not paste secrets, raw logs, reviewer notes, or sensitive sample data into
+this field.
+
+### Step 6: Optionally enable independent AI assessment
 
 Metrics-only mode is always available and does not contact an AI provider.
 
 When AI is configured:
 
-1. Select **Run AI evidence skills**.
+1. Select **Run independent AI evidence review**.
 2. Select an allowlisted provider and model.
 3. Run the comparison normally.
 
 The deterministic comparison is completed and saved before any model request.
-If AI configuration or output validation fails, the metrics and deterministic
-reports remain available.
+If AI configuration or output validation fails, the job still completes with
+the deterministic result and reports. The AI section is marked unavailable
+and records the provider error separately.
 
-### Step 6: Validate and run
+### Step 7: Validate and run
 
 Use **Validate packages** to check the ZIPs first, then select
 **Run comparison**.
@@ -360,7 +377,7 @@ coverage, pairwise differences, and ranking
         ↓
 deterministic reports
         ↓ optional
-validated AI evidence explanation
+blinded independent AI assessment and decision reconciliation
 ```
 
 When complete, the browser displays:
@@ -369,14 +386,20 @@ When complete, the browser displays:
 - Comparable coverage.
 - The verified ranking or no-winner reason.
 - Per-control and per-module metrics.
+- A per-control, per-module breakdown of represented techniques and subtests,
+  recorded result runs, detected results, and blocked results.
 - Pairwise score differences.
-- Optional AI findings.
+- Optional independent AI preference, confidence, and findings.
+- An `AGREES`, `DISAGREES`, or `AI INCONCLUSIVE` comparison between the
+  Python recommendation and AI preference.
 - Expandable evidence records.
 - Downloadable output files.
+- A **Print / Save as PDF** action that prints the complete current report,
+  including deterministic metrics and optional AI findings.
 
 ## Choose and configure an AI model
 
-AI is optional. Leave **Run AI evidence skills** unchecked when deterministic
+AI is optional. Leave **Run independent AI evidence review** unchecked when deterministic
 metrics and reports are sufficient. No provider or API key is contacted in
 metrics-only mode.
 
@@ -530,7 +553,7 @@ Start the application from the repository root:
 .\ai-system\.venv\Scripts\python.exe -m sct_ai web
 ```
 
-Open `http://127.0.0.1:8000`, enable **Run AI evidence skills**, and confirm
+Open `http://127.0.0.1:8000`, enable **Run independent AI evidence review**, and confirm
 the expected provider/model pair appears in the dropdown. This confirms that
 the provider configuration and model allowlist were loaded. Running an
 AI-enabled comparison also verifies the API credential from `.env` or the
@@ -538,30 +561,204 @@ process environment. Restart the server after changing either file.
 
 ## What the AI workflow does
 
-The optional workflow makes four sequential model calls:
+The AI component is an optional explanation layer over the deterministic
+comparison. Python finishes and saves `comparison.json`, including every
+metric, evidence record, rank, and recommendation decision, before the first
+model call. The model may reach a different advisory preference, but it cannot
+change the deterministic result.
 
-1. `profile-context`
-2. `module-analysis`
-3. `cross-control-synthesis`
-4. `qualified-recommendation`
+One selected model client then makes five sequential calls. These are
+versioned prompt-and-schema stages, not autonomous agents, and they do not use
+tools or modify repository data.
 
-These are versioned prompt-and-schema stages, not autonomous or parallel
-agents. One selected model client runs the stages in order. Later stages can
-receive validated earlier output.
+```text
+                         deterministic comparison.json
+                           /                    \
+                          v                      v
+             1. profile-context        2. module-analysis
+                policy/product            modules/cases
+                interpretation             interpretation
+                          \                      /
+                           validated outputs only
+                                    |
+                                    v
+                       3. cross-control-synthesis
+                          correlates calls 1 and 2
+                                    |
+                         blinded context and outputs 1, 2, 3
+                                    |
+                                    v
+                       4. independent-assessment
+                          advisory preference; still blind
+                                    |
+                 Python ranking + independent AI assessment
+                                    |
+                                    v
+                       5. decision-reconciliation
+                          explains agreement/disagreement
+                                    |
+                                    v
+                              ai-analysis.json
+```
 
-All definitions now live in the consolidated
-`src\sct_ai\skills.json` catalog.
+Calls 1 and 2 run in sequence but are analytically independent: call 2 does
+not receive call 1's prose. Call 3 is the first stage that receives and
+correlates both earlier validated outputs. Calls 1 through 4 do not receive
+Python's winner, rank ordering, or `ranking` evidence, which reduces anchoring.
+Call 4 forms an independent advisory preference from the sanitized context,
+metrics, decision priorities, and validated earlier analysis. Call 5 is the
+only stage that receives both the authoritative Python ranking and the blinded
+AI assessment.
 
-Each response must:
+### What each call receives and produces
 
-- Match its JSON schema.
-- Reference known control IDs.
-- Cite exact evidence IDs from `comparison.json`.
-- Avoid unsupported percentage claims.
-- Return the deterministic recommendation exactly, including `null` when
-  evidence is insufficient or scores are tied.
+| Call | Question it answers | Deterministic input sent to the model | Output and downstream use |
+|---|---|---|---|
+| `profile-context` | What product and tested-policy differences matter when interpreting the results? | Control identity and product/version metadata, tested policy context, calculated control metrics, scoring configuration, decision priorities, and only `profile_summary` and `control_metrics` evidence records. | Produces contextual findings. It cannot calculate scores, rank controls, claim unsupported causation, or recommend a product. Its validated output is supplied to calls 3, 4, and 5. |
+| `module-analysis` | Where do module, technique, coverage, case-outcome, or repeated-run differences appear? | Control context and metrics, global coverage, case catalogue, scoring configuration, decision priorities, and only `module_metrics` and `case_outcome` evidence records. | Produces module/outcome findings. It cannot recalculate percentages, alter scores, rank, or recommend. Its validated output is supplied to calls 3, 4, and 5. |
+| `cross-control-synthesis` | What decision-relevant trade-offs emerge when the profile context and outcome analysis are considered together? | Control context, coverage, pairwise comparisons, scoring configuration, decision priorities, non-ranking deterministic evidence, plus validated outputs from calls 1 and 2. | Produces a synthesis across every submitted control while preserving coverage and policy caveats. It still cannot recommend a product. Its validated output is supplied to calls 4 and 5. |
+| `independent-assessment` | Which control, if any, is the AI's advisory preference under the stated priorities and context? | The same blinded context as call 3, plus validated outputs from calls 1 through 3. It does not receive Python's winner, rank order, or ranking evidence. | Produces a known control ID or `null`, categorical confidence, rationale, strengths, concerns, coverage caveats, and evidence IDs. It may disagree with Python or remain inconclusive. |
+| `decision-reconciliation` | Why do Python and the independent AI agree, disagree, or produce an inconclusive AI result? | Both decisions, the authoritative full ranking, control context, coverage, pairwise comparisons, decision priorities, full deterministic evidence, and validated outputs from calls 1 through 3. | Produces the report's `AGREES`, `DISAGREES`, or `AI INCONCLUSIVE` explanation. Validation prevents it from changing either decision. |
 
-A skill receives one correction attempt when its first response is invalid.
+"Control context" contains each control's identity, submitted product profile,
+tested policy, and deterministic metrics. Detailed policy settings are removed
+unless the selected server-side provider configuration explicitly sets
+`include_policy_details` to `true`.
+
+### How the prompt is assembled
+
+Every call sends exactly two initial chat messages:
+
+1. A system message copied from that skill's `system_prompt`.
+2. A user message copied from that skill's `user_prompt`, with
+   `{{payload}}` replaced by the JSON input described above.
+
+The five user-message instructions are:
+
+| Call | User instruction surrounding the JSON payload |
+|---|---|
+| `profile-context` | "Analyze the tested control profiles and policy context in this evidence payload. Separate facts from interpretation and cite every finding." |
+| `module-analysis` | "Analyze meaningful module and technique differences, missing coverage, and repeated-run instability. Cite the exact evidence behind each finding." |
+| `cross-control-synthesis` | "Synthesize the most decision-relevant tradeoffs across all controls. Preserve coverage and policy caveats, and cite every finding." |
+| `independent-assessment` | "Make an independent advisory assessment using the stated decision priorities and supplied evidence. You have not been given the deterministic winner or rank order. Select a control only when the contextual evidence supports it; otherwise return null." |
+| `decision-reconciliation` | "Reconcile the deterministic Python result with the blinded independent AI assessment. Preserve both decisions exactly and explain the most important evidence-backed reason for agreement, disagreement, or AI inconclusiveness." |
+
+The full, exact system prompts, user-prompt templates, versions, and JSON
+schemas are the runtime source of truth in
+[`src/sct_ai/skills.json`](src/sct_ai/skills.json). Prompt assembly and payload
+selection are implemented in
+[`src/sct_ai/ai_workflow.py`](src/sct_ai/ai_workflow.py).
+
+### Output contract
+
+Calls 1 through 3 must return one JSON object in this shape:
+
+```json
+{
+  "summary": "Evidence-bounded summary",
+  "findings": [
+    {
+      "title": "Short finding title",
+      "analysis": "Explanation supported by the cited records",
+      "severity": "strength",
+      "controls": ["known-control-id"],
+      "evidence_ids": ["EVIDENCE-..."]
+    }
+  ],
+  "recommendation": null
+}
+```
+
+`severity` must be `strength`, `concern`, `context`, or `gap`. Call 4 returns
+the independent advisory assessment:
+
+```json
+{
+  "preferred_control_id": "known-control-id",
+  "confidence": "medium",
+  "rationale": "Evidence-bounded advisory explanation",
+  "strengths": ["Relevant strength"],
+  "concerns": ["Relevant concern"],
+  "coverage_caveats": ["Relevant coverage limitation"],
+  "evidence_ids": ["EVIDENCE-..."]
+}
+```
+
+`preferred_control_id` may be `null`, even when Python selected a winner. It
+may also contain a known control when Python returned `null` for a tie,
+provisional result, or insufficient evidence. This is permitted because the
+AI result is explicitly advisory rather than an override.
+
+Call 5 returns the exact comparison of the two decisions:
+
+```json
+{
+  "status": "disagrees",
+  "python_recommended_control_id": null,
+  "ai_preferred_control_id": "known-control-id",
+  "summary": "Evidence-bounded explanation of the disagreement",
+  "evidence_ids": ["EVIDENCE-..."]
+}
+```
+
+The application calculates the expected status before validating the model:
+
+- `AI INCONCLUSIVE` when the independent AI preference is `null`.
+- `AGREES` when both non-null control IDs match.
+- `DISAGREES` for every other non-null AI preference.
+
+The stored `ai-analysis.json` wraps all five outputs with the provider/model
+identity, generation time, skill name, and skill version. The website and
+generated human-readable reports incorporate the validated outputs appropriate
+to each view.
+
+### How the stages correlate without changing the result
+
+For example, call 1 may identify that two controls were tested under different
+policy modes. Independently, call 2 may identify a module-level detection or
+blocking difference and a coverage gap. Call 3 can then describe those facts
+as a decision trade-off, but it cannot state that the policy difference caused
+the outcome unless the cited deterministic evidence supports that statement.
+Call 4 may independently prefer one control, prefer a different control from
+Python, or return `null`. Call 5 then explains the relationship between the two
+decisions without changing either one.
+
+The chain therefore carries interpretation forward while retaining the
+original evidence references:
+
+```text
+deterministic evidence IDs
+  -> contextual/module findings citing those IDs
+  -> synthesis citing deterministic IDs
+  -> blinded independent AI preference citing deterministic IDs
+  -> reconciliation with the separately calculated Python result
+```
+
+Earlier AI text is context for later stages, but it never becomes a new
+authoritative metric. Every finding and recommendation must still cite an
+evidence ID that exists in the deterministic payload.
+
+### Validation and correction
+
+Before an output can reach the next stage or a report, the application checks
+that it:
+
+- Matches the skill's JSON schema and contains no extra fields.
+- References only submitted control IDs.
+- References only evidence IDs included in that call's payload.
+- Uses only supported percentages found in the cited evidence.
+- Returns `recommendation: null` for calls 1 through 3.
+- Returns only a known control ID or `null` from the blinded call 4.
+- Uses only `low`, `medium`, or `high` confidence in call 4.
+- Preserves both decision IDs and the calculated agreement status in call 5.
+
+If the first response fails validation, that skill receives the invalid
+response plus one correction message describing the validation error. The
+model is told to return corrected JSON without adding new claims or evidence
+identifiers. If the correction also fails, the AI assessment is marked
+unavailable; the job still completes and the already saved deterministic
+metrics and reports remain available. A normal run makes five model calls,
+while validation corrections can add at most one additional call per stage.
 
 Remote-provider payloads omit raw CSV rows, reviewer notes, source results,
 sample names, local log paths, exclusion values, and detailed settings by
@@ -580,7 +777,7 @@ Artifacts:
 
 ```text
 comparison.json       authoritative calculated evidence and ranking
-ai-analysis.json      optional validated AI output
+ai-analysis.json      optional validated AI output or explicit unavailable state
 technical-report.md   detailed human-readable report
 executive-summary.md  short decision-focused report
 report.html           portable standalone HTML report
@@ -624,7 +821,8 @@ An automatic policy looks like:
   },
   "minimum_comparable_weight": 80,
   "tie_margin": 2,
-  "scoring_mode": "auto"
+  "scoring_mode": "auto",
+  "decision_priorities": "Prioritize prevention, broad coverage, and stable repeated-run outcomes."
 }
 ```
 
@@ -643,6 +841,8 @@ packages: every listed module needs a positive weight, and absent modules must
 be omitted entirely rather than set to 0. The policy is rejected when it names
 a module the packages do not contain or gives any module a weight of 0. The
 example above assumes both packages contain modules 01 through 04.
+`decision_priorities` is optional, limited to 2,000 characters, and influences
+only the blinded advisory AI assessment—not deterministic scoring.
 
 Run metrics and ranking:
 
@@ -882,5 +1082,6 @@ the web surface, and AI evidence validation.
   checkouts, the ignored repository-root `.env` populates variables that the
   launch environment has not already set.
 - Provider names, model names, and endpoints are server-allowlisted.
-- The model receives structured evidence and cannot change the deterministic
-  ranking.
+- Calls 1-4 receive sanitized structured evidence without Python's winner or
+  rank order. The AI may give a separate advisory preference but cannot change
+  the deterministic ranking.

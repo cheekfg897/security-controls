@@ -75,7 +75,7 @@ $skillCatalog = Get-Content -LiteralPath $skillCatalogPath -Raw -Encoding UTF8 |
     ConvertFrom-Json
 foreach ($skillName in @(
     'profile-context', 'module-analysis', 'cross-control-synthesis',
-    'qualified-recommendation'
+    'independent-assessment', 'decision-reconciliation'
 )) {
     Assert-True ($null -ne $skillCatalog.skills.$skillName) `
         "Runtime skill catalog must include $skillName."

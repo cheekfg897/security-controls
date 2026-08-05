@@ -160,16 +160,12 @@ try {
         -TechniqueId '1.1' -TechniqueName 'Malware Payload Delivery' `
         -TestScript 'v1.1-known-malware/v1.1-known-malware.ps1' `
         -TestInput 'malware-a.exe' -TestInputSha256 ('A' * 64) -DeliveryMethod 'MalwarePayloadDelivery' `
-        -TestStage 'write' -SourceResult 'delivery_success=True; sysmon_event_found=True'
-    Write-SCTResultRow -Path $results01 -Timestamp (Get-Date) -RunId 'run-a' `
-        -TechniqueId '1.1' -TechniqueName 'Malware Payload Delivery' `
-        -TestScript 'v1.1-known-malware/v1.1-known-malware.ps1' `
-        -TestInput 'malware-a.exe' -TestInputSha256 ('A' * 64) -DeliveryMethod 'MalwarePayloadDelivery' `
-        -TestStage 'execution' -SourceResult 'delivery_success=True; sysmon_event_found=True' `
+        -TestStage 'write' `
+        -SourceResult 'delivery_success=True; write_sysmon_event_found=True' `
         -ExecutionStatus 'executed'
 
-    Assert-True (@(Import-Csv -LiteralPath $results01).Count -eq 2) `
-        'Module 01 observations must stay in results-module-01.csv.'
+    Assert-True (@(Import-Csv -LiteralPath $results01).Count -eq 1) `
+        'One Module 01 payload attempt must produce one result row.'
     Assert-True (@(Import-Csv -LiteralPath $results04).Count -eq 1) `
         'Module 04 observations must stay in results-module-04.csv.'
 
@@ -192,10 +188,9 @@ try {
                 default { 'not_blocked' }
             })
             $row.reviewer_notes = 'notes=Reviewed in fixture.'
-            if ($reviewedRowIndex -eq 2) {
+            if ($reviewedRowIndex -eq 1) {
                 # Replacing the prompt entirely remains supported too.
                 $row.detection_status = 'detected'
-                $row.action_status = 'not_blocked'
                 $row.reviewer_notes = 'Reviewed in fixture.'
             }
             $reviewedRowIndex++
@@ -332,7 +327,7 @@ try {
         Import-Csv -LiteralPath (Join-Path $legacyWorkspace 'results-module-01.csv')
         Import-Csv -LiteralPath (Join-Path $legacyWorkspace 'results-module-04.csv')
     )
-    Assert-True ($convertedRows.Count -eq 3) 'Legacy conversion must preserve every result exactly once.'
+    Assert-True ($convertedRows.Count -eq 2) 'Legacy conversion must preserve every result exactly once.'
     Assert-True ($convertedRows[0].PSObject.Properties.Name -notcontains 'notes') `
         'Legacy conversion must remove the retired generated notes column.'
     Assert-True (@(

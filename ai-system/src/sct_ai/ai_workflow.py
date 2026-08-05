@@ -16,8 +16,14 @@ SKILL_ORDER = (
     "profile-context",
     "module-analysis",
     "cross-control-synthesis",
-    "qualified-recommendation",
+    "independent-assessment",
+    "decision-reconciliation",
 )
+ANALYSIS_SKILLS = {
+    "profile-context",
+    "module-analysis",
+    "cross-control-synthesis",
+}
 PERCENT_PATTERN = re.compile(r"(?<![\w.])(\d+(?:\.\d+)?)\s*%")
 
 
@@ -189,7 +195,7 @@ def _extract_json(text: str) -> dict[str, Any]:
     return value
 
 
-def _pydantic_models() -> tuple[type[Any], type[Any], type[Any]]:
+def _pydantic_models() -> dict[str, type[Any]]:
     try:
         from pydantic import BaseModel, ConfigDict, Field
     except ImportError as exc:
@@ -205,19 +211,35 @@ def _pydantic_models() -> tuple[type[Any], type[Any], type[Any]]:
         controls: list[str] = Field(min_length=1)
         evidence_ids: list[str] = Field(min_length=1)
 
-    class Recommendation(BaseModel):
-        model_config = ConfigDict(extra="forbid")
-        control_id: str | None
-        rationale: str = Field(min_length=1, max_length=2000)
-        evidence_ids: list[str] = Field(min_length=1)
-
-    class SkillOutput(BaseModel):
+    class AnalysisOutput(BaseModel):
         model_config = ConfigDict(extra="forbid")
         summary: str = Field(min_length=1, max_length=3000)
         findings: list[Finding]
-        recommendation: Recommendation | None = None
+        recommendation: None = None
 
-    return Finding, Recommendation, SkillOutput
+    class IndependentAssessment(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        preferred_control_id: str | None
+        confidence: Literal["low", "medium", "high"]
+        rationale: str = Field(min_length=1, max_length=2000)
+        strengths: list[str]
+        concerns: list[str]
+        coverage_caveats: list[str]
+        evidence_ids: list[str] = Field(min_length=1)
+
+    class Reconciliation(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        status: Literal["agrees", "disagrees", "ai_inconclusive"]
+        python_recommended_control_id: str | None
+        ai_preferred_control_id: str | None
+        summary: str = Field(min_length=1, max_length=3000)
+        evidence_ids: list[str] = Field(min_length=1)
+
+    return {
+        "analysis": AnalysisOutput,
+        "independent_assessment": IndependentAssessment,
+        "reconciliation": Reconciliation,
+    }
 
 
 def _validate_json_contract(value: Any, schema: dict[str, Any], context: str) -> None:
@@ -320,69 +342,126 @@ def _validate_output(
     skill_name: str,
     comparison: dict[str, Any],
     evidence_index: dict[str, dict[str, Any]],
+    payload: dict[str, Any],
 ) -> dict[str, Any]:
-    _, _, skill_output_type = _pydantic_models()
     try:
         skill = _load_skill(skill_name)
         _validate_json_contract(raw, skill["output_schema"], "model output")
-        output = skill_output_type.model_validate(raw)
+        output_type = _pydantic_models()[skill["output_schema_name"]]
+        output = output_type.model_validate(raw)
     except Exception as exc:
         raise AIOutputError(f"Output schema validation failed: {exc}") from exc
     known_controls = {
         control["control_id"] for control in comparison["controls"]
     }
-    for finding in output.findings:
-        unknown_controls = set(finding.controls) - known_controls
-        if unknown_controls:
-            raise AIOutputError(
-                f"Finding references unknown controls: {sorted(unknown_controls)}"
+    if skill_name in ANALYSIS_SKILLS:
+        all_refs: list[str] = []
+        for finding in output.findings:
+            unknown_controls = set(finding.controls) - known_controls
+            if unknown_controls:
+                raise AIOutputError(
+                    "Finding references unknown controls: "
+                    f"{sorted(unknown_controls)}"
+                )
+            _validate_evidence_ids(
+                finding.evidence_ids,
+                evidence_index,
+                "Finding",
             )
-        unknown_evidence = set(finding.evidence_ids) - set(evidence_index)
-        if unknown_evidence:
-            raise AIOutputError(
-                f"Finding references unknown evidence: {sorted(unknown_evidence)}"
+            _validate_numeric_claims(
+                f"{finding.title} {finding.analysis}",
+                finding.evidence_ids,
+                evidence_index,
             )
-        _validate_numeric_claims(
-            f"{finding.title} {finding.analysis}",
-            finding.evidence_ids,
+            all_refs.extend(finding.evidence_ids)
+        _validate_numeric_claims(output.summary, all_refs, evidence_index)
+    elif skill_name == "independent-assessment":
+        if (
+            output.preferred_control_id is not None
+            and output.preferred_control_id not in known_controls
+        ):
+            raise AIOutputError(
+                "Independent assessment references an unknown preferred control."
+            )
+        _validate_non_empty_text_items(
+            output.strengths + output.concerns + output.coverage_caveats
+        )
+        _validate_evidence_ids(
+            output.evidence_ids,
             evidence_index,
+            "Independent assessment",
+        )
+        _validate_numeric_claims(
+            " ".join(
+                [
+                    output.rationale,
+                    *output.strengths,
+                    *output.concerns,
+                    *output.coverage_caveats,
+                ]
+            ),
+            output.evidence_ids,
+            evidence_index,
+        )
+    elif skill_name == "decision-reconciliation":
+        assessment = payload["independent_assessment"]
+        expected_python = comparison["ranking"]["recommended_control_id"]
+        expected_ai = assessment["preferred_control_id"]
+        expected_status = _agreement_status(expected_python, expected_ai)
+        if output.python_recommended_control_id != expected_python:
+            raise AIOutputError(
+                "Reconciliation changed the deterministic recommendation."
+            )
+        if output.ai_preferred_control_id != expected_ai:
+            raise AIOutputError(
+                "Reconciliation changed the independent AI preference."
+            )
+        if output.status != expected_status:
+            raise AIOutputError(
+                "Reconciliation returned the wrong agreement status."
+            )
+        _validate_evidence_ids(
+            output.evidence_ids,
+            evidence_index,
+            "Reconciliation",
+        )
+        _validate_numeric_claims(
+            output.summary,
+            output.evidence_ids,
+            evidence_index,
+        )
+    return output.model_dump(mode="json")
+
+
+def _validate_evidence_ids(
+    evidence_ids: list[str],
+    evidence_index: dict[str, dict[str, Any]],
+    label: str,
+) -> None:
+    unknown = set(evidence_ids) - set(evidence_index)
+    if unknown:
+        raise AIOutputError(
+            f"{label} references unknown evidence: {sorted(unknown)}"
         )
 
-    recommendation = output.recommendation
-    if skill_name != "qualified-recommendation" and recommendation is not None:
+
+def _validate_non_empty_text_items(values: list[str]) -> None:
+    if any(not isinstance(value, str) or not value.strip() for value in values):
         raise AIOutputError(
-            f"Skill '{skill_name}' is not allowed to return a recommendation."
+            "Assessment strengths, concerns, and coverage caveats must be "
+            "non-empty strings."
         )
-    if skill_name == "qualified-recommendation":
-        if recommendation is None:
-            raise AIOutputError(
-                "qualified-recommendation must return a recommendation object."
-            )
-        expected = comparison["ranking"]["recommended_control_id"]
-        if recommendation.control_id != expected:
-            raise AIOutputError(
-                "AI recommendation does not match the deterministic recommendation."
-            )
-        unknown_evidence = set(recommendation.evidence_ids) - set(evidence_index)
-        if unknown_evidence:
-            raise AIOutputError(
-                "Recommendation references unknown evidence: "
-                f"{sorted(unknown_evidence)}"
-            )
-        _validate_numeric_claims(
-            recommendation.rationale,
-            recommendation.evidence_ids,
-            evidence_index,
-        )
-    all_refs = [
-        evidence_id
-        for finding in output.findings
-        for evidence_id in finding.evidence_ids
-    ]
-    if recommendation:
-        all_refs.extend(recommendation.evidence_ids)
-    _validate_numeric_claims(output.summary, all_refs, evidence_index)
-    return output.model_dump(mode="json")
+
+
+def _agreement_status(
+    python_control_id: str | None,
+    ai_control_id: str | None,
+) -> str:
+    if ai_control_id is None:
+        return "ai_inconclusive"
+    if ai_control_id == python_control_id:
+        return "agrees"
+    return "disagrees"
 
 
 def _load_skill(skill_name: str) -> dict[str, Any]:
@@ -434,6 +513,7 @@ def _load_skill(skill_name: str) -> dict[str, Any]:
         "name": skill_name,
         **manifest,
         "output_schema": output_schema,
+        "output_schema_name": manifest["output_schema"],
     }
     return loaded
 
@@ -465,37 +545,71 @@ def _skill_payload(
         _control_context(control, include_policy_details)
         for control in comparison["controls"]
     ]
+    policy = comparison.get("policy") or {}
+    decision_context = {
+        "scoring": comparison["scoring"],
+        "module_weights": policy.get("module_weights", {}),
+        "minimum_comparable_weight": policy.get("minimum_comparable_weight"),
+        "tie_margin": policy.get("tie_margin"),
+        "decision_priorities": policy.get(
+            "decision_priorities",
+            "No additional decision priorities were supplied.",
+        ),
+    }
+    blinded_evidence = [
+        item
+        for item in comparison["evidence"]
+        if item["type"] != "ranking"
+    ]
     if skill_name == "profile-context":
-        evidence_types = {"profile_summary", "control_metrics", "ranking"}
+        evidence_types = {"profile_summary", "control_metrics"}
         return {
             "controls": controls,
-            "ranking": comparison["ranking"],
+            "decision_context": decision_context,
             "evidence": [
                 item
-                for item in comparison["evidence"]
+                for item in blinded_evidence
                 if item["type"] in evidence_types
             ],
         }
     if skill_name == "module-analysis":
-        evidence_types = {"module_metrics", "case_outcome", "ranking"}
+        evidence_types = {"module_metrics", "case_outcome"}
         return {
             "controls": controls,
             "coverage": comparison["coverage"],
             "case_catalog": comparison["case_catalog"],
-            "ranking": comparison["ranking"],
+            "decision_context": decision_context,
             "evidence": [
                 item
-                for item in comparison["evidence"]
+                for item in blinded_evidence
                 if item["type"] in evidence_types
             ],
+        }
+    if skill_name == "decision-reconciliation":
+        independent = next(
+            item["output"]
+            for item in previous_outputs
+            if item["name"] == "independent-assessment"
+        )
+        return {
+            "controls": controls,
+            "coverage": comparison["coverage"],
+            "pairwise": comparison["pairwise"],
+            "decision_context": decision_context,
+            "ranking": comparison["ranking"],
+            "previous_analysis_outputs": [
+                item for item in previous_outputs if item["name"] in ANALYSIS_SKILLS
+            ],
+            "independent_assessment": independent,
+            "evidence": comparison["evidence"],
         }
     return {
         "controls": controls,
         "coverage": comparison["coverage"],
         "pairwise": comparison["pairwise"],
-        "ranking": comparison["ranking"],
+        "decision_context": decision_context,
         "previous_skill_outputs": previous_outputs,
-        "evidence": comparison["evidence"],
+        "evidence": blinded_evidence,
     }
 
 
@@ -532,6 +646,7 @@ def _invoke_skill(
                 skill_name=skill["name"],
                 comparison=comparison,
                 evidence_index=evidence_index,
+                payload=payload,
             )
         except AIOutputError as exc:
             last_error = exc
@@ -571,7 +686,7 @@ def run_ai_workflow(
         if progress_callback:
             progress_callback(
                 "ai",
-                55 + (index * 10),
+                52 + (index * 8),
                 f"Running {skill_name} skill",
             )
         payload = _skill_payload(
@@ -588,8 +703,19 @@ def run_ai_workflow(
                 "output": output,
             }
         )
+    independent = next(
+        item["output"]
+        for item in outputs
+        if item["name"] == "independent-assessment"
+    )
+    reconciliation = next(
+        item["output"]
+        for item in outputs
+        if item["name"] == "decision-reconciliation"
+    )
     return {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
+        "status": "completed",
         "generated_at": utc_now(),
         "provider": {
             "name": provider["name"],
@@ -598,4 +724,17 @@ def run_ai_workflow(
             "policy_details_included": provider["include_policy_details"],
         },
         "skills": outputs,
+        "independent_assessment": independent,
+        "decision_comparison": {
+            "status": reconciliation["status"],
+            "python_recommended_control_id": reconciliation[
+                "python_recommended_control_id"
+            ],
+            "ai_preferred_control_id": reconciliation[
+                "ai_preferred_control_id"
+            ],
+            "ai_confidence": independent["confidence"],
+            "summary": reconciliation["summary"],
+            "evidence_ids": reconciliation["evidence_ids"],
+        },
     }

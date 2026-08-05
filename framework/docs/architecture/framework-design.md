@@ -157,7 +157,10 @@ Module 04 must contain only techniques with subtests. Each script must also acce
 | `results/<control-id>/results-module-<id>.csv` | Generated observations plus reviewer-entered detection, action, and reviewer-notes fields for one module. |
 | `results/<control-id>/test-catalog-module-<id>.csv` | One module's generated descriptions, including its ID and display name. |
 
-All framework-managed writers use one fixed result schema. Generated results and real malware samples should remain uncommitted.
+All framework-managed writers use one fixed result schema. Module 01 stores one
+`test_stage=write` row per payload attempt and records its execution outcome in
+`execution_status`; write and execution are not separate scored rows. Generated
+results and real malware samples should remain uncommitted.
 
 Each interactive subtest selection receives an `I<technique>-...` run ID. A non-interactive Module 04 run uses one shared `M04-...` run ID for all of its technique rows.
 

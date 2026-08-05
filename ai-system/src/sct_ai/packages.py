@@ -87,6 +87,11 @@ ACTION_STATUSES = {
     "blocked_before_execution",
     "blocked_after_execution",
 }
+REVIEW_PROMPT_PATTERNS = {
+    "detection": re.compile(r"^detection\s*=\s*(.*)$", re.IGNORECASE),
+    "action": re.compile(r"^action\s*=\s*(.*)$", re.IGNORECASE),
+    "notes": re.compile(r"^(?:reviewer_)?notes\s*=\s*(.*)$", re.IGNORECASE),
+}
 
 
 @dataclass(frozen=True)
@@ -354,10 +359,17 @@ def _validate_result_row(
         raise _fail(package, f"{context} does not belong to Module {module_id}")
     if row["execution_status"] not in {"", "executed", "not_executed"}:
         raise _fail(package, f"{context} has an invalid execution_status")
+    row["detection_status"] = _remove_review_prompt(
+        row["detection_status"], "detection"
+    ).casefold()
     if row["detection_status"] not in {"detected", "not_detected"}:
         raise _fail(package, f"{context} has an invalid detection_status")
+    row["action_status"] = _remove_review_prompt(
+        row["action_status"], "action"
+    ).casefold()
     if row["action_status"] not in ACTION_STATUSES:
         raise _fail(package, f"{context} has an invalid action_status")
+    row["reviewer_notes"] = _remove_review_prompt(row["reviewer_notes"], "notes")
     if row["test_input_sha256"] and not SHA256_PATTERN.fullmatch(
         row["test_input_sha256"]
     ):
@@ -380,6 +392,11 @@ def _input_identity(row: dict[str, str]) -> str:
     return "none"
 
 
+def _remove_review_prompt(value: str, prompt: str) -> str:
+    match = REVIEW_PROMPT_PATTERNS[prompt].fullmatch(value.strip())
+    return match.group(1).strip() if match else value.strip()
+
+
 def _canonical_action_status(value: str) -> str:
     return (
         "blocked"
@@ -398,7 +415,6 @@ def _make_case_key(
             module_id,
             row["technique_id"].strip().casefold(),
             row["subtest"].strip().casefold(),
-            row["test_stage"].strip().casefold(),
             row["delivery_method"].strip().casefold(),
             input_identity,
         )
@@ -457,10 +473,12 @@ def load_package(path: str | Path) -> PackageData:
             raise _fail(package, "archive is missing control-profile.json")
         if not result_modules:
             raise _fail(package, "archive contains no module result files")
-        if set(result_modules) != set(catalog_modules):
+        missing_catalog_modules = set(result_modules) - set(catalog_modules)
+        if missing_catalog_modules:
             raise _fail(
                 package,
-                "every module result file must have exactly one matching catalogue",
+                "module result files are missing matching catalogues: "
+                f"{sorted(missing_catalog_modules)}",
             )
 
         try:
@@ -473,6 +491,7 @@ def load_package(path: str | Path) -> PackageData:
             raise _fail(package, str(exc)) from exc
 
         cases: dict[str, NormalizedCase] = {}
+        logical_attempts: dict[tuple[str, str], str] = {}
         module_names: dict[str, str] = {}
         for module_id in sorted(result_modules):
             catalog_name = catalog_modules[module_id]
@@ -533,6 +552,18 @@ def load_package(path: str | Path) -> PackageData:
                     )
                 input_identity = _input_identity(row)
                 case_key = _make_case_key(module_id, row, input_identity)
+                logical_attempt_key = (case_key, row["run_id"].strip().casefold())
+                previous_attempt = logical_attempts.get(logical_attempt_key)
+                if previous_attempt is not None:
+                    raise _fail(
+                        package,
+                        f"{results_name} line {line_number} duplicates the logical "
+                        f"payload attempt at {previous_attempt}; each attempt must use "
+                        "one row with its outcome in execution_status",
+                    )
+                logical_attempts[logical_attempt_key] = (
+                    f"{results_name} line {line_number}"
+                )
                 case = cases.get(case_key)
                 if case is None:
                     case = NormalizedCase(

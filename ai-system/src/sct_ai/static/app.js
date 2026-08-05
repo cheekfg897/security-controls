@@ -223,6 +223,10 @@ document.addEventListener("DOMContentLoaded", () => {
     renderUploads();
   }
 
+  document.querySelectorAll("[data-print-report]").forEach((button) => {
+    button.addEventListener("click", () => window.print());
+  });
+
   const panel = document.querySelector("[data-job-id]");
   if (!panel) return;
   const jobId = panel.dataset.jobId;

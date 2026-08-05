@@ -53,6 +53,7 @@ def validate_policy(
         "scoring_mode",
         "detection_weight",
         "blocking_weight",
+        "decision_priorities",
     }
     unknown = set(policy) - allowed
     if unknown:
@@ -114,6 +115,17 @@ def validate_policy(
         "tie_margin": float(tie_margin),
         "scoring_mode": scoring["scoring_mode"],
     }
+    if "decision_priorities" in policy:
+        priorities = policy["decision_priorities"]
+        if not isinstance(priorities, str) or not priorities.strip():
+            raise PolicyValidationError(
+                "decision_priorities must be a non-empty string when supplied."
+            )
+        if len(priorities.strip()) > 2000:
+            raise PolicyValidationError(
+                "decision_priorities must not exceed 2000 characters."
+            )
+        normalized_policy["decision_priorities"] = priorities.strip()
     if scoring["scoring_mode"] == "custom":
         normalized_policy["detection_weight"] = scoring["detection_weight"]
         normalized_policy["blocking_weight"] = scoring["blocking_weight"]
@@ -294,6 +306,57 @@ def _breakdown(
     }
 
 
+def _module_breakdown(
+    cases: Iterable[NormalizedCase],
+    detection_weight: float = DEFAULT_DETECTION_WEIGHT,
+    blocking_weight: float = DEFAULT_BLOCKING_WEIGHT,
+) -> dict[str, dict[str, Any]]:
+    """Summarize represented test definitions and their recorded outcomes."""
+    groups: dict[str, list[NormalizedCase]] = defaultdict(list)
+    for case in cases:
+        groups[case.module_id].append(case)
+
+    result: dict[str, dict[str, Any]] = {}
+    for module_id in sorted(groups):
+        module_cases = groups[module_id]
+        metrics = aggregate_cases(
+            module_cases,
+            detection_weight,
+            blocking_weight,
+        )
+        trials = [trial for case in module_cases for trial in case.trials]
+        metrics.update(
+            {
+                "module_name": module_cases[0].module_name,
+                "technique_count": len(
+                    {case.technique_id for case in module_cases}
+                ),
+                # An empty subtest is the technique-level test definition, so
+                # it still contributes one represented subtest to the report.
+                "subtest_count": len(
+                    {
+                        (case.technique_id, case.subtest)
+                        for case in module_cases
+                    }
+                ),
+                "detected_count": sum(
+                    trial.detection_status == "detected" for trial in trials
+                ),
+                "not_detected_count": sum(
+                    trial.detection_status == "not_detected" for trial in trials
+                ),
+                "blocked_count": sum(
+                    trial.action_status == "blocked" for trial in trials
+                ),
+                "not_blocked_count": sum(
+                    trial.action_status == "not_blocked" for trial in trials
+                ),
+            }
+        )
+        result[module_id] = metrics
+    return result
+
+
 def _case_metadata(case: NormalizedCase) -> dict[str, Any]:
     return {
         "case_id": case.case_id,
@@ -376,9 +439,8 @@ def compare_packages(
         comparable_cases = [
             package.cases[key] for key in sorted(shared_keys)
         ]
-        modules = _breakdown(
+        modules = _module_breakdown(
             all_cases,
-            lambda case: case.module_id,
             detection_weight,
             blocking_weight,
         )

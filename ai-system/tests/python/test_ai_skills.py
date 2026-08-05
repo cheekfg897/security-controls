@@ -35,6 +35,9 @@ class AISkillTests(unittest.TestCase):
                 "module_weights": {"01": 100},
                 "minimum_comparable_weight": 80,
                 "tie_margin": 2,
+                "decision_priorities": (
+                    "Prioritize prevention and stable repeated-run outcomes."
+                ),
             },
         )
 
@@ -50,30 +53,44 @@ class AISkillTests(unittest.TestCase):
         )
 
         previous = []
+        payloads = {}
         for skill_name in SKILL_ORDER:
             skill = _load_skill(skill_name)
             payload = _skill_payload(skill_name, self.comparison, previous, False)
+            payloads[skill_name] = payload
             evidence_id = payload["evidence"][0]["evidence_id"]
-            recommendation = None
-            if skill_name == "qualified-recommendation":
-                recommendation = {
-                    "control_id": self.comparison["ranking"]["recommended_control_id"],
-                    "rationale": "The deterministic decision and its caveats are preserved.",
+            if skill_name == "independent-assessment":
+                response = {
+                    "preferred_control_id": "control-a",
+                    "confidence": "medium",
+                    "rationale": "Control A is the advisory preference.",
+                    "strengths": ["Supported strength."],
+                    "concerns": ["Supported concern."],
+                    "coverage_caveats": ["Coverage remains limited."],
                     "evidence_ids": [evidence_id],
                 }
-            response = {
-                "summary": "The supplied evidence was reviewed.",
-                "findings": [
-                    {
-                        "title": "Evidence-backed context",
-                        "analysis": "The finding is limited to the supplied evidence.",
-                        "severity": "context",
-                        "controls": ["control-a"],
-                        "evidence_ids": [evidence_id],
-                    }
-                ],
-                "recommendation": recommendation,
-            }
+            elif skill_name == "decision-reconciliation":
+                response = {
+                    "status": "disagrees",
+                    "python_recommended_control_id": None,
+                    "ai_preferred_control_id": "control-a",
+                    "summary": "The advisory AI preference differs from the tie.",
+                    "evidence_ids": [evidence_id],
+                }
+            else:
+                response = {
+                    "summary": "The supplied evidence was reviewed.",
+                    "findings": [
+                        {
+                            "title": "Evidence-backed context",
+                            "analysis": "The finding is limited to supplied evidence.",
+                            "severity": "context",
+                            "controls": ["control-a"],
+                            "evidence_ids": [evidence_id],
+                        }
+                    ],
+                    "recommendation": None,
+                }
 
             class FakeModel:
                 def invoke(self, messages: object) -> object:
@@ -83,7 +100,36 @@ class AISkillTests(unittest.TestCase):
             previous.append(
                 {"name": skill_name, "version": skill["version"], "output": output}
             )
-        self.assertEqual(4, len(previous))
+        self.assertEqual(5, len(previous))
+        for skill_name in SKILL_ORDER[:4]:
+            self.assertNotIn("ranking", payloads[skill_name])
+            self.assertNotIn(
+                "ranking",
+                {item["type"] for item in payloads[skill_name]["evidence"]},
+            )
+        self.assertIn("ranking", payloads["decision-reconciliation"])
+        self.assertEqual(
+            "control-a",
+            payloads["decision-reconciliation"]["independent_assessment"][
+                "preferred_control_id"
+            ],
+        )
+        profile_payload = payloads["profile-context"]
+        self.assertEqual(
+            "1.0",
+            profile_payload["controls"][0]["control"]["product_version"],
+        )
+        self.assertEqual(
+            [],
+            profile_payload["controls"][0]["policy"]["settings"],
+        )
+        self.assertEqual(
+            "Prioritize prevention and stable repeated-run outcomes.",
+            profile_payload["decision_context"]["decision_priorities"],
+        )
+        serialized = json.dumps(payloads["independent-assessment"])
+        self.assertNotIn("Fixture reviewer note", serialized)
+        self.assertNotIn("source_result", serialized)
 
     def test_unknown_evidence_triggers_one_correction(self) -> None:
         from sct_ai.ai_workflow import _invoke_skill, _load_skill, _skill_payload
@@ -118,6 +164,79 @@ class AISkillTests(unittest.TestCase):
         model = CorrectingModel()
         _invoke_skill(model, skill, payload, self.comparison)
         self.assertEqual(2, model.calls)
+
+    def test_independent_assessment_may_disagree_with_no_winner(self) -> None:
+        from sct_ai.ai_workflow import _invoke_skill, _load_skill, _skill_payload
+
+        skill = _load_skill("independent-assessment")
+        payload = _skill_payload(
+            "independent-assessment",
+            self.comparison,
+            [],
+            False,
+        )
+        evidence_id = payload["evidence"][0]["evidence_id"]
+        response = {
+            "preferred_control_id": "control-b",
+            "confidence": "low",
+            "rationale": "The advisory assessment can prefer a known control.",
+            "strengths": [],
+            "concerns": ["Python found no clear winner."],
+            "coverage_caveats": [],
+            "evidence_ids": [evidence_id],
+        }
+
+        class FakeModel:
+            def invoke(self, messages: object) -> object:
+                return type("Response", (), {"content": json.dumps(response)})()
+
+        output = _invoke_skill(FakeModel(), skill, payload, self.comparison)
+        self.assertIsNone(self.comparison["ranking"]["recommended_control_id"])
+        self.assertEqual("control-b", output["preferred_control_id"])
+
+    def test_reconciliation_cannot_change_either_decision(self) -> None:
+        from sct_ai.ai_workflow import _invoke_skill, _load_skill, _skill_payload
+
+        evidence_id = self.comparison["evidence"][0]["evidence_id"]
+        previous = [
+            {
+                "name": "independent-assessment",
+                "version": "1.0.0",
+                "output": {
+                    "preferred_control_id": "control-a",
+                    "confidence": "medium",
+                    "rationale": "Advisory preference.",
+                    "strengths": [],
+                    "concerns": [],
+                    "coverage_caveats": [],
+                    "evidence_ids": [evidence_id],
+                },
+            }
+        ]
+        skill = _load_skill("decision-reconciliation")
+        payload = _skill_payload(
+            "decision-reconciliation",
+            self.comparison,
+            previous,
+            False,
+        )
+        invalid = {
+            "status": "agrees",
+            "python_recommended_control_id": "control-a",
+            "ai_preferred_control_id": "control-a",
+            "summary": "Invalid changed decision.",
+            "evidence_ids": [evidence_id],
+        }
+
+        class InvalidModel:
+            def invoke(self, messages: object) -> object:
+                return type("Response", (), {"content": json.dumps(invalid)})()
+
+        with self.assertRaisesRegex(
+            Exception,
+            "failed validation after one correction",
+        ):
+            _invoke_skill(InvalidModel(), skill, payload, self.comparison)
 
 
 if __name__ == "__main__":

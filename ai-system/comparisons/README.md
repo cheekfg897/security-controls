@@ -12,6 +12,12 @@ comparisons/<comparison-id>/
 `-- run-manifest.json
 ```
 
+`comparison.json` contains the authoritative deterministic evidence and
+Python recommendation. When AI was requested, `ai-analysis.json` contains the
+blinded independent preference, categorical confidence, the fifth-stage
+agreement/disagreement reconciliation, or an explicit `unavailable` state.
+The AI result is advisory and never replaces `comparison.json`.
+
 `index.sqlite3` stores the web application's job index. Run manifests remain
 the source of truth and can be used to rebuild the index.
 

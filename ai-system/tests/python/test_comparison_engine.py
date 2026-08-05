@@ -7,10 +7,12 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest.mock import patch
 
 from sct_ai.errors import PackageValidationError, PolicyValidationError
 from sct_ai.metrics import compare_packages
 from sct_ai.packages import load_package, load_packages
+from sct_ai.reports import render_standalone_html
 from sct_ai.service import run_comparison
 
 from .helpers import package_bytes, write_package
@@ -69,6 +71,71 @@ class ComparisonEngineTests(unittest.TestCase):
             next(iter(quarantined.cases.values())).input_identity,
         )
 
+    def test_stage_is_evidence_not_case_identity(self) -> None:
+        path = write_package(
+            self.root / "stage-evidence.zip",
+            "stage-evidence",
+            [
+                {"sha256": "A" * 64, "stage": "write"},
+                {"sha256": "A" * 64, "stage": "execution"},
+            ],
+        )
+        package = load_package(path)
+        case = next(iter(package.cases.values()))
+        self.assertEqual(1, len(package.cases))
+        self.assertEqual(2, len(case.trials))
+        self.assertEqual("write", case.test_stage)
+
+    def test_duplicate_stage_rows_in_one_run_are_rejected(self) -> None:
+        content = package_bytes(
+            "duplicate-stages",
+            [
+                {"sha256": "A" * 64, "stage": "write"},
+                {"sha256": "A" * 64, "stage": "execution"},
+            ],
+        )
+        with zipfile.ZipFile(io.BytesIO(content), "r") as source:
+            entries = {item.filename: source.read(item) for item in source.infolist()}
+        results_name = "results-module-01.csv"
+        entries[results_name] = entries[results_name].replace(
+            b"fixture-2",
+            b"fixture-1",
+        )
+        path = self.root / "duplicate-stages.zip"
+        with zipfile.ZipFile(path, "w") as archive:
+            for name, value in entries.items():
+                archive.writestr(name, value)
+
+        with self.assertRaisesRegex(
+            PackageValidationError,
+            "one row with its outcome in execution_status",
+        ):
+            load_package(path)
+
+    def test_removed_payload_remains_one_non_executed_case(self) -> None:
+        package = load_package(
+            write_package(
+                self.root / "removed.zip",
+                "removed",
+                [
+                    {
+                        "sha256": "A" * 64,
+                        "stage": "write",
+                        "execution": "not_executed",
+                        "source_result": (
+                            "delivery_success=False; "
+                            "execution_reason=payload_unavailable_after_delivery"
+                        ),
+                    }
+                ],
+            )
+        )
+        case = next(iter(package.cases.values()))
+        trial = case.trials[0]
+        self.assertEqual(1, len(package.cases))
+        self.assertEqual("write", case.test_stage)
+        self.assertEqual("not_executed", trial.execution_status)
+
     def test_prevention_first_ranking_uses_shared_cases(self) -> None:
         cases_a = [
             {"sha256": "A" * 64, "detection": "detected", "action": "blocked"},
@@ -112,6 +179,127 @@ class ComparisonEngineTests(unittest.TestCase):
         self.assertEqual(2, metrics["trial_count"])
         self.assertEqual(50.0, metrics["detection_rate"])
         self.assertEqual(1, metrics["inconsistent_case_count"])
+
+    def test_module_breakdown_counts_techniques_subtests_and_outcomes(self) -> None:
+        cases = [
+            {
+                "module_id": "01",
+                "technique_id": "1.1",
+                "subtest": "One",
+                "sha256": "A" * 64,
+                "trials": [
+                    {"detection": "detected", "action": "blocked"},
+                    {"detection": "not_detected", "action": "not_blocked"},
+                ],
+            },
+            {
+                "module_id": "01",
+                "technique_id": "1.1",
+                "subtest": "Two",
+                "sha256": "B" * 64,
+                "detection": "detected",
+                "action": "not_blocked",
+            },
+            {
+                "module_id": "01",
+                "technique_id": "1.2",
+                "subtest": "",
+                "sha256": "C" * 64,
+                "detection": "not_detected",
+                "action": "blocked",
+            },
+            {
+                "module_id": "02",
+                "technique_id": "2.1",
+                "subtest": "Macro",
+                "sha256": "D" * 64,
+                "detection": "detected",
+                "action": "blocked",
+            },
+        ]
+        package = load_package(
+            write_package(self.root / "breakdown.zip", "control-a", cases)
+        )
+
+        result = compare_packages([package])
+        breakdown = result["controls"][0]["metrics"]["modules"]
+        module_one = breakdown["01"]
+        self.assertEqual("Malware Delivery", module_one["module_name"])
+        self.assertEqual(2, module_one["technique_count"])
+        self.assertEqual(3, module_one["subtest_count"])
+        self.assertEqual(4, module_one["trial_count"])
+        self.assertEqual(2, module_one["detected_count"])
+        self.assertEqual(2, module_one["not_detected_count"])
+        self.assertEqual(2, module_one["blocked_count"])
+        self.assertEqual(2, module_one["not_blocked_count"])
+        self.assertEqual(1, breakdown["02"]["technique_count"])
+        self.assertEqual(1, breakdown["02"]["subtest_count"])
+
+    def test_standalone_report_prints_metrics_and_optional_ai_analysis(self) -> None:
+        package = load_package(
+            write_package(
+                self.root / "report.zip",
+                "control-a",
+                [
+                    {
+                        "module_id": "01",
+                        "technique_id": "1.1",
+                        "subtest": "FixtureSubtest",
+                        "sha256": "A" * 64,
+                        "detection": "detected",
+                        "action": "blocked",
+                    }
+                ],
+            )
+        )
+        comparison = compare_packages([package], comparison_id="report-fixture")
+        analysis = {
+            "status": "completed",
+            "independent_assessment": {
+                "preferred_control_id": "control-a",
+                "confidence": "medium",
+                "rationale": "AI fixture rationale",
+                "strengths": ["Fixture strength"],
+                "concerns": ["Fixture concern"],
+                "coverage_caveats": ["Fixture caveat"],
+                "evidence_ids": ["EVIDENCE-FIXTURE"],
+            },
+            "decision_comparison": {
+                "status": "disagrees",
+                "python_recommended_control_id": None,
+                "ai_preferred_control_id": "control-a",
+                "ai_confidence": "medium",
+                "summary": "AI differs from the deterministic no-winner result.",
+                "evidence_ids": ["EVIDENCE-FIXTURE"],
+            },
+            "skills": [
+                {
+                    "name": "module-analysis",
+                    "version": "1.0",
+                    "output": {
+                        "summary": "AI fixture summary",
+                        "findings": [
+                            {
+                                "title": "Fixture finding",
+                                "analysis": "AI fixture analysis",
+                            }
+                        ],
+                    },
+                }
+            ]
+        }
+
+        report = render_standalone_html(comparison, analysis)
+        self.assertIn("Print / Save as PDF", report)
+        self.assertIn("window.print()", report)
+        self.assertIn("Module technique and subtest breakdown", report)
+        self.assertIn("01 - Malware Delivery", report)
+        self.assertIn("1 / 1", report)
+        self.assertIn("AI-assisted evidence analysis", report)
+        self.assertIn("AI fixture analysis", report)
+        self.assertIn("Python and independent AI decision review", report)
+        self.assertIn("DISAGREES", report)
+        self.assertIn("AI fixture rationale", report)
 
     def test_auto_scoring_uses_detection_only_for_detect_only_profiles(self) -> None:
         cases_a = [
@@ -351,6 +539,41 @@ class ComparisonEngineTests(unittest.TestCase):
                 },
             )
 
+    def test_decision_priorities_are_preserved_but_do_not_change_scores(self) -> None:
+        case = [{"sha256": "A" * 64}]
+        packages = [
+            load_package(write_package(self.root / f"{name}.zip", name, case))
+            for name in ("control-a", "control-b")
+        ]
+        policy = {
+            "schema_version": "1.0",
+            "module_weights": {"01": 100},
+            "minimum_comparable_weight": 80,
+            "tie_margin": 2,
+            "decision_priorities": (
+                "Prioritize prevention and stable repeated-run outcomes."
+            ),
+        }
+        with_priorities = compare_packages(packages, policy)
+        without_priorities = compare_packages(
+            packages,
+            {key: value for key, value in policy.items() if key != "decision_priorities"},
+        )
+        self.assertEqual(
+            policy["decision_priorities"],
+            with_priorities["policy"]["decision_priorities"],
+        )
+        self.assertEqual(
+            without_priorities["ranking"],
+            with_priorities["ranking"],
+        )
+
+        with self.assertRaises(PolicyValidationError):
+            compare_packages(
+                packages,
+                {**policy, "decision_priorities": "x" * 2001},
+            )
+
     def test_duplicate_control_ids_are_rejected(self) -> None:
         case = [{"sha256": "A" * 64}]
         write_package(self.root / "a.zip", "same-control", case)
@@ -377,6 +600,77 @@ class ComparisonEngineTests(unittest.TestCase):
             archive.writestr("unexpected.txt", "not allowed")
         with self.assertRaises(PackageValidationError):
             load_package(path)
+
+    def test_catalogue_without_results_is_ignored(self) -> None:
+        content = package_bytes("control-a", [{"sha256": "A" * 64}])
+        catalogue_source = package_bytes(
+            "catalogue-source",
+            [{"module_id": "02", "sha256": "B" * 64}],
+        )
+        with zipfile.ZipFile(io.BytesIO(content), "r") as source:
+            entries = {item.filename: source.read(item) for item in source.infolist()}
+        with zipfile.ZipFile(io.BytesIO(catalogue_source), "r") as source:
+            entries["test-catalog-module-02.csv"] = source.read(
+                "test-catalog-module-02.csv"
+            )
+
+        path = self.root / "catalogue-only-module.zip"
+        with zipfile.ZipFile(path, "w") as archive:
+            for name, value in entries.items():
+                archive.writestr(name, value)
+
+        package = load_package(path)
+        self.assertEqual({"01"}, set(package.module_names))
+
+    def test_result_without_catalogue_is_rejected(self) -> None:
+        content = package_bytes("control-a", [{"sha256": "A" * 64}])
+        with zipfile.ZipFile(io.BytesIO(content), "r") as source:
+            entries = {
+                item.filename: source.read(item)
+                for item in source.infolist()
+                if item.filename != "test-catalog-module-01.csv"
+            }
+
+        path = self.root / "missing-catalogue.zip"
+        with zipfile.ZipFile(path, "w") as archive:
+            for name, value in entries.items():
+                archive.writestr(name, value)
+
+        with self.assertRaisesRegex(
+            PackageValidationError,
+            r"missing matching catalogues: \['01'\]",
+        ):
+            load_package(path)
+
+    def test_workspace_review_prompts_are_normalized(self) -> None:
+        content = package_bytes(
+            "control-a",
+            [
+                {
+                    "sha256": "A" * 64,
+                    "detection": "not_detected",
+                    "action": "not_blocked",
+                }
+            ],
+        )
+        with zipfile.ZipFile(io.BytesIO(content), "r") as source:
+            entries = {item.filename: source.read(item) for item in source.infolist()}
+        results_name = "results-module-01.csv"
+        results = entries[results_name].decode("utf-8")
+        results = results.replace("not_detected", "detection=NOT_DETECTED")
+        results = results.replace("not_blocked", "action=NOT_BLOCKED")
+        results = results.replace("Fixture reviewer note", "notes=Reviewed")
+        entries[results_name] = results.encode("utf-8")
+
+        path = self.root / "review-prompts.zip"
+        with zipfile.ZipFile(path, "w") as archive:
+            for name, value in entries.items():
+                archive.writestr(name, value)
+
+        package = load_package(path)
+        trial = next(iter(package.cases.values())).trials[0]
+        self.assertEqual("not_detected", trial.detection_status)
+        self.assertEqual("not_blocked", trial.action_status)
 
     def test_service_preserves_inputs_and_writes_metrics_only_artifacts(self) -> None:
         case = [{"sha256": "A" * 64}]
@@ -410,6 +704,15 @@ class ComparisonEngineTests(unittest.TestCase):
             "run-manifest.json",
         ):
             self.assertTrue((output / name).is_file(), name)
+        technical_report = (output / "technical-report.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            "## Module technique and subtest breakdown",
+            technical_report,
+        )
+        standalone_report = (output / "report.html").read_text(encoding="utf-8")
+        self.assertIn("Print / Save as PDF", standalone_report)
         self.assertFalse((output / "ai-analysis.json").exists())
         self.assertEqual(before, (left.read_bytes(), right.read_bytes()))
         manifest = json.loads(
@@ -423,6 +726,47 @@ class ComparisonEngineTests(unittest.TestCase):
             "fixture-run",
         )
         self.assertEqual(first, second)
+
+    def test_service_completes_when_ai_assessment_is_unavailable(self) -> None:
+        case = [{"sha256": "A" * 64}]
+        left = write_package(self.root / "ai-left.zip", "control-a", case)
+        right = write_package(self.root / "ai-right.zip", "control-b", case)
+        policy = {
+            "schema_version": "1.0",
+            "module_weights": {"01": 100},
+            "minimum_comparable_weight": 80,
+            "tie_margin": 2,
+        }
+
+        with patch(
+            "sct_ai.ai_workflow.run_ai_workflow",
+            side_effect=RuntimeError("fixture provider unavailable"),
+        ):
+            result = run_comparison(
+                [left, right],
+                policy_path=None,
+                policy=policy,
+                output_root=self.root / "ai-comparisons",
+                comparison_id="ai-unavailable",
+                provider_name="fixture",
+                model_name="fixture-model",
+                provider_config_path=self.root / "provider.json",
+            )
+
+        output = Path(result["output_dir"])
+        self.assertEqual("completed", result["manifest"]["status"])
+        self.assertEqual("unavailable", result["manifest"]["ai_status"])
+        self.assertEqual("unavailable", result["analysis"]["status"])
+        self.assertEqual(
+            "ai_unavailable",
+            result["analysis"]["decision_comparison"]["status"],
+        )
+        self.assertTrue((output / "comparison.json").is_file())
+        self.assertTrue((output / "ai-analysis.json").is_file())
+        self.assertIn(
+            "AI assessment unavailable",
+            (output / "technical-report.md").read_text(encoding="utf-8"),
+        )
 
 
 if __name__ == "__main__":

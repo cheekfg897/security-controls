@@ -244,7 +244,13 @@ class ComparisonJobManager:
                 status="completed",
                 stage="complete",
                 progress=100,
-                message="Comparison completed.",
+                message=(
+                    "Comparison completed; the independent AI assessment "
+                    "was unavailable."
+                    if result["manifest"].get("ai_status") == "unavailable"
+                    else "Comparison completed."
+                ),
+                error=result["manifest"].get("ai_error"),
             )
         except Exception as exc:
             self.store.update(

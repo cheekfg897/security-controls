@@ -8,5 +8,6 @@
   },
   "minimum_comparable_weight": 80,
   "tie_margin": 2,
-  "scoring_mode": "auto"
+  "scoring_mode": "auto",
+  "decision_priorities": "Prioritize prevention, broad module coverage, and stable repeated-run outcomes."
 }

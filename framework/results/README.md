@@ -47,12 +47,14 @@ before and after execution. Do not copy or rename the files. Validate them
 through Manage SCT option `[4]`, then build `<control-id>.zip` through option
 `[5]`; packaging strips the prompt labels.
 
-The CSV is ordered for review: the technique, input, stage, generated execution
-observation, and editable review fields come first. Technical provenance such
+The CSV is ordered for review: the technique, input, execution outcome, and
+editable review fields come first. Technical provenance such
 as the run ID, internal technique ID, script path, and SHA-256 remains at the
 right of the same row for validation and comparison; SHA-256 is the final
-column. Technique 1.1 uses a compact executable label capped to fit the review
-area, while its generated inventory retains the complete archive member path.
+column. Module 01 uses exactly one row per payload attempt, including payloads
+removed on sight. Technique 1.1 uses a compact executable label capped to fit
+the review area, while its generated inventory retains the complete archive
+member path.
 
 Module IDs make filenames stable. Adding Module 05 automatically creates `test-catalog-module-05.csv`; its first observation creates `results-module-05.csv`. Changing the module display name does not rename either file.
 

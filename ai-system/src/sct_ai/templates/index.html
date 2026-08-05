@@ -14,15 +14,6 @@
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <fieldset>
     <legend>1. Result packages</legend>
-    {% if packages %}
-    <div class="check-grid">
-      {% for package in packages %}
-      <label><input type="checkbox" name="existing_packages" value="{{ package }}"> {{ package }}</label>
-      {% endfor %}
-    </div>
-    {% else %}
-    <p class="muted">No ZIPs are currently stored under <code>framework/submissions/</code>.</p>
-    {% endif %}
     <label class="field" for="package-uploads">Add ZIP packages
       <input type="file" id="package-uploads" name="uploads"
         accept=".zip,application/zip" multiple data-package-upload
@@ -139,8 +130,19 @@
   </fieldset>
 
   <fieldset>
-    <legend>5. Optional AI explanation</legend>
-    <label><input type="checkbox" name="enable_ai" id="enable-ai"> Run AI evidence skills</label>
+    <legend>5. Decision priorities</legend>
+    <label class="field">Optional evaluation priorities
+      <textarea name="decision_priorities" rows="4" maxlength="2000"
+        placeholder="Example: Prioritize prevention, broad module coverage, and stable repeated-run outcomes.">{{ decision_priorities }}</textarea>
+    </label>
+    <p class="hint">These priorities provide explicit context for the
+    independent AI assessment. They do not change deterministic Python scores
+    or ranking rules. Do not enter secrets, raw logs, or sensitive sample data.</p>
+  </fieldset>
+
+  <fieldset>
+    <legend>6. Optional independent AI assessment</legend>
+    <label><input type="checkbox" name="enable_ai" id="enable-ai"> Run independent AI evidence review</label>
     <label class="field">Allowlisted provider and model
       <select name="provider_model">
         <option value="">Metrics only</option>
@@ -155,7 +157,7 @@
   </fieldset>
 
   <fieldset>
-    <legend>6. Run details</legend>
+    <legend>7. Run details</legend>
     <label class="field">Optional comparison ID
       <input type="text" name="comparison_id" pattern="[a-z0-9][a-z0-9._-]{0,79}" maxlength="80">
     </label>

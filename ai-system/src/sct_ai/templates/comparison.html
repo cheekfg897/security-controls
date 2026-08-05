@@ -10,6 +10,11 @@
   {% if manifest.python_version %} · Python {{ manifest.python_version }}{% endif %}</p>
 </section>
 
+<div class="report-actions print-hidden">
+  <button type="button" class="primary" data-print-report>Print / Save as PDF</button>
+  <span class="muted">Prints this complete report, including deterministic Python metrics and AI analysis when present.</span>
+</div>
+
 <section class="decision decision-{{ comparison.ranking.status }}">
   <div>
     <span class="status">{{ comparison.ranking.status }}</span>
@@ -20,6 +25,43 @@
     <span>weighted coverage</span>
   </div>
 </section>
+
+{% if analysis and analysis.status == "unavailable" %}
+<section class="section ai-decision ai-unavailable">
+  <span class="status">AI unavailable</span>
+  <h2>Independent AI assessment unavailable</h2>
+  <p>{{ analysis.decision_comparison.summary }}</p>
+  {% if analysis.error %}<p class="muted">Provider error: {{ analysis.error }}</p>{% endif %}
+</section>
+{% elif analysis and analysis.decision_comparison is defined %}
+{% set decision = analysis.decision_comparison %}
+{% set assessment = analysis.independent_assessment %}
+<section class="section ai-decision ai-{{ decision.status }}">
+  <span class="status">{{ decision.status|replace("_", " ")|upper }}</span>
+  <h2>Python and independent AI decision review</h2>
+  <div class="decision-grid">
+    <article>
+      <p class="eyebrow">Python recommendation</p>
+      <h3>{{ decision.python_recommended_control_id or "No control selected" }}</h3>
+      <p>Authoritative deterministic result.</p>
+    </article>
+    <article>
+      <p class="eyebrow">Independent AI preference</p>
+      <h3>{{ decision.ai_preferred_control_id or "No control selected" }}</h3>
+      <p>{{ assessment.confidence|title }} confidence · advisory only.</p>
+    </article>
+  </div>
+  <p><strong>AI rationale:</strong> {{ assessment.rationale }}</p>
+  <p><strong>Reconciliation:</strong> {{ decision.summary }}</p>
+  <div class="decision-detail-grid">
+    {% for heading, values in [("Strengths", assessment.strengths), ("Concerns", assessment.concerns), ("Coverage caveats", assessment.coverage_caveats)] %}
+    {% if values %}
+    <div><h3>{{ heading }}</h3><ul>{% for value in values %}<li>{{ value }}</li>{% endfor %}</ul></div>
+    {% endif %}
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
 
 <section class="section">
   <h2>Scoring configuration</h2>
@@ -33,6 +75,9 @@
   modes: {% for control_id, mode in comparison.scoring.control_policy_modes.items() %}
   <code>{{ control_id }}</code>={{ mode }}{% if not loop.last %}, {% endif %}
   {% endfor %}.</p>
+  {% endif %}
+  {% if comparison.policy and comparison.policy.decision_priorities %}
+  <p><strong>Decision priorities:</strong> {{ comparison.policy.decision_priorities }}</p>
   {% endif %}
 </section>
 
@@ -67,6 +112,35 @@
       <td>{{ "%.2f"|format(metrics.score) }}</td>
       <td>{{ "%.2f"|format(control.metrics.coverage.coverage_rate) }}%</td>
     </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section class="section">
+  <h2>Module technique and subtest breakdown</h2>
+  <p class="muted">Subtests are distinct technique/subtest definitions represented
+  in the submitted results; a technique without a named subtest counts once.
+  Detected and blocked counts are recorded result runs.</p>
+  <div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th>Control</th><th>Module</th><th>Techniques</th><th>Subtests</th><th>Results</th><th>Detected</th><th>Blocked</th></tr>
+    </thead>
+    <tbody>
+    {% for control in comparison.controls %}
+      {% for module_id, module in control.metrics.modules|dictsort %}
+      <tr>
+        <td>{{ control.display_name }}</td>
+        <td>Module {{ module_id }}<br><small>{{ module.module_name }}</small></td>
+        <td>{{ module.technique_count }}</td>
+        <td>{{ module.subtest_count }}</td>
+        <td>{{ module.trial_count }}</td>
+        <td>{{ module.detected_count }} / {{ module.trial_count }}</td>
+        <td>{{ module.blocked_count }} / {{ module.trial_count }}</td>
+      </tr>
+      {% endfor %}
     {% endfor %}
     </tbody>
   </table>
@@ -123,10 +197,11 @@
 </section>
 {% endif %}
 
-{% if analysis %}
+{% if analysis and analysis.status != "unavailable" %}
 <section class="section">
   <h2>AI-assisted evidence analysis</h2>
   {% for skill in analysis.skills %}
+  {% if skill.output.findings is defined %}
   <article class="analysis-card">
     <p class="eyebrow">{{ skill.name }} v{{ skill.version }}</p>
     <h3>{{ skill.output.summary }}</h3>
@@ -136,10 +211,8 @@
       <span class="refs">{{ finding.evidence_ids|join(", ") }}</span></li>
     {% endfor %}
     </ul>
-    {% if skill.output.recommendation %}
-    <p><strong>Qualified recommendation:</strong> {{ skill.output.recommendation.rationale }}</p>
-    {% endif %}
   </article>
+  {% endif %}
   {% endfor %}
 </section>
 {% endif %}

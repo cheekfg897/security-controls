@@ -76,6 +76,7 @@ foreach ($resolvedPath in $resultPaths) {
     $moduleMatch = [regex]::Match((Split-Path $resolvedPath -Leaf), '^results-module-(\d{2})\.csv$')
     $expectedModuleNumber = if ($moduleMatch.Success) { [int]$moduleMatch.Groups[1].Value } else { $null }
 
+    $logicalAttempts = @{}
     for ($index = 0; $index -lt $rows.Count; $index++) {
         $row = $rows[$index]
         $csvLine = $index + 2
@@ -100,6 +101,32 @@ foreach ($resolvedPath in $resultPaths) {
         }
         if ($execution -notin $allowedExecution) {
             $errors += "$context has invalid execution_status '$execution'."
+        }
+        $inputIdentity = if (
+            [string]$row.technique_id -eq '1.1' -and
+            [string]$row.test_input -match ' \[[0-9A-Fa-f]{8}\]$'
+        ) {
+            ([string]$row.test_input).Trim().ToLowerInvariant()
+        } elseif (-not [string]::IsNullOrWhiteSpace([string]$row.test_input_sha256)) {
+            ([string]$row.test_input_sha256).Trim().ToUpperInvariant()
+        } else {
+            ([string]$row.test_input).Trim().ToLowerInvariant()
+        }
+        $logicalKey = @(
+            ([string]$row.run_id).Trim().ToLowerInvariant(),
+            ([string]$row.technique_id).Trim().ToLowerInvariant(),
+            ([string]$row.subtest).Trim().ToLowerInvariant(),
+            ([string]$row.delivery_method).Trim().ToLowerInvariant(),
+            $inputIdentity
+        ) -join '|'
+        if ($logicalAttempts.ContainsKey($logicalKey)) {
+            $errors += (
+                "$context duplicates the logical payload attempt already recorded at " +
+                "$($logicalAttempts[$logicalKey]). Each payload attempt must use " +
+                'one result row with its outcome in execution_status.'
+            )
+        } else {
+            $logicalAttempts[$logicalKey] = $context
         }
         if (-not $detection) {
             $errors += (

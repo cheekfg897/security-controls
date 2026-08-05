@@ -32,6 +32,16 @@ Convert an older combined workspace with:
     -ControlProfilePath .\results\<control-id>\<control-id>-control-profile.json
 ```
 
+Merge an older Module 01 file that contains separate write and execution
+rows with:
+
+```powershell
+.\scripts\review\Merge-SCTModule01Results.ps1 `
+    -Path .\results\<control-id>\results-module-01.csv
+```
+
+The merger keeps an untouched `.before-row-merge.bak` beside the CSV.
+
 Repeat the workflow for the second product. The package builder writes `submissions/<control-id>.zip`, giving the comparison system one ZIP per product.
 
 ## Comparison workflow

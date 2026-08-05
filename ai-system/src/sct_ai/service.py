@@ -83,6 +83,39 @@ def _write_reports(
     )
 
 
+def _unavailable_ai_analysis(
+    comparison: dict[str, Any],
+    *,
+    provider_name: str | None,
+    model_name: str | None,
+    error: Exception,
+) -> dict[str, Any]:
+    python_control_id = comparison["ranking"]["recommended_control_id"]
+    return {
+        "schema_version": "1.1",
+        "status": "unavailable",
+        "generated_at": utc_now(),
+        "provider": {
+            "name": provider_name,
+            "model": model_name,
+        },
+        "error": str(error),
+        "skills": [],
+        "independent_assessment": None,
+        "decision_comparison": {
+            "status": "ai_unavailable",
+            "python_recommended_control_id": python_control_id,
+            "ai_preferred_control_id": None,
+            "ai_confidence": None,
+            "summary": (
+                "The independent AI assessment was unavailable. The "
+                "deterministic Python result remains complete and authoritative."
+            ),
+            "evidence_ids": [],
+        },
+    }
+
+
 def run_comparison(
     package_paths: list[str | Path],
     *,
@@ -115,6 +148,8 @@ def run_comparison(
         "mode": "ai" if provider_name else "metrics-only",
         "provider": provider_name,
         "model": model_name,
+        "ai_status": "pending" if provider_name else "not_requested",
+        "ai_error": None,
         "inputs": [package.preflight_summary() for package in packages],
         "artifacts": [],
         "error": None,
@@ -147,20 +182,42 @@ def run_comparison(
 
         analysis = None
         if provider_name:
-            if not model_name or not provider_config_path:
-                raise SCTComparisonError(
-                    "AI mode requires a model and provider configuration path."
+            try:
+                if not model_name or not provider_config_path:
+                    raise SCTComparisonError(
+                        "AI mode requires a model and provider configuration path."
+                    )
+                _progress(
+                    progress_callback,
+                    "ai",
+                    50,
+                    "Running independent evidence-analysis skills",
                 )
-            _progress(progress_callback, "ai", 50, "Running evidence-analysis skills")
-            from .ai_workflow import run_ai_workflow
+                from .ai_workflow import run_ai_workflow
 
-            analysis = run_ai_workflow(
-                comparison,
-                provider_name=provider_name,
-                model_name=model_name,
-                provider_config_path=Path(provider_config_path),
-                progress_callback=progress_callback,
-            )
+                analysis = run_ai_workflow(
+                    comparison,
+                    provider_name=provider_name,
+                    model_name=model_name,
+                    provider_config_path=Path(provider_config_path),
+                    progress_callback=progress_callback,
+                )
+                manifest["ai_status"] = "completed"
+            except Exception as ai_error:
+                analysis = _unavailable_ai_analysis(
+                    comparison,
+                    provider_name=provider_name,
+                    model_name=model_name,
+                    error=ai_error,
+                )
+                manifest["ai_status"] = "unavailable"
+                manifest["ai_error"] = str(ai_error)
+                _progress(
+                    progress_callback,
+                    "ai_unavailable",
+                    90,
+                    "AI assessment unavailable; deterministic result preserved",
+                )
             dump_json(output_dir / "ai-analysis.json", analysis)
             manifest["artifacts"].append("ai-analysis.json")
             _write_reports(output_dir, comparison, analysis)

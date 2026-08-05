@@ -242,7 +242,7 @@ PowerShell wrapper for `python -m sct_ai web`.
 |---|---|
 | `src\sct_ai\__init__.py` | Marks `sct_ai` as a package, describes it as the evidence-first comparison engine, and exposes package version `0.2.0`. |
 | `src\sct_ai\__main__.py` | Implements `python -m sct_ai` by calling `cli.main()` and returning its process exit code. |
-| `src\sct_ai\ai_workflow.py` | Implements the optional four-stage LangChain workflow. It validates the provider/model against the server allowlist, creates Ollama/OpenAI clients, loads `skills.json`, constructs evidence-limited payloads, validates input/output schemas, rejects unknown controls or evidence IDs and unsupported percentage claims, forces the AI recommendation to match the deterministic result, and allows one correction attempt for invalid model output. |
+| `src\sct_ai\ai_workflow.py` | Implements the optional five-stage LangChain workflow. It validates the provider/model against the server allowlist, creates Ollama/OpenAI clients, loads `skills.json`, constructs sanitized evidence-limited payloads, blinds calls 1-4 to the deterministic winner/rank order, validates input/output schemas, rejects unknown controls or evidence IDs and unsupported percentage claims, validates the independent AI preference, reconciles it with the separately calculated Python result, and allows one correction attempt for invalid model output. |
 | `src\sct_ai\asgi.py` | Conventional hosted-ASGI entry point. It creates the exported `app` object from `SCT_*` environment variables by calling `web.create_app_from_env()`. |
 | `src\sct_ai\cli.py` | Defines the `validate`, `compare`, and `web` subcommands. It prints package preflight JSON, starts comparisons through `service.py`, launches the web server, selects the default system root, prints progress, and maps validation, comparison, AI, and startup failures to distinct exit codes. It also supplies the installed `sct-web` entry point. |
 | `src\sct_ai\errors.py` | Defines the application exception hierarchy: base `SCTComparisonError`, plus package-validation, policy-validation, AI-configuration, and AI-output errors. |
@@ -250,7 +250,7 @@ PowerShell wrapper for `python -m sct_ai web`.
 | `src\sct_ai\metrics.py` | Contains the authoritative deterministic scoring engine. It validates policies, resolves scoring modes, averages repeated trials within cases, builds breakdowns, calculates global and pairwise comparability, applies module weights and decision rules, produces rankings, and emits stable evidence records. |
 | `src\sct_ai\packages.py` | Safely reads and normalizes result ZIPs. It enforces archive limits; rejects traversal, directories, links, encryption, duplicates, unexpected files, malformed schemas, invalid profiles, and result/catalogue mismatches; normalizes legacy blocking values; groups repeated rows into cases; and requires unique control IDs. |
 | `src\sct_ai\reports.py` | Produces the detailed technical Markdown report, concise executive Markdown summary, and portable standalone HTML report from calculated data, optionally adding validated AI findings. Dynamic HTML text is escaped. |
-| `src\sct_ai\service.py` | Orchestrates a complete run for CLI and web callers. It validates inputs, creates the output directory and manifest, loads policy, invokes metrics, writes deterministic artifacts first, optionally runs AI, regenerates reports, reports progress, and records completed or failed status. |
+| `src\sct_ai\service.py` | Orchestrates a complete run for CLI and web callers. It validates inputs, creates the output directory and manifest, loads policy, invokes metrics, writes deterministic artifacts first, optionally runs AI, regenerates reports, reports progress, and records completed status with an explicit AI-unavailable state when only the optional provider workflow fails. |
 | `src\sct_ai\util.py` | Shared deterministic helpers for UTC timestamps, streaming SHA-256 hashing, stable IDs, consistently formatted JSON, duplicate-key and invalid-number rejection, and safe comparison-ID normalization. |
 | `src\sct_ai\web.py` | Defines the FastAPI application and Uvicorn startup path. It discovers modules and providers, applies security headers and CSRF checks, stages uploads, validates forms, creates background jobs, exposes status/rerun routes, renders results, restricts downloads, reads deployment environment variables, and enforces explicit shared mode for non-loopback binding. |
 
@@ -270,10 +270,13 @@ and version for each stage:
 | `profile-context` | Identifies material product and tested-policy context without claiming unsupported effects. |
 | `module-analysis` | Explains module, technique, coverage, and repeated-run outcome differences. |
 | `cross-control-synthesis` | Synthesizes verified trade-offs across all submitted controls. |
-| `qualified-recommendation` | Explains the deterministic recommendation or no-winner result without changing it. |
+| `independent-assessment` | Forms a blinded advisory preference or returns `null`, with categorical confidence, rationale, strengths, concerns, coverage caveats, and deterministic evidence citations. |
+| `decision-reconciliation` | Receives both decisions and explains validated agreement, disagreement, or AI inconclusiveness without changing either result. |
 
 The stages run sequentially in that order. They are prompt-and-schema stages,
-not independent agents.
+not independent agents. Calls 1-4 receive scoring context and optional decision
+priorities but no ranking object or ranking evidence. Only call 5 receives the
+authoritative ranking alongside the already-completed AI preference.
 
 ## HTML templates and page flow
 
@@ -309,10 +312,10 @@ Job completes
 | Path | Purpose |
 |---|---|
 | `src\sct_ai\templates\base.html` | Shared document shell. It defines UTF-8 and viewport metadata, disables HTMX history/evaluation/script injection, loads only local CSS and JavaScript, provides title/content blocks, renders the site header and footer, and displays the shared-mode security warning. Every full page extends this file. |
-| `src\sct_ai\templates\index.html` | Home and new-comparison page. Its ordinary multipart form contains dynamically discovered module weights, editable detection/blocking weights, decision thresholds, optional allowlisted AI selection, and comparison ID. The Validate button uses HTMX only to replace the preflight result region; the Run button performs a normal form submission. It also renders server validation errors and recent jobs. |
+| `src\sct_ai\templates\index.html` | Home and new-comparison page. Its ordinary multipart form accepts user-uploaded comparison ZIPs through a cumulative, removable file queue and contains dynamically discovered module weights, editable detection/blocking weights, decision thresholds, optional decision priorities, allowlisted independent-AI selection, and comparison ID. It does not expose server-side submission files as checkboxes. The Validate button uses HTMX only to replace the preflight result region; the Run button performs a normal form submission. It also renders server validation errors and recent jobs. |
 | `src\sct_ai\templates\preflight.html` | Reusable HTML fragment returned by package preflight. Success output lists control identity, cases, trials, and modules. Failure output uses an alert region. It is intentionally a fragment rather than a complete HTML document because HTMX inserts it into `index.html`. |
 | `src\sct_ai\templates\job.html` | Background-job progress page. It exposes the job ID through a `data-job-id` attribute and provides stable progress, status, stage, message, and error elements for `app.js`. Failed or interrupted jobs receive a server-rendered, CSRF-protected rerun form. |
-| `src\sct_ai\templates\comparison.html` | Completed-result page. It renders the decision state, weighted coverage, resolved scoring, ranking cards, per-control metrics, comparable module scores, pairwise differences, optional AI analysis, expandable JSON evidence, and allowlisted artifact-download links. It reads already-calculated data and does not calculate scores in the template. |
+| `src\sct_ai\templates\comparison.html` | Completed-result page. It renders the Python decision, independent AI preference and confidence, validated agreement/disagreement/inconclusive state, AI-unavailable state, weighted coverage, resolved scoring, decision priorities, ranking cards, per-control metrics, per-module technique/subtest and detected/blocked result counts, comparable module scores, pairwise differences, evidence analysis, expandable JSON evidence, a print/PDF action, and allowlisted artifact-download links. It reads already-calculated data and does not calculate scores in the template. |
 
 ### HTML and browser security boundary
 
@@ -324,8 +327,10 @@ Job completes
   evidence is serialized through Jinja's `tojson` filter.
 - HTMX is configured for same-origin requests only, with history caching,
   script tags, and evaluated expressions disabled.
-- No inline application JavaScript, remote CDN, arbitrary download name, or
-  user-selectable provider endpoint is used.
+- No inline application JavaScript is used on server-rendered pages. The
+  portable standalone `report.html` contains only a fixed local print-button
+  listener. No remote CDN, arbitrary download name, or user-selectable
+  provider endpoint is used.
 - Browser validation improves feedback, but `web.py`, `packages.py`, and
   `metrics.py` repeat all security and policy validation on the server.
 
@@ -334,7 +339,7 @@ Job completes
 | Path | Purpose |
 |---|---|
 | `src\sct_ai\static\app.css` | All repository-owned visual styling for forms, messages, tables, rankings, evidence panels, downloads, responsive layouts, and print-friendly pages. |
-| `src\sct_ai\static\app.js` | Configures HTMX, validates module and scoring totals, keeps detection/blocking fields editable, switches an edited preset to Custom, updates scoring help, polls the job-status API, redirects completed jobs, and displays polling or job errors. |
+| `src\sct_ai\static\app.js` | Configures HTMX, validates module and scoring totals, keeps detection/blocking fields editable, switches an edited preset to Custom, updates scoring help, invokes the browser print dialog for report/PDF saving, polls the job-status API, redirects completed jobs, and displays polling or job errors. |
 | `src\sct_ai\static\htmx.min.js` | Vendored and pinned HTMX 2.0.10 library used for partial package-preflight submission. It avoids a CDN dependency and supports air-gapped operation. |
 | `src\sct_ai\static\HTMX-LICENSE.txt` | Zero-Clause BSD licence text accompanying the vendored HTMX file. |
 
@@ -347,7 +352,7 @@ Job completes
 | `tests\Test-AISystemSurface.ps1` | Checks Python rules, required files, package metadata, console/ASGI entry points, offline installation, vendored HTMX, skill entries, parent SCT integration, and PowerShell syntax. |
 | `tests\python\helpers.py` | Creates valid in-memory and on-disk SCT ZIP fixtures with profiles, catalogues, results, cases, and repeated trials. |
 | `tests\python\test_comparison_engine.py` | Covers ZIP safety and uniqueness, matching, repeated trials, scoring, legacy normalization, policy validation, coverage/tie decisions, input preservation, deterministic output, and artifacts. |
-| `tests\python\test_ai_skills.py` | Uses fake models to verify all four skill contracts and the single correction attempt for invalid evidence. |
+| `tests\python\test_ai_skills.py` | Uses fake models to verify all five skill contracts, ranking blindness for calls 1-4, independent disagreement/null behavior, reconciliation immutability, and the single correction attempt for invalid evidence. |
 | `tests\python\test_runtime.py` | Confirms the supported Python range and hosted web root arguments. |
 | `tests\python\test_web.py` | Covers safe binding, interrupted-job recovery, ASGI environment configuration, security headers, CSRF-backed preflight, vendored assets, and form scoring. |
 

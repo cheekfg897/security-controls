@@ -259,12 +259,16 @@ for example `detection=detected`, `action=blocked`, and
 `notes=Quarantined during extraction`. Replacing the complete prompt with the
 value remains supported. Packaging removes the prompts automatically.
 
-Result files use a review-first layout: technique name, subtest, input, stage,
-execution observation, and the editable review fields appear first. Run
+Result files use a review-first layout: technique name, subtest, input,
+execution outcome, and the editable review fields appear first. Run
 metadata, the internal technique ID, script path, and SHA-256 remain at the end
 of each row for validation and AI comparison.
 
-`execution_status` is generated separately as `executed`, `not_executed`, or blank when it is not applicable; it never determines the review fields. A test may have an execution marker while the product log also reports a block, so reviewers record the observations independently. Timestamps remain so a reviewer can correlate each row with the product console or local logs.
+Module 01 records exactly one `test_stage=write` row per payload attempt.
+`execution_status` is `executed` or `not_executed`; delivery, Sysmon, and error
+details remain in `source_result`. A payload removed on sight therefore remains
+one `not_executed` row. Generated observations never determine the review
+fields; reviewers credit only the product under test.
 
 `action_status` is intentionally binary because product logs often show only
 that an action was blocked, not whether the block happened before or after a

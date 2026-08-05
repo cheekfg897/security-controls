@@ -12,7 +12,7 @@ from unittest.mock import patch
 from sct_ai.jobs import JobStore
 from sct_ai.web import _module_options, validate_web_binding
 
-from .helpers import package_bytes
+from .helpers import package_bytes, write_package
 
 
 HAS_WEB_DEPS = bool(
@@ -95,6 +95,18 @@ class WebSurfaceTests(unittest.TestCase):
         self.assertIn("packageUpload.files = transfer.files", source)
         self.assertIn('remove.textContent = "Remove"', source)
 
+    def test_print_styles_include_expanded_evidence(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[2]
+            / "src"
+            / "sct_ai"
+            / "static"
+            / "app.css"
+        ).read_text(encoding="utf-8")
+        self.assertIn("@media print", source)
+        self.assertIn(".print-hidden", source)
+        self.assertIn(".evidence-list details > *", source)
+
     def test_non_loopback_requires_shared_mode(self) -> None:
         validate_web_binding("127.0.0.1", 8000, False)
         validate_web_binding("0.0.0.0", 8000, True)
@@ -159,9 +171,11 @@ class WebSurfaceTests(unittest.TestCase):
                 self.assertNotIn("https://", response.text)
                 self.assertIn('name="module_weight_01"', response.text)
                 self.assertIn('name="scoring_mode"', response.text)
+                self.assertIn('name="decision_priorities"', response.text)
                 self.assertIn('data-package-upload', response.text)
                 self.assertIn('data-upload-summary', response.text)
                 self.assertIn('data-upload-list', response.text)
+                self.assertNotIn('name="existing_packages"', response.text)
                 self.assertNotIn('name="module_weights"', response.text)
                 token_match = re.search(
                     r'name="csrf_token" value="([^"]+)"',
@@ -191,9 +205,144 @@ class WebSurfaceTests(unittest.TestCase):
                     ["detect_and_block"],
                     response.json()["policy_modes"],
                 )
+                response = client.post(
+                    "/comparisons/validate",
+                    data={"csrf_token": token},
+                    files=[
+                        (
+                            "uploads",
+                            ("human-name.zip", b"not a zip", "application/zip"),
+                        ),
+                        (
+                            "uploads",
+                            (
+                                "valid.zip",
+                                package_bytes(
+                                    "control-b", [{"sha256": "A" * 64}]
+                                ),
+                                "application/zip",
+                            ),
+                        ),
+                    ],
+                )
+                self.assertEqual(400, response.status_code, response.text)
+                self.assertIn("human-name.zip", response.json()["error"])
+                self.assertNotRegex(response.json()["error"], r"[0-9a-f]{32}\.zip")
                 htmx = client.get("/static/htmx.min.js")
                 self.assertEqual(200, htmx.status_code)
                 self.assertIn("2.0.10", htmx.text)
+
+    @unittest.skipUnless(HAS_WEB_DEPS, "Web test dependencies are not installed")
+    def test_completed_report_shows_breakdown_print_control_and_ai(self) -> None:
+        from fastapi.testclient import TestClient
+        from sct_ai.service import run_comparison
+        from sct_ai.web import create_app
+
+        with tempfile.TemporaryDirectory() as value:
+            root = Path(value)
+            system_root = root / "ai-system"
+            system_root.mkdir()
+            module = root / "scenarios" / "01-fixture"
+            module.mkdir(parents=True)
+            (module / "module.json").write_text(
+                '{"id":"01","name":"Fixture","techniques":[]}',
+                encoding="utf-8",
+            )
+            left = write_package(
+                root / "left.zip",
+                "control-a",
+                [
+                    {
+                        "sha256": "A" * 64,
+                        "subtest": "FixtureSubtest",
+                        "detection": "detected",
+                        "action": "blocked",
+                    }
+                ],
+            )
+            right = write_package(
+                root / "right.zip",
+                "control-b",
+                [
+                    {
+                        "sha256": "A" * 64,
+                        "subtest": "FixtureSubtest",
+                        "detection": "not_detected",
+                        "action": "not_blocked",
+                    }
+                ],
+            )
+            result = run_comparison(
+                [left, right],
+                policy_path=None,
+                output_root=system_root / "comparisons",
+                comparison_id="web-report",
+            )
+            output = Path(result["output_dir"])
+            (output / "ai-analysis.json").write_text(
+                json.dumps(
+                    {
+                        "status": "completed",
+                        "independent_assessment": {
+                            "preferred_control_id": "control-a",
+                            "confidence": "medium",
+                            "rationale": "AI fixture rationale",
+                            "strengths": ["Fixture strength"],
+                            "concerns": ["Fixture concern"],
+                            "coverage_caveats": ["Fixture caveat"],
+                            "evidence_ids": ["EVIDENCE-FIXTURE"],
+                        },
+                        "decision_comparison": {
+                            "status": "disagrees",
+                            "python_recommended_control_id": None,
+                            "ai_preferred_control_id": "control-a",
+                            "ai_confidence": "medium",
+                            "summary": "The two advisory outcomes differ.",
+                            "evidence_ids": ["EVIDENCE-FIXTURE"],
+                        },
+                        "skills": [
+                            {
+                                "name": "module-analysis",
+                                "version": "1.0",
+                                "output": {
+                                    "summary": "AI fixture summary",
+                                    "findings": [
+                                        {
+                                            "title": "Fixture finding",
+                                            "analysis": "AI fixture analysis",
+                                            "evidence_ids": [],
+                                        }
+                                    ],
+                                    "recommendation": None,
+                                },
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            app = create_app(repository_root=root, system_root=system_root)
+            with TestClient(app) as client:
+                response = client.get("/comparisons/web-report")
+                self.assertEqual(200, response.status_code, response.text)
+                self.assertIn("Print / Save as PDF", response.text)
+                self.assertIn("data-print-report", response.text)
+                self.assertIn(
+                    "Module technique and subtest breakdown",
+                    response.text,
+                )
+                self.assertIn("FixtureSubtest", json.dumps(result["comparison"]))
+                self.assertIn("1 / 1", response.text)
+                self.assertIn("AI-assisted evidence analysis", response.text)
+                self.assertIn("AI fixture analysis", response.text)
+                self.assertIn(
+                    "Python and independent AI decision review",
+                    response.text,
+                )
+                self.assertIn("DISAGREES", response.text)
+                self.assertIn("AI fixture rationale", response.text)
+            app.state.manager.executor.shutdown(wait=True)
 
     @unittest.skipUnless(HAS_WEB_DEPS, "Web test dependencies are not installed")
     def test_mixed_policy_modes_flagged_and_auto_rejected(self) -> None:
@@ -315,6 +464,9 @@ class WebSurfaceTests(unittest.TestCase):
                         "blocking_weight": "60",
                         "minimum_comparable_weight": "80",
                         "tie_margin": "2",
+                        "decision_priorities": (
+                            "Prioritize prevention and stable outcomes."
+                        ),
                         "comparison_id": "gui-detect-only",
                     },
                     files=[
@@ -358,6 +510,10 @@ class WebSurfaceTests(unittest.TestCase):
                 self.assertEqual("detect_only", comparison["scoring"]["resolved_mode"])
                 self.assertEqual(1.0, comparison["scoring"]["detection_weight"])
                 self.assertEqual(0.0, comparison["scoring"]["blocking_weight"])
+                self.assertEqual(
+                    "Prioritize prevention and stable outcomes.",
+                    comparison["policy"]["decision_priorities"],
+                )
 
 
 if __name__ == "__main__":

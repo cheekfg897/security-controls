@@ -26,7 +26,12 @@ MODULE_NAMES = {
 
 def _csv_bytes(columns: tuple[str, ...], rows: list[dict[str, str]]) -> bytes:
     stream = io.StringIO(newline="")
-    writer = csv.DictWriter(stream, fieldnames=columns, lineterminator="\n")
+    writer = csv.DictWriter(
+        stream,
+        fieldnames=columns,
+        lineterminator="\n",
+        extrasaction="ignore",
+    )
     writer.writeheader()
     writer.writerows(rows)
     return stream.getvalue().encode("utf-8")
@@ -104,6 +109,7 @@ def package_bytes(
             execution = trial.get("execution")
             if execution is None:
                 execution = "executed"
+            stage = specification.get("stage", "execution")
             result_row = {
                 "timestamp": f"2026-07-23T01:00:{row_index:02d}+00:00",
                 "run_id": f"fixture-{row_index}",
@@ -117,8 +123,8 @@ def package_bytes(
                     f"{row_index:064X}",
                 ),
                 "delivery_method": specification.get("delivery_method", "Fixture"),
-                "test_stage": specification.get("stage", "execution"),
-                "source_result": "fixture=true",
+                "test_stage": stage,
+                "source_result": specification.get("source_result", "fixture=true"),
                 "execution_status": execution,
                 "detection_status": trial["detection"],
                 "action_status": action,

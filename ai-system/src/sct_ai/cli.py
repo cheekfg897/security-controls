@@ -118,7 +118,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Input validation failed: {exc}", file=sys.stderr)
         return 2
     except AIOutputError as exc:
-        print(f"AI analysis failed after metrics were preserved: {exc}", file=sys.stderr)
+        print(f"Report processing failed after metrics were preserved: {exc}", file=sys.stderr)
         return 4
     except SCTComparisonError as exc:
         print(f"Comparison failed: {exc}", file=sys.stderr)
