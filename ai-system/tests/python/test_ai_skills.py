@@ -165,6 +165,40 @@ class AISkillTests(unittest.TestCase):
         _invoke_skill(model, skill, payload, self.comparison)
         self.assertEqual(2, model.calls)
 
+    def test_control_ids_alias_is_normalized_to_controls(self) -> None:
+        from sct_ai.ai_workflow import _invoke_skill, _load_skill, _skill_payload
+
+        skill = _load_skill("profile-context")
+        payload = _skill_payload("profile-context", self.comparison, [], False)
+        evidence_id = payload["evidence"][0]["evidence_id"]
+        response = {
+            "summary": "Evidence reviewed.",
+            "findings": [
+                {
+                    "title": "Context",
+                    "analysis": "Supported context.",
+                    "severity": "context",
+                    "controls": ["control-a"],
+                    "control_ids": ["control-a"],
+                    "evidence_ids": [evidence_id],
+                }
+            ],
+            "recommendation": None,
+        }
+
+        class AliasModel:
+            calls = 0
+
+            def invoke(self, messages: object) -> object:
+                self.calls += 1
+                return type("Response", (), {"content": json.dumps(response)})()
+
+        model = AliasModel()
+        output = _invoke_skill(model, skill, payload, self.comparison)
+        self.assertEqual(1, model.calls)
+        self.assertEqual(["control-a"], output["findings"][0]["controls"])
+        self.assertNotIn("control_ids", output["findings"][0])
+
     def test_independent_assessment_may_disagree_with_no_winner(self) -> None:
         from sct_ai.ai_workflow import _invoke_skill, _load_skill, _skill_payload
 

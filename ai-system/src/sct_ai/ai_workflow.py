@@ -336,6 +336,29 @@ def math_isclose(left: float, right: float) -> bool:
     return abs(left - right) <= 0.01
 
 
+def _normalize_analysis_output_aliases(raw: dict[str, Any]) -> dict[str, Any]:
+    """Canonicalize an unambiguous model alias before strict validation."""
+    findings = raw.get("findings")
+    if not isinstance(findings, list):
+        return raw
+    normalized = dict(raw)
+    normalized_findings: list[Any] = []
+    for item in findings:
+        if not isinstance(item, dict) or "control_ids" not in item:
+            normalized_findings.append(item)
+            continue
+        finding = dict(item)
+        control_ids = finding["control_ids"]
+        if "controls" not in finding:
+            finding["controls"] = control_ids
+            del finding["control_ids"]
+        elif finding["controls"] == control_ids:
+            del finding["control_ids"]
+        normalized_findings.append(finding)
+    normalized["findings"] = normalized_findings
+    return normalized
+
+
 def _validate_output(
     raw: dict[str, Any],
     *,
@@ -346,6 +369,8 @@ def _validate_output(
 ) -> dict[str, Any]:
     try:
         skill = _load_skill(skill_name)
+        if skill_name in ANALYSIS_SKILLS:
+            raw = _normalize_analysis_output_aliases(raw)
         _validate_json_contract(raw, skill["output_schema"], "model output")
         output_type = _pydantic_models()[skill["output_schema_name"]]
         output = output_type.model_validate(raw)

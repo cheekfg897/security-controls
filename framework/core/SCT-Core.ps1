@@ -972,7 +972,7 @@ function Invoke-SampleBatchTechnique {
     }
 
     Write-Host ""
-    $executeInput = (Read-Host "  Execute samples after delivery, not just copy them? [Y/N]").Trim()
+    $executeInput = (Read-Host "  Open file selection after delivery? [Y/N]").Trim()
     $doExecute    = $executeInput -ieq 'Y'
 
     Write-Host ""
